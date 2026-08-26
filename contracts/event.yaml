@@ -30,6 +30,7 @@ response:
         path?: string
         runtime_type: string  # native | go | browser | node | bun | jre | python | dotnet | beam | ruby | php
         runtime_version?: string
+        role?: string  # service | database | cache | queue | storage | gateway | scheduler | worker | proxy
         interfaces:
           provides:
             - id: string

@@ -15,6 +15,7 @@ response:
         path?: string  # local checkout path
         runtime_type: string  # native | go | browser | node | bun | jre | python | dotnet | beam | ruby | php
         runtime_version?: string  # e.g. "1.22"
+        role?: string  # service | database | cache | queue | storage | gateway | scheduler | worker | proxy
 
         interfaces:
           provides:  # capabilities this atom provides (others call this atom)

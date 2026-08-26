@@ -1,6 +1,7 @@
 atoms:
   - name: demo-service
     description: Mock service for playground tests
+    role: service
     runtime_type: go
     runtime_version: "1.22"
     interfaces:

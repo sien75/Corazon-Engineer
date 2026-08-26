@@ -4,6 +4,7 @@ atoms:
     path: ./workspace/core
     runtime_type: go
     runtime_version: "1.22"
+    role: service
 
     interfaces:
       provides:

@@ -1,6 +1,7 @@
 atoms:
   - name: demo-worker
     description: Mock worker for playground tests
+    role: worker
     runtime_type: go
     interfaces:
       provides:

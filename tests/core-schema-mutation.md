@@ -43,12 +43,13 @@ curl -s -X POST http://localhost:8080/schema/mutation -d '{
     "name": "bad",
     "description": "invalid atom",
     "runtime_type": "cobol",
+    "role": "alien",
     "interfaces": {"provides": [{"id": "x", "channel": "network", "protocol": "dbus"}], "consumes": []}
   }
 }'
 ```
 
-Expected: 422, `error.code` is `validation_failed`, `errors` contains both `runtime_type` (invalid enum) and `interfaces.provides[0].protocol` (dbus incompatible with network); the file `.playground/atoms/bad.yaml` does not exist.
+Expected: 422, `error.code` is `validation_failed`, `errors` contains `runtime_type` (invalid enum), `role` (invalid enum) and `interfaces.provides[0].protocol` (dbus incompatible with network); the file `.playground/atoms/bad.yaml` does not exist.
 
 ## 3. add contract (id auto-generated)
 

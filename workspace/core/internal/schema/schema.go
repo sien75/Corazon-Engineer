@@ -20,6 +20,8 @@ var Protocols = map[string][]string{
 
 var RuntimeTypes = []string{"native", "go", "browser", "node", "bun", "jre", "python", "dotnet", "beam", "ruby", "php"}
 
+var AtomRoles = []string{"service", "database", "cache", "queue", "storage", "gateway", "scheduler", "worker", "proxy"}
+
 var ObjectTypes = []string{"atom", "edge", "runtime", "devtime", "contract", "test", "docs", "notes"}
 
 var TypeDirs = map[string]string{
@@ -238,6 +240,9 @@ func validateAtom(body map[string]interface{}, fail func(field, msg string)) {
 	rt := str(body, "runtime_type")
 	if !contains(RuntimeTypes, rt) {
 		fail("runtime_type", "must be one of "+strings.Join(RuntimeTypes, " | "))
+	}
+	if role := str(body, "role"); role != "" && !contains(AtomRoles, role) {
+		fail("role", "must be one of "+strings.Join(AtomRoles, " | "))
 	}
 	ifaces, _ := body["interfaces"].(map[string]interface{})
 	if ifaces == nil {

@@ -57,6 +57,7 @@ atoms:
     path: ./workspace/user-service
     runtime_type: go
     runtime_version: "1.22"
+    role: service
 
     interfaces:
       provides:
@@ -92,6 +93,7 @@ atoms:
 ```
 
 - `interfaces.provides` / `interfaces.consumes` declare the atom's interfaces by role: `provides` = capabilities this atom exposes (others call this atom), `consumes` = capabilities this atom depends on (this atom calls others)
+- `role` is the atom's role in the architecture (service | database | cache | queue | storage | gateway | scheduler | worker | proxy), see devtime/schema/enums.md
 - Common interface fields: `id` / `channel` / `protocol` / `contract` (pointing to a contract file under `contracts/`)
 - Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.). Bind addresses/ports belong to the Runtime layer's `connect.address`, not to the atom
 

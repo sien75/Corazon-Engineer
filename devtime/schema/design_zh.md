@@ -57,6 +57,7 @@ atoms:
     path: ./workspace/user-service
     runtime_type: go
     runtime_version: "1.22"
+    role: service
 
     interfaces:
       provides:
@@ -92,6 +93,7 @@ atoms:
 ```
 
 - `interfaces.provides` / `interfaces.consumes` 按角色声明接口：`provides` = 本 atom 提供的能力（别人调本 atom）,`consumes` = 本 atom 依赖的能力（本 atom 调别人）
+- `role` 是 atom 在架构中的角色（service | database | cache | queue | storage | gateway | scheduler | worker | proxy），见 devtime/schema/enums_zh.md
 - 接口公共字段：`id` / `channel` / `protocol` / `contract`（指向 `contracts/` 下的契约文件）
 - 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）。监听地址/端口属于部署关注点，由 Runtime 层的 `connect.address` 表达，不写在 atom 里
 
