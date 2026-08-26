@@ -1,0 +1,12 @@
+atoms:
+  - name: demo-worker
+    description: Mock worker for playground tests
+    runtime_type: go
+    interfaces:
+      provides:
+        - id: demo-consume
+          channel: network
+          protocol: kafka
+          extend:
+            topic: demo.events
+      consumes: []

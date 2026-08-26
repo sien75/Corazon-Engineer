@@ -1,0 +1,9 @@
+edges:
+  - id: demo-to-worker
+    from: demo-service
+    from_interface: demo-events
+    to: demo-worker
+    to_interface: demo-consume
+    channel: network
+    protocol: kafka
+    description: demo-service publishes events consumed by demo-worker

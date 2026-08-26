@@ -17,13 +17,13 @@ response:
         runtime_version?: string  # e.g. "1.22"
 
         interfaces:
-          in:  # inbound interfaces
+          provides:  # capabilities this atom provides (others call this atom)
             - id: string
               channel: network | stdio | ipc
               protocol: string  # per channel, see devtime/schema/enums_zh.md
               contract?: string  # path under contracts/, e.g. "contracts/create-user-api.yaml"
-              extend?: object  # protocol-specific fields (port, path, method, command, topic, ...); shape varies by protocol
-          out:  # outbound interfaces
+              extend?: object  # protocol-specific fields (path, method, command, topic, ...); shape varies by protocol
+          consumes:  # capabilities this atom consumes (this atom calls others)
             - id: string
               channel: network | stdio | ipc
               protocol: string  # per channel, see devtime/schema/enums_zh.md

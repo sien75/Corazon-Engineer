@@ -31,13 +31,13 @@ response:
         runtime_type: string  # native | go | browser | node | bun | jre | python | dotnet | beam | ruby | php
         runtime_version?: string
         interfaces:
-          in:
+          provides:
             - id: string
               channel: network | stdio | ipc
               protocol: string
               contract?: string
               extend?: object
-          out:
+          consumes:
             - id: string
               channel: network | stdio | ipc
               protocol: string

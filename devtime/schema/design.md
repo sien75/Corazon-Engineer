@@ -59,13 +59,12 @@ atoms:
     runtime_version: "1.22"
 
     interfaces:
-      in:
+      provides:
         - id: create-user-api
           channel: network
           protocol: http
           contract: ./contracts/create-user-api.yaml
           extend:
-            port: 8080
             path: /api/v1/users
             method: POST
         - id: redis-sub
@@ -75,7 +74,7 @@ atoms:
             command: SUBSCRIBE
             topic: session:expired
 
-      out:
+      consumes:
         - id: user-created-event
           channel: network
           protocol: kafka
@@ -92,9 +91,9 @@ atoms:
           contract: ./contracts/redis-client.yaml
 ```
 
-- `interfaces.in` / `interfaces.out` declare the atom's inbound/outbound interfaces
+- `interfaces.provides` / `interfaces.consumes` declare the atom's interfaces by role: `provides` = capabilities this atom exposes (others call this atom), `consumes` = capabilities this atom depends on (this atom calls others)
 - Common interface fields: `id` / `channel` / `protocol` / `contract` (pointing to a contract file under `contracts/`)
-- Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `port/path/method`, redis uses `command/topic`, kafka uses `topic`, etc.)
+- Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.). Bind addresses/ports belong to the Runtime layer's `connect.address`, not to the atom
 
 ---
 
@@ -245,6 +244,8 @@ errors:
 
 Describe system-level tests, under `tests/`, referenced by runtime env `tests.case`. Plain markdown files, no format convention.
 
+Tests never run against the real project tree. They run in `.playground/` — a blank or mock corazon project at the repo root (git-ignored), scaffolded by the test setup (e.g. from fixtures like `tests/.playground/`), never copied from the real project. The backend under test is started with its project root pointed at `.playground/`, so tests are fully decoupled from real schema content and add/update/remove mutations only touch the mock. `.playground/` can be deleted and re-scaffolded at any time.
+
 ## Devtime Files — Dev-Time Records
 
 Record meetings, ADRs, changelogs, etc., under `devtime/`. Plain markdown files, no format convention.
@@ -261,7 +262,7 @@ Markers and discussions targeting an entity, under `notes/`. Plain markdown file
 
 ## File Organization
 
-A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` and `tests/` are content directories. `include`/`exclude` appear only when deviating.
+A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` and `tests/` are content directories. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are ignored everywhere — never parsed as content — so dot-directories are free for fixtures, scratch data, and tooling (e.g. `tests/.playground/`).
 
 ```yaml
 # corazon.yaml — root meta only, does NOT enumerate data files

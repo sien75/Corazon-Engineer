@@ -1,0 +1,25 @@
+runtime:
+  dev:
+    description: Local development environment
+    atoms:
+      core:
+        connect:
+          channel: network
+          address: http://localhost:8080
+    tests:
+      - id: core-schema-query
+        description: schema-query / schema-query-detail contract conformance
+        atoms: [core]
+        case: ./tests/core-schema-query.md
+      - id: core-schema-mutation
+        description: schema-mutation add/update/remove + validation failures
+        atoms: [core]
+        case: ./tests/core-schema-mutation.md
+      - id: core-search-event
+        description: search + event SSE subscription
+        atoms: [core]
+        case: ./tests/core-search-event.md
+      - id: core-ai-flow
+        description: AI session flow — new / ask / stream / approval / delete
+        atoms: [core]
+        case: ./tests/core-ai-flow.md

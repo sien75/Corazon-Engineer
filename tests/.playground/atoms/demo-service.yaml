@@ -1,0 +1,20 @@
+atoms:
+  - name: demo-service
+    description: Mock service for playground tests
+    runtime_type: go
+    runtime_version: "1.22"
+    interfaces:
+      provides:
+        - id: demo-api
+          channel: network
+          protocol: http
+          contract: ./contracts/demo-api.yaml
+          extend:
+            path: /demo
+            method: POST
+      consumes:
+        - id: demo-events
+          channel: network
+          protocol: kafka
+          extend:
+            topic: demo.events

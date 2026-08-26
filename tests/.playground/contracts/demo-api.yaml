@@ -1,0 +1,19 @@
+id: demo-api
+description: Mock contract for playground tests
+
+request:
+  body:
+    msg: string
+
+response:
+  status: 200
+  body:
+    ok: boolean
+
+errors:
+  - status: 400
+    code: bad_request
+    description: msg missing
+  - status: 500
+    code: internal
+    description: server error

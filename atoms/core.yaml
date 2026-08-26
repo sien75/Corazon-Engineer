@@ -1,0 +1,81 @@
+atoms:
+  - name: core
+    description: Corazon Engine backend — parses the corazon schema and exposes schema query/mutation/search/event APIs plus AI session APIs
+    path: ./workspace/core
+    runtime_type: go
+    runtime_version: "1.22"
+
+    interfaces:
+      provides:
+        - id: schema-query
+          channel: network
+          protocol: http
+          contract: ./contracts/schema-query.yaml
+          extend:
+            path: /schema/query
+            method: POST
+        - id: schema-query-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/schema-query-detail.yaml
+          extend:
+            path: /schema/query-detail
+            method: POST
+        - id: schema-mutation
+          channel: network
+          protocol: http
+          contract: ./contracts/schema-mutation.yaml
+          extend:
+            path: /schema/mutation
+            method: POST
+        - id: search
+          channel: network
+          protocol: http
+          contract: ./contracts/search.yaml
+          extend:
+            path: /search
+            method: POST
+        - id: event
+          channel: network
+          protocol: sse
+          contract: ./contracts/event.yaml
+          extend:
+            path: /event
+            method: POST
+        - id: ai-new
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-new.yaml
+          extend:
+            path: /ai/new
+            method: POST
+        - id: ai-ask
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-ask.yaml
+          extend:
+            path: /ai/ask
+            method: POST
+        - id: ai-stream
+          channel: network
+          protocol: sse
+          contract: ./contracts/ai-stream.yaml
+          extend:
+            path: /ai/stream
+            method: POST
+        - id: ai-approval
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-approval.yaml
+          extend:
+            path: /ai/approval
+            method: POST
+        - id: ai-delete
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-delete.yaml
+          extend:
+            path: /ai/delete
+            method: POST
+
+      consumes: []

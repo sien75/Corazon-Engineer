@@ -59,13 +59,12 @@ atoms:
     runtime_version: "1.22"
 
     interfaces:
-      in:
+      provides:
         - id: create-user-api
           channel: network
           protocol: http
           contract: ./contracts/create-user-api.yaml
           extend:
-            port: 8080
             path: /api/v1/users
             method: POST
         - id: redis-sub
@@ -75,7 +74,7 @@ atoms:
             command: SUBSCRIBE
             topic: session:expired
 
-      out:
+      consumes:
         - id: user-created-event
           channel: network
           protocol: kafka
@@ -92,9 +91,9 @@ atoms:
           contract: ./contracts/redis-client.yaml
 ```
 
-- `interfaces.in` / `interfaces.out` 声明该 atom 的出入接口
+- `interfaces.provides` / `interfaces.consumes` 按角色声明接口：`provides` = 本 atom 提供的能力（别人调本 atom）,`consumes` = 本 atom 依赖的能力（本 atom 调别人）
 - 接口公共字段：`id` / `channel` / `protocol` / `contract`（指向 `contracts/` 下的契约文件）
-- 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `port/path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）
+- 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）。监听地址/端口属于部署关注点，由 Runtime 层的 `connect.address` 表达，不写在 atom 里
 
 ---
 
@@ -245,6 +244,8 @@ errors:
 
 描述系统级测试，位于 `tests/`，被 runtime env 的 `tests.case` 引用。为普通 markdown 文件，不做格式约定。
 
+测试绝不对真实项目树执行。测试在 `.playground/` 中运行——它是仓库根目录下一个空白或 mock 的 corazon 项目（git 忽略），由测试准备步骤搭建（如从 `tests/.playground/` 这类 fixture 生成），绝不拷贝真实项目。被测后端启动时将项目根指向 `.playground/`，测试与真实 schema 内容完全解耦，增删改只落在 mock 上。`.playground/` 可随时删除重建。
+
 ## Devtime 文件 — 开发时记录
 
 记录开发过程中的会议、ADR、changelog 等，位于 `devtime/`。为普通 markdown 文件，不做格式约定。
@@ -261,7 +262,7 @@ errors:
 
 ## 文件组织
 
-根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 和 `tests/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。
+根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 和 `tests/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目一律忽略——永不解析为内容——因此 dot 目录可自由存放 fixture、临时数据和工具文件（如 `tests/.playground/`）。
 
 ```yaml
 # corazon.yaml —— 只放根 meta，不枚举数据文件
