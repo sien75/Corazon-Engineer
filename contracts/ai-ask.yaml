@@ -1,0 +1,23 @@
+id: ai-ask
+description: Ask AI; prompt determines what AI does (qa / plan / act)
+
+request:
+  body:
+    id: string  # session id
+    prompt: string  # what AI should do
+
+response:
+  status: 200
+  body:
+    sessionId: string  # same session, used to pull stream
+
+errors:
+  - status: 400
+    code: bad_request
+    description: prompt missing or empty
+  - status: 404
+    code: not_found
+    description: session not found
+  - status: 500
+    code: internal
+    description: server error

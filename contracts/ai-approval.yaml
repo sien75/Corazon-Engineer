@@ -1,0 +1,25 @@
+id: ai-approval
+description: Approve a pending backend operation requested by AI
+
+request:
+  body:
+    id: string  # session id
+    approvalId: string  # pending operation id from ai-stream
+
+response:
+  status: 200
+  body:
+    sessionId: string
+    approvalId: string
+    granted: boolean  # whether approved
+
+errors:
+  - status: 400
+    code: bad_request
+    description: approvalId missing
+  - status: 404
+    code: not_found
+    description: session or approvalId not found
+  - status: 500
+    code: internal
+    description: server error

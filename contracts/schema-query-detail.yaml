@@ -1,0 +1,59 @@
+id: schema-query-detail
+description: Fetch content of a single leaf file
+
+request:
+  body:
+    type: runtime | devtime | contract | test | docs | notes  # leaf file type
+    id: string  # relative path (directory entry from schema-query), e.g. "contracts/ai-ask.yaml"
+
+response:
+  status: 200
+  body:
+    type: runtime | devtime | contract | test | docs | notes  # echoed request type
+    id: string  # echoed request id
+
+    runtime?:  # when type=runtime, parsed runtime env (per schema design)
+      description: string
+      atoms:  # map: atom id -> runtime binding
+        <atom-id>:
+          connect:
+            channel: network | stdio | ipc
+            address?: string  # when channel=network or ipc
+            in?: string  # when channel=stdio
+            out?: string  # when channel=stdio
+          telemetry?:  # per-atom observability endpoints
+            logs?: object  # { backend, endpoint }
+            metrics?: object  # { backend, endpoint, aggregation }
+            traces?: object  # { backend, endpoint, sampling, propagation }
+      tests?:  # tests bound to this env
+        - id: string
+          description: string
+          atoms: [string]
+          edges?: [string]
+          case: string  # path under tests/
+
+    devtime?: string  # when type=devtime, raw markdown text
+
+    contract?:  # when type=contract, parsed contract file
+      id: string
+      description: string
+      request: object
+      response: object
+      error: object
+
+    test?: string  # when type=test, raw file content
+
+    docs?: string  # when type=docs, raw markdown text
+
+    notes?: string  # when type=notes, raw markdown text
+
+errors:
+  - status: 400
+    code: bad_request
+    description: invalid type or id
+  - status: 404
+    code: not_found
+    description: file not found
+  - status: 500
+    code: internal
+    description: server error

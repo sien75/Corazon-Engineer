@@ -1,0 +1,324 @@
+# Schema 设计
+
+## 设计原则
+
+1. **Contract First** — 每个接口都有明确的输入输出定义，UI 可渲染为可交互测试面板，AI agent 可理解
+2. **Telemetry 一等公民** — 每个原子和连接都能关联日志/指标/链路，从架构图一键切换到真实数据
+3. **环境无关** — Schema 本身不绑定环境，通过 Runtime 层映射到 local/mock/remote
+4. **YAML 书写，JSON Schema 校验，TypeScript 类型生成**
+
+---
+
+## 通信模型
+
+所有 atom 通信只有三种通道，每种通道上承载具体的协议：
+
+```
+channel: network   → protocol: http | grpc | pgwire | redis | kafka | amqp | s3 | ...
+channel: stdio     → protocol: json-rpc | ndjson | binary | ...
+channel: ipc       → protocol: unix-socket | dbus | shared-memory | ...
+```
+
+channel 决定数据怎么流，protocol 决定数据长什么样。
+
+---
+
+## 总体结构
+
+schema 由 **骨架文件** 与 **内容文件** 组成：
+
+```
+骨架文件(定义系统结构,全量加载)
+├── Atom 层      atoms/    原子项目
+└── Edge 层      edges/    连接定义
+
+内容文件(填充具体内容,按需加载)
+├── runtime    runtime/    运行环境映射
+├── contract   contracts/  接口契约
+├── test       tests/      测试用例
+├── devtime    devtime/    开发时记录
+├── docs       docs/       参考文档
+└── notes      notes/      批注
+```
+
+下面分别介绍各结构的文件格式。
+
+---
+
+## Atom 层 — 原子项目
+
+描述一个最小独立项目/服务/仓库，位于 `atoms/`。格式：
+
+```yaml
+atoms:
+  - name: user-service
+    description: 用户管理与认证服务
+    repo: git@github.com:org/user-service.git
+    path: ./workspace/user-service
+    runtime_type: go
+    runtime_version: "1.22"
+
+    interfaces:
+      in:
+        - id: create-user-api
+          channel: network
+          protocol: http
+          contract: ./contracts/create-user-api.yaml
+          extend:
+            port: 8080
+            path: /api/v1/users
+            method: POST
+        - id: redis-sub
+          channel: network
+          protocol: redis
+          extend:
+            command: SUBSCRIBE
+            topic: session:expired
+
+      out:
+        - id: user-created-event
+          channel: network
+          protocol: kafka
+          contract: ./contracts/user-created-event.yaml
+          extend:
+            topic: user.created
+        - id: postgres-client
+          channel: network
+          protocol: pgwire
+          contract: ./contracts/postgres-client.yaml
+        - id: redis-client
+          channel: network
+          protocol: redis
+          contract: ./contracts/redis-client.yaml
+```
+
+- `interfaces.in` / `interfaces.out` 声明该 atom 的出入接口
+- 接口公共字段：`id` / `channel` / `protocol` / `contract`（指向 `contracts/` 下的契约文件）
+- 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `port/path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）
+
+---
+
+## Edge 层 — 连接定义
+
+定义原子之间的组合方式，位于 `edges/`。格式：
+
+```yaml
+edges:
+  - id: user-to-notification
+    from: user-service
+    from_interface: user-created-event
+    to: notification-service
+    to_interface: send-notification-api
+    channel: network
+    protocol: http
+    description: 用户注册后发送欢迎通知
+```
+
+---
+
+## Runtime 层 — 运行环境映射
+
+把 schema 映射到具体运行环境 —— 连接地址、telemetry 端点、测试。位于 `runtime/`，**文件名即 env 名**（`dev.yaml` → env `dev`）。每个 atom 通过 `connect` 块接入，字段随 channel 变化。atom 怎么被拉起是它自己的事，不进架构 schema。
+
+```yaml
+runtime:
+  dev:
+    description: 本地开发环境
+    atoms:
+      user-service:
+        connect:
+          channel: network
+          address: http://localhost:8080
+        telemetry:
+          logs:
+            backend: filebeat
+            endpoint: localhost:5044
+          metrics:
+            backend: prometheus
+            endpoint: http://localhost:9090
+            aggregation: cumulative
+          traces:
+            backend: otel
+            endpoint: http://localhost:4317
+            sampling: 0.1
+            propagation: w3c
+      notification-service:
+        connect:
+          channel: network
+          address: http://localhost:9090
+      mcp-server:
+        connect:
+          channel: stdio
+          in: /tmp/corazon.mcp.in
+          out: /tmp/corazon.mcp.out
+      local-daemon:
+        connect:
+          channel: ipc
+          address: /var/run/corazon.sock
+    tests:
+      - id: user-registration-flow
+        description: 端到端 —— 用户注册后发送欢迎通知
+        atoms: [user-service, notification-service]
+        edges: [user-to-notification]
+        case: ./tests/user-registration-flow.yaml
+      - id: user-service-api
+        description: user-service HTTP 契约一致性
+        atoms: [user-service]
+        case: ./tests/user-service-api.yaml
+
+  staging:
+    description: 预发环境
+    atoms:
+      user-service:
+        connect:
+          channel: network
+          address: https://user.staging.corazon.com
+      notification-service:
+        connect:
+          channel: network
+          address: https://notify.staging.corazon.com
+
+  prod:
+    description: 线上环境
+    atoms:
+      user-service:
+        connect:
+          channel: network
+          address: https://user.api.corazon.com
+      notification-service:
+        connect:
+          channel: network
+          address: https://notify.api.corazon.com
+```
+
+**connect 字段形态（按 channel）**
+
+| channel | 字段 | 含义 |
+|---|---|---|
+| `network` | `address` | 拨号目标地址，如 `http://`、`grpc://`、`redis://...` |
+| `stdio` | `in` + `out` | 命名管道（atom 自身怎么拉起不在 schema 范畴内） |
+| `ipc` | `address` | 本地通信资源，如 unix socket 路径 |
+
+**telemetry** —— 挂载在 atom 下（每 atom 一份），描述该 atom 的日志/指标/链路端点。
+
+**tests** —— 每个 runtime env 可挂一个 `tests:` 块，承载绑定到该环境的系统级测试。一个 test 圈定一组 atoms/edges（按 id）并把具体定义指向 `tests/` 下的 `case` 文件。atom 声明接口，test 去验证它们。`dev` 可跑全套，`prod` 可不跑或只跑只读检查。
+
+---
+
+## Contract 文件 — 接口契约
+
+描述接口的输入输出与错误，位于 `contracts/`。被 atom 的 `interfaces` 和 test 引用。格式：
+
+```yaml
+id: ai-ask
+description: Ask AI; prompt determines what AI does
+
+request:
+  body:
+    id: string  # session id
+    prompt: string  # what AI should do
+
+response:
+  status: 200
+  body:
+    sessionId: string
+
+errors:
+  - status: 400
+    code: bad_request
+    description: prompt missing or empty
+  - status: 404
+    code: not_found
+    description: session not found
+  - status: 500
+    code: internal
+    description: server error
+```
+
+- `request` / `response` 的 body 即真实数据结构；`stream: sse` 标记流式接口，body 为每条 event 的 schema
+- `errors` 列出本接口可能出现的错误（status / code / description）
+- 字段书写规范（类型、枚举、可选、数组、注释）见 `devtime/iteration-2608/contract 规范.md`
+
+---
+
+## Test 文件 — 测试用例
+
+描述系统级测试，位于 `tests/`，被 runtime env 的 `tests.case` 引用。为普通 markdown 文件，不做格式约定。
+
+## Devtime 文件 — 开发时记录
+
+记录开发过程中的会议、ADR、changelog 等，位于 `devtime/`。为普通 markdown 文件，不做格式约定。
+
+## Docs 文件 — 参考文档
+
+面向使用者的参考文档，位于 `docs/`。为普通 markdown 文件，不做格式约定。
+
+## Notes 文件 — 批注
+
+针对某个实体的标记与讨论，位于 `notes/`。为普通 markdown 文件，不做格式约定。
+
+---
+
+## 文件组织
+
+根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 和 `tests/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。
+
+```yaml
+# corazon.yaml —— 只放根 meta，不枚举数据文件
+project: Corazon
+version: 1.0
+default_runtime: dev
+# 可选：偏离约定时才写
+include:
+  - ../shared-atoms/billing-service.yaml   # 从外部引入一个 atom
+exclude:
+  - atoms/experimental-service.yaml         # 跳过某个文件
+```
+
+```
+project/
+├── corazon.yaml               # 仅根 meta（project、version、default_runtime、include/exclude）
+├── atoms/                     # *.yaml → atom
+│   ├── user-service.yaml
+│   ├── notification-service.yaml
+│   └── ...
+├── edges/                     # *.yaml → edge
+│   ├── user-to-notification.yaml
+│   └── ...
+├── contracts/                 # 内容文件（接口 contract yaml）
+│   ├── create-user-api.yaml
+│   ├── user-created-event.yaml
+│   ├── postgres-client.yaml
+│   ├── redis-client.yaml
+│   └── ...
+├── runtime/                   # *.yaml → runtime env（文件名即 env 名）
+│   ├── dev.yaml
+│   ├── staging.yaml
+│   └── prod.yaml
+├── tests/                     # 内容文件（测试用例 md）
+│   ├── user-registration-flow.yaml
+│   ├── user-service-api.yaml
+│   └── ...
+├── devtime/                   # *.md → 开发时记录（会议 / ADR / changelog）
+├── docs/                      # *.md → 参考文档（引用 contract）
+├── notes/                     # *.md → 批注（anchor 指向实体）
+└── workspace/                 # 本地代码仓库
+```
+
+引用层级（`a |- b` = b 被 a 引用）：
+
+```
+atom
+  |- contract
+edge
+runtime
+  |- test
+    |- contract
+devtime
+  |- contract
+docs
+  |- contract
+notes
+```
+
+加载策略：`atoms` 和 `edges` 全量加载（schema 查询返回完整内容 —— 画图要用）。`runtime` / `contracts` / `tests` / `devtime` / `docs` / `notes` 按需加载 —— 查询只返回路径 / 条目，用到时再取内容。

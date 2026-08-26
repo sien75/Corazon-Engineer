@@ -1,0 +1,35 @@
+id: ai-stream
+description: Stream AI output; frontend renders by kind marker
+
+request:
+  body:
+    id: string  # session id
+
+response:
+  status: 200
+  stream: sse  # body below is the schema of each event
+  body:
+    seq: number  # message sequence
+    kind: markdown | approval | question | error  # render marker
+    markdown?: string  # when kind=markdown
+    approval?:  # when kind=approval: request permission to run a backend operation
+      approvalId: string  # pending operation id, sent to ai-approval
+      title: string  # operation description shown to user
+    question?:  # when kind=question: let user choose
+      text: string  # question text
+      options:
+        - label: string
+          value: string  # sent back to ai-ask as prompt when selected
+    done?: boolean  # last event of the stream
+    error?: { code, message }  # when kind=error
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 404
+    code: not_found
+    description: session not found
+  - status: 500
+    code: internal
+    description: server error

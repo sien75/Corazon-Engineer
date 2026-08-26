@@ -1,0 +1,20 @@
+id: ai-new
+description: Create a new session and return session id
+
+request: {}
+
+response:
+  status: 200
+  body:
+    sessionId: string
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 404
+    code: not_found
+    description: not found
+  - status: 500
+    code: internal
+    description: server error
