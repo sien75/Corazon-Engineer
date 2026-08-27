@@ -1,16 +1,14 @@
 runtime:
   dev:
     description: Playground dev environment
-    atoms:
+    connections:
       demo-service:
-        connect:
-          channel: network
-          address: http://localhost:9000
+        channel: network
+        address: http://localhost:9000
       demo-worker:
-        connect:
-          channel: stdio
-          in: /tmp/playground.worker.in
-          out: /tmp/playground.worker.out
+        channel: stdio
+        in: /tmp/playground.worker.in
+        out: /tmp/playground.worker.out
     tests:
       - id: playground-api
         description: playground API tests

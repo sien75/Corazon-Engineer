@@ -40,7 +40,21 @@ func New(root string) *Server {
 }
 
 func (s *Server) Listen(addr string) error {
-	return http.ListenAndServe(addr, s.mux)
+	return http.ListenAndServe(addr, cors(s.mux))
+}
+
+// cors allows browser frontends on any origin to call the atomic APIs.
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ---------- helpers ----------
@@ -120,6 +134,7 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 		"devtime":   schema.ListEntries(s.root, "devtime"),
 		"docs":      schema.ListEntries(s.root, "docs"),
 		"notes":     schema.ListEntries(s.root, "notes"),
+		"tests":     schema.ListEntries(s.root, "tests"),
 	})
 }
 

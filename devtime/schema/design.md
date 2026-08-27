@@ -1,47 +1,75 @@
 # Schema Design
 
-## Principles
-
-1. **Contract First** — Every interface has a clear input/output definition, renderable as interactive test panels in the UI and understandable by AI agents
-2. **Telemetry as First-Class Citizen** — Every atom and edge can link to logs, metrics, and traces, switching from architecture diagram to real data with one click
-3. **Environment Agnostic** — Schema does not bind to any environment; mapping is done via the Runtime layer
-4. **YAML for writing, JSON Schema for validation, TypeScript for type generation**
-
----
-
-## Communication Model
-
-All atoms communicate through three channels, each carrying specific protocols:
-
-```
-channel: network   → protocol: http | grpc | ws | sse | pgwire | mysql | redis | kafka | amqp | mqtt | s3 | elastic | custom
-channel: stdio     → protocol: json-rpc | ndjson | binary | text
-channel: ipc       → protocol: unix-socket | dbus | shared-mem | signal
-```
-
-channel determines how data flows, protocol determines what data looks like.
-
----
-
 ## Overall Structure
 
-The schema consists of **structure files** and **content files**:
+The schema consists of **static structure** and **scenario**:
 
 ```
-Structure files (define the system structure, loaded in full)
-├── Atom layer      atoms/    atomic project
-└── Edge layer      edges/    connection definition
+Static structure (atom & edge) — define the system structure
+├── Atom layer      atoms/       atomic project
+│   └── Contract    contracts/   interface contract
+├── Edge layer      edges/       connection definition
+├── Docs            docs/        reference docs (cites contract)
+│   └── Contract    contracts/   interface contract
+└── Notes           notes/       annotations
 
-Content files (fill in concrete content, loaded on demand)
-├── runtime    runtime/  runtime environment mapping
-├── contract   contracts/  interface contract
-├── test       tests/      test case
-├── devtime    devtime/    dev-time records
-├── docs       docs/       reference docs
-└── notes      notes/      annotations
+Scenario — fill in concrete content
+├── Runtime         runtime/     runtime environment mapping
+│   └── Test        tests/       test case (cites contract)
+│       └── Contract contracts/  interface contract
+└── Devtime         devtime/     dev-time records
+    └── Contract    contracts/   interface contract
 ```
 
-Each structure's file format is described below.
+Loading strategy: `atoms` and `edges` are loaded in full (the schema query returns their complete content — needed to draw the graph). `runtime`, `contracts`, `tests`, `devtime`, `docs`, and `notes` are loaded on demand — the query returns only paths/entries, content fetched when needed.
+
+---
+
+## File Organization
+
+A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` and `tests/` are content directories. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are ignored everywhere — never parsed as content — so dot-directories are free for fixtures, scratch data, and tooling (e.g. `tests/.playground/`).
+
+```yaml
+# corazon.yaml — root meta only, does NOT enumerate data files
+project: Corazon
+version: 1.0
+default_runtime: dev
+# optional: only when deviating from convention
+include:
+  - ../shared-atoms/billing-service.yaml   # pull in an atom from outside
+exclude:
+  - atoms/experimental-service.yaml         # skip a file
+```
+
+```
+corazon/
+├── corazon.yaml               # Root meta only (project, version, default_runtime, include/exclude)
+├── atoms/                     # *.yaml → atom
+│   ├── user-service.yaml
+│   ├── notification-service.yaml
+│   └── ...
+├── edges/                     # *.yaml → edge
+│   ├── user-to-notification.yaml
+│   └── ...
+├── runtime/                   # *.yaml → runtime env (filename = env name)
+│   ├── dev.yaml
+│   ├── staging.yaml
+│   └── prod.yaml
+├── devtime/                   # *.md → dev-time record (meetings / ADR / changelog)
+├── contracts/                 # content files (interface contract yaml)
+│   ├── create-user-api.yaml
+│   ├── user-created-event.yaml
+│   ├── postgres-client.yaml
+│   ├── redis-client.yaml
+│   └── ...
+├── tests/                     # content files (test case markdown)
+│   ├── user-registration-flow.yaml
+│   ├── user-service-api.yaml
+│   └── ...
+├── docs/                      # *.md → reference doc (cites contracts)
+├── notes/                     # *.md → annotation (marker + thread, anchored to entity)
+└── workspace/                 # Local code repositories
+```
 
 ---
 
@@ -95,7 +123,7 @@ atoms:
 - `interfaces.provides` / `interfaces.consumes` declare the atom's interfaces by role: `provides` = capabilities this atom exposes (others call this atom), `consumes` = capabilities this atom depends on (this atom calls others)
 - `role` is the atom's role in the architecture (service | database | cache | queue | storage | gateway | scheduler | worker | proxy), see devtime/schema/enums.md
 - Common interface fields: `id` / `channel` / `protocol` / `contract` (pointing to a contract file under `contracts/`)
-- Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.). Bind addresses/ports belong to the Runtime layer's `connect.address`, not to the atom
+- Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.). Bind addresses/ports belong to the Runtime layer's `connections.address`, not to the atom
 
 ---
 
@@ -119,43 +147,30 @@ edges:
 
 ## Runtime Layer
 
-Maps the schema to a concrete runtime environment — connection addresses, telemetry endpoints, tests. Under `runtime/`, **filename = env name** (`dev.yaml` → env `dev`). Each atom is reached via a `connect` block whose fields depend on its channel. How an atom is launched is the atom's own concern and is not part of the architecture schema.
+Maps the schema to a concrete runtime environment. Under `runtime/`, **filename = env name** (`dev.yaml` → env `dev`). Each env has four blocks: `description` (environment description), `connections` (how each atom is reached — keyed per atom, fields depend on its channel), `telemetry` (monitoring observation for logs/metrics/traces), and `tests` (system-level tests bound to this environment). How an atom is launched is the atom's own concern and is not part of the architecture schema.
 
 ```yaml
 runtime:
   dev:
     description: Local development environment
-    atoms:
+    connections:
       user-service:
-        connect:
-          channel: network
-          address: http://localhost:8080
-        telemetry:
-          logs:
-            backend: filebeat
-            endpoint: localhost:5044
-          metrics:
-            backend: prometheus
-            endpoint: http://localhost:9090
-            aggregation: cumulative
-          traces:
-            backend: otel
-            endpoint: http://localhost:4317
-            sampling: 0.1
-            propagation: w3c
+        channel: network
+        address: http://localhost:8080
       notification-service:
-        connect:
-          channel: network
-          address: http://localhost:9090
+        channel: network
+        address: http://localhost:9090
       mcp-server:
-        connect:
-          channel: stdio
-          in: /tmp/corazon.mcp.in
-          out: /tmp/corazon.mcp.out
+        channel: stdio
+        in: /tmp/corazon.mcp.in
+        out: /tmp/corazon.mcp.out
       local-daemon:
-        connect:
-          channel: ipc
-          address: /var/run/corazon.sock
+        channel: ipc
+        address: /var/run/corazon.sock
+    telemetry:
+      user-service:
+        backend: otlp
+        endpoint: http://localhost:4317
     tests:
       - id: user-registration-flow
         description: E2E — welcome notification after user registration
@@ -169,30 +184,26 @@ runtime:
 
   staging:
     description: Staging environment
-    atoms:
+    connections:
       user-service:
-        connect:
-          channel: network
-          address: https://user.staging.corazon.com
+        channel: network
+        address: https://user.staging.corazon.com
       notification-service:
-        connect:
-          channel: network
-          address: https://notify.staging.corazon.com
+        channel: network
+        address: https://notify.staging.corazon.com
 
   prod:
     description: Production environment
-    atoms:
+    connections:
       user-service:
-        connect:
-          channel: network
-          address: https://user.api.corazon.com
+        channel: network
+        address: https://user.api.corazon.com
       notification-service:
-        connect:
-          channel: network
-          address: https://notify.api.corazon.com
+        channel: network
+        address: https://notify.api.corazon.com
 ```
 
-**connect field shape per channel**
+**connections field shape per channel**
 
 | channel | field | meaning |
 |---|---|---|
@@ -200,7 +211,7 @@ runtime:
 | `stdio` | `in` + `out` | named pipes (the atom's own launch is out of scope for the schema) |
 | `ipc` | `address` | a local inter-process resource, e.g. a unix socket path |
 
-**telemetry** — attached per atom, describing the atom's log/metric/trace endpoints.
+**telemetry** — the monitoring (read/listen) side of the runtime: where to observe logs/metrics/traces. Keyed per atom for now (granularity to be decided). A single OTLP endpoint carries all three signals — no per-signal split.
 
 **tests** — each runtime env may carry a `tests:` block of system-level tests bound to that environment. A test scopes itself to a subset of atoms/edges (by id) and points its actual definition at a `case` file under `tests/`. Atoms declare interfaces; tests exercise them. `dev` may run the full suite while `prod` runs none or read-only checks.
 
@@ -259,69 +270,3 @@ User-facing reference docs, under `docs/`. Plain markdown files, no format conve
 ## Notes Files — Annotations
 
 Markers and discussions targeting an entity, under `notes/`. Plain markdown files, no format convention.
-
----
-
-## File Organization
-
-A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` and `tests/` are content directories. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are ignored everywhere — never parsed as content — so dot-directories are free for fixtures, scratch data, and tooling (e.g. `tests/.playground/`).
-
-```yaml
-# corazon.yaml — root meta only, does NOT enumerate data files
-project: Corazon
-version: 1.0
-default_runtime: dev
-# optional: only when deviating from convention
-include:
-  - ../shared-atoms/billing-service.yaml   # pull in an atom from outside
-exclude:
-  - atoms/experimental-service.yaml         # skip a file
-```
-
-```
-corazon/
-├── corazon.yaml               # Root meta only (project, version, default_runtime, include/exclude)
-├── atoms/                     # *.yaml → atom
-│   ├── user-service.yaml
-│   ├── notification-service.yaml
-│   └── ...
-├── edges/                     # *.yaml → edge
-│   ├── user-to-notification.yaml
-│   └── ...
-├── contracts/                 # content files (interface contract yaml)
-│   ├── create-user-api.yaml
-│   ├── user-created-event.yaml
-│   ├── postgres-client.yaml
-│   ├── redis-client.yaml
-│   └── ...
-├── runtime/                   # *.yaml → runtime env (filename = env name)
-│   ├── dev.yaml
-│   ├── staging.yaml
-│   └── prod.yaml
-├── tests/                     # content files (test case markdown)
-│   ├── user-registration-flow.yaml
-│   ├── user-service-api.yaml
-│   └── ...
-├── devtime/                   # *.md → dev-time record (meetings / ADR / changelog)
-├── docs/                      # *.md → reference doc (cites contracts)
-├── notes/                     # *.md → annotation (marker + thread, anchored to entity)
-└── workspace/                 # Local code repositories
-```
-
-Reference hierarchy (`a |- b` = b referenced by a):
-
-```
-atom
-  |- contract
-edge
-runtime
-  |- test
-    |- contract
-devtime
-  |- contract
-docs
-  |- contract
-notes
-```
-
-Loading strategy: `atoms` and `edges` are loaded in full (the schema query returns their complete content — needed to draw the graph). `runtime`, `contracts`, `tests`, `devtime`, `docs`, and `notes` are loaded on demand — the query returns only paths/entries, content fetched when needed.

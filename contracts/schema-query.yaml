@@ -46,6 +46,7 @@ response:
     devtime: [string]  # entries under devtime/, relative paths
     docs: [string]  # entries under docs/, relative paths
     notes: [string]  # entries under notes/, relative paths
+    tests: [string]  # entries under tests/, relative paths e.g. "tests/core-ai-flow.md"
 
 errors:
   - status: 400

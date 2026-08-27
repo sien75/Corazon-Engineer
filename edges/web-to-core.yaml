@@ -1,0 +1,17 @@
+edges:
+  - id: web-to-core
+    from: web
+    from_interface: schema-query
+    to: core
+    to_interface: schema-query
+    channel: network
+    protocol: http
+    description: Web frontend pulls the full schema (atoms + edges) from core to render the architecture graph
+  - id: web-to-core-detail
+    from: web
+    from_interface: schema-query-detail
+    to: core
+    to_interface: schema-query-detail
+    channel: network
+    protocol: http
+    description: Web frontend fetches section content (runtime/contracts/devtime/docs/notes) for the top menu views

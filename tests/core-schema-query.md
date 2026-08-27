@@ -46,7 +46,7 @@ curl -s -X POST http://localhost:8080/schema/query-detail \
   -d '{"type": "runtime", "id": "runtime/dev.yaml"}'
 ```
 
-Expected: 200, `runtime.description` is `Playground dev environment`, `runtime.atoms.demo-service.connect.address` is `http://localhost:9000`, `runtime.atoms.demo-worker.connect.channel` is `stdio` (with `in`/`out` pipes), `runtime.tests` has 1 entry.
+Expected: 200, `runtime.description` is `Playground dev environment`, `runtime.connections.demo-service.address` is `http://localhost:9000`, `runtime.connections.demo-worker.channel` is `stdio` (with `in`/`out` pipes), `runtime.tests` has 1 entry.
 
 ## 4. schema-query-detail contract content
 

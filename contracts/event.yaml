@@ -57,17 +57,16 @@ response:
 
       runtime?:  # when type=runtime
         description: string
-        atoms:
+        connections:
           <atom-id>:
-            connect:
-              channel: network | stdio | ipc
-              address?: string
-              in?: string
-              out?: string
-            telemetry?:
-              logs?: object
-              metrics?: object
-              traces?: object
+            channel: network | stdio | ipc
+            address?: string
+            in?: string
+            out?: string
+        telemetry?:
+          <atom-id>:
+            backend: string
+            endpoint: string
         tests?:
           - id: string
             description: string

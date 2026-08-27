@@ -79,9 +79,9 @@ proxy        — Proxy service
 
 ---
 
-## Runtime Connection (runtime.atoms.connect)
+## Runtime Connection (runtime.connections)
 
-Field shape depends on `channel`. Same atom maps to different connect blocks across runtime envs. How an atom is launched is out of scope — only how to reach it.
+Field shape depends on `channel`. Same atom maps to different connection entries across runtime envs. How an atom is launched is out of scope — only how to reach it.
 
 ```
 network channel:

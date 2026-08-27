@@ -1,11 +1,10 @@
 runtime:
   dev:
     description: Local development environment
-    atoms:
+    connections:
       core:
-        connect:
-          channel: network
-          address: http://localhost:8080
+        channel: network
+        address: http://localhost:8080
     tests:
       - id: core-schema-query
         description: schema-query / schema-query-detail contract conformance

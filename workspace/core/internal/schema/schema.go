@@ -184,30 +184,29 @@ func Validate(objType string, body map[string]interface{}) []FieldError {
 		if str(body, "description") == "" {
 			fail("description", "required")
 		}
-		atoms, _ := body["atoms"].(map[string]interface{})
-		if len(atoms) == 0 {
-			fail("atoms", "required, must map atom id to runtime binding")
+		connections, _ := body["connections"].(map[string]interface{})
+		if len(connections) == 0 {
+			fail("connections", "required, must map atom id to runtime connection")
 		}
-		for id, raw := range atoms {
-			binding, _ := raw.(map[string]interface{})
-			connect, _ := binding["connect"].(map[string]interface{})
+		for id, raw := range connections {
+			connect, _ := raw.(map[string]interface{})
 			if connect == nil {
-				fail("atoms."+id+".connect", "required")
+				fail("connections."+id, "required")
 				continue
 			}
 			ch := str(connect, "channel")
 			if !contains(Channels, ch) {
-				fail("atoms."+id+".connect.channel", "must be one of network | stdio | ipc")
+				fail("connections."+id+".channel", "must be one of network | stdio | ipc")
 				continue
 			}
 			switch ch {
 			case "network", "ipc":
 				if str(connect, "address") == "" {
-					fail("atoms."+id+".connect.address", "required when channel="+ch)
+					fail("connections."+id+".address", "required when channel="+ch)
 				}
 			case "stdio":
 				if str(connect, "in") == "" || str(connect, "out") == "" {
-					fail("atoms."+id+".connect", "in and out are required when channel=stdio")
+					fail("connections."+id, "in and out are required when channel=stdio")
 				}
 			}
 		}
