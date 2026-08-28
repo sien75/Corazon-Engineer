@@ -16,6 +16,11 @@ const types = {
 http
   .createServer((req, res) => {
     const urlPath = decodeURIComponent(req.url.split("?")[0]);
+    if (urlPath === "/favicon.ico") {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
     let file = path.join(root, urlPath);
     if (!file.startsWith(root)) {
       res.writeHead(403);

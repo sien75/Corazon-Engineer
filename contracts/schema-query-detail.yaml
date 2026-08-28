@@ -14,7 +14,7 @@ response:
 
     runtime?:  # when type=runtime, parsed runtime env (per schema design)
       description: string
-      connections:  # map: atom id -> runtime connection
+      endpoints:  # map: atom id -> runtime endpoint
         <atom-id>:
           channel: network | stdio | ipc
           address?: string  # when channel=network or ipc
@@ -22,8 +22,8 @@ response:
           out?: string  # when channel=stdio
       telemetry?:  # per-atom observability endpoints
         <atom-id>:
-          backend: string  # e.g. otlp
-          endpoint: string  # single OTLP endpoint carries all three signals
+          backend: string  # e.g. otel
+          endpoint: string  # single otel endpoint carries all three signals
       tests?:  # tests bound to this env
         - id: string
           description: string

@@ -123,7 +123,7 @@ atoms:
 - `interfaces.provides` / `interfaces.consumes` declare the atom's interfaces by role: `provides` = capabilities this atom exposes (others call this atom), `consumes` = capabilities this atom depends on (this atom calls others)
 - `role` is the atom's role in the architecture (service | database | cache | queue | storage | gateway | scheduler | worker | proxy), see devtime/schema/enums.md
 - Common interface fields: `id` / `channel` / `protocol` / `contract` (pointing to a contract file under `contracts/`)
-- Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.). Bind addresses/ports belong to the Runtime layer's `connections.address`, not to the atom
+- Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.). Bind addresses/ports belong to the Runtime layer's `endpoints.address`, not to the atom
 
 ---
 
@@ -147,13 +147,13 @@ edges:
 
 ## Runtime Layer
 
-Maps the schema to a concrete runtime environment. Under `runtime/`, **filename = env name** (`dev.yaml` → env `dev`). Each env has four blocks: `description` (environment description), `connections` (how each atom is reached — keyed per atom, fields depend on its channel), `telemetry` (monitoring observation for logs/metrics/traces), and `tests` (system-level tests bound to this environment). How an atom is launched is the atom's own concern and is not part of the architecture schema.
+Maps the schema to a concrete runtime environment. Under `runtime/`, **filename = env name** (`dev.yaml` → env `dev`). Each env has four blocks: `description` (environment description), `endpoints` (how each atom is reached — keyed per atom, fields depend on its channel), `telemetry` (monitoring observation for logs/metrics/traces), and `tests` (system-level tests bound to this environment). How an atom is launched is the atom's own concern and is not part of the architecture schema.
 
 ```yaml
 runtime:
   dev:
     description: Local development environment
-    connections:
+    endpoints:
       user-service:
         channel: network
         address: http://localhost:8080
@@ -169,7 +169,7 @@ runtime:
         address: /var/run/corazon.sock
     telemetry:
       user-service:
-        backend: otlp
+        backend: otel
         endpoint: http://localhost:4317
     tests:
       - id: user-registration-flow
@@ -184,7 +184,7 @@ runtime:
 
   staging:
     description: Staging environment
-    connections:
+    endpoints:
       user-service:
         channel: network
         address: https://user.staging.corazon.com
@@ -194,7 +194,7 @@ runtime:
 
   prod:
     description: Production environment
-    connections:
+    endpoints:
       user-service:
         channel: network
         address: https://user.api.corazon.com
@@ -203,7 +203,7 @@ runtime:
         address: https://notify.api.corazon.com
 ```
 
-**connections field shape per channel**
+**endpoints field shape per channel**
 
 | channel | field | meaning |
 |---|---|---|
@@ -211,7 +211,7 @@ runtime:
 | `stdio` | `in` + `out` | named pipes (the atom's own launch is out of scope for the schema) |
 | `ipc` | `address` | a local inter-process resource, e.g. a unix socket path |
 
-**telemetry** — the monitoring (read/listen) side of the runtime: where to observe logs/metrics/traces. Keyed per atom for now (granularity to be decided). A single OTLP endpoint carries all three signals — no per-signal split.
+**telemetry** — the monitoring (read/listen) side of the runtime: where to observe logs/metrics/traces. Keyed per atom for now (granularity to be decided). A single otel endpoint carries all three signals — no per-signal split.
 
 **tests** — each runtime env may carry a `tests:` block of system-level tests bound to that environment. A test scopes itself to a subset of atoms/edges (by id) and points its actual definition at a `case` file under `tests/`. Atoms declare interfaces; tests exercise them. `dev` may run the full suite while `prod` runs none or read-only checks.
 

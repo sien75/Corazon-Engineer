@@ -43,7 +43,7 @@ request:
 
     runtime?:
       description: string
-      connections:
+      endpoints:
         <atom-id>:
           channel: network | stdio | ipc
           address?: string  # when channel=network|ipc
@@ -51,7 +51,7 @@ request:
           out?: string  # when channel=stdio
       telemetry?:
         <atom-id>:
-          backend: string  # e.g. otlp
+          backend: string  # e.g. otel
           endpoint: string
       tests?:
         - id: string

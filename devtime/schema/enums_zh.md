@@ -83,9 +83,9 @@ proxy        — 代理服务
 
 ---
 
-## Runtime 连接方式 (runtime.connections)
+## Runtime 端点 (runtime.endpoints)
 
-字段形态随 `channel` 变化。同一个 atom 在不同 runtime env 下映射为不同的 connection 条目。atom 怎么被拉起不在 schema 范畴内，这里只描述怎么连到它。
+字段形态随 `channel` 变化。同一个 atom 在不同 runtime env 下映射为不同的 endpoint 条目。atom 怎么被拉起不在 schema 范畴内，这里只描述怎么连到它。
 
 ```
 network 通道:

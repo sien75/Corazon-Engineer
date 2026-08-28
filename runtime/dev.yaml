@@ -1,7 +1,7 @@
 runtime:
   dev:
     description: Local development environment
-    connections:
+    endpoints:
       core:
         channel: network
         address: http://localhost:8080

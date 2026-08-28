@@ -57,7 +57,7 @@ response:
 
       runtime?:  # when type=runtime
         description: string
-        connections:
+        endpoints:
           <atom-id>:
             channel: network | stdio | ipc
             address?: string

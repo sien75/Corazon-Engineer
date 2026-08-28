@@ -123,7 +123,7 @@ atoms:
 - `interfaces.provides` / `interfaces.consumes` 按角色声明接口：`provides` = 本 atom 提供的能力（别人调本 atom）,`consumes` = 本 atom 依赖的能力（本 atom 调别人）
 - `role` 是 atom 在架构中的角色（service | database | cache | queue | storage | gateway | scheduler | worker | proxy），见 devtime/schema/enums_zh.md
 - 接口公共字段：`id` / `channel` / `protocol` / `contract`（指向 `contracts/` 下的契约文件）
-- 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）。监听地址/端口属于部署关注点，由 Runtime 层的 `connections.address` 表达，不写在 atom 里
+- 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）。监听地址/端口属于部署关注点，由 Runtime 层的 `endpoints.address` 表达，不写在 atom 里
 
 ---
 
@@ -147,13 +147,13 @@ edges:
 
 ## Runtime 层 — 运行环境映射
 
-把 schema 映射到具体运行环境。位于 `runtime/`，**文件名即 env 名**（`dev.yaml` → env `dev`）。每个 env 有四个块：`description`（环境描述）、`connections`（每个 atom 怎么接入 —— 按 atom 为键，字段随 channel 变化）、`telemetry`（监控观测：logs/metrics/traces）、`tests`（绑定到该环境的系统级测试）。atom 怎么被拉起是它自己的事，不进架构 schema。
+把 schema 映射到具体运行环境。位于 `runtime/`，**文件名即 env 名**（`dev.yaml` → env `dev`）。每个 env 有四个块：`description`（环境描述）、`endpoints`（每个 atom 怎么接入 —— 按 atom 为键，字段随 channel 变化）、`telemetry`（监控观测：logs/metrics/traces）、`tests`（绑定到该环境的系统级测试）。atom 怎么被拉起是它自己的事，不进架构 schema。
 
 ```yaml
 runtime:
   dev:
     description: 本地开发环境
-    connections:
+    endpoints:
       user-service:
         channel: network
         address: http://localhost:8080
@@ -169,7 +169,7 @@ runtime:
         address: /var/run/corazon.sock
     telemetry:
       user-service:
-        backend: otlp
+        backend: otel
         endpoint: http://localhost:4317
     tests:
       - id: user-registration-flow
@@ -184,7 +184,7 @@ runtime:
 
   staging:
     description: 预发环境
-    connections:
+    endpoints:
       user-service:
         channel: network
         address: https://user.staging.corazon.com
@@ -194,7 +194,7 @@ runtime:
 
   prod:
     description: 线上环境
-    connections:
+    endpoints:
       user-service:
         channel: network
         address: https://user.api.corazon.com
@@ -203,7 +203,7 @@ runtime:
         address: https://notify.api.corazon.com
 ```
 
-**connections 字段形态（按 channel）**
+**endpoints 字段形态（按 channel）**
 
 | channel | 字段 | 含义 |
 |---|---|---|
@@ -211,7 +211,7 @@ runtime:
 | `stdio` | `in` + `out` | 命名管道（atom 自身怎么拉起不在 schema 范畴内） |
 | `ipc` | `address` | 本地通信资源，如 unix socket 路径 |
 
-**telemetry** —— 监控（读/监听）侧：在哪里观测 logs/metrics/traces。目前按 atom 为键（粒度待定）。统一为单个 OTLP endpoint 承载三种信号，不再按信号拆分。
+**telemetry** —— 监控（读/监听）侧：在哪里观测 logs/metrics/traces。目前按 atom 为键（粒度待定）。统一为单个 otel endpoint 承载三种信号，不再按信号拆分。
 
 **tests** —— 每个 runtime env 可挂一个 `tests:` 块，承载绑定到该环境的系统级测试。一个 test 圈定一组 atoms/edges（按 id）并把具体定义指向 `tests/` 下的 `case` 文件。atom 声明接口，test 去验证它们。`dev` 可跑全套，`prod` 可不跑或只跑只读检查。
 
