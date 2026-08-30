@@ -257,7 +257,7 @@ errors:
 
 描述系统级测试，位于 `tests/`，被 runtime env 的 `tests.case` 引用。为普通 markdown 文件，不做格式约定。
 
-测试绝不对真实项目树执行。测试在 `.playground/` 中运行——它是仓库根目录下一个空白或 mock 的 corazon 项目（git 忽略），由测试准备步骤搭建（如从 `tests/.playground/` 这类 fixture 生成），绝不拷贝真实项目。被测后端启动时将项目根指向 `.playground/`，测试与真实 schema 内容完全解耦，增删改只落在 mock 上。`.playground/` 可随时删除重建。
+测试绝不对真实项目树执行。测试在 `.corazon/.playground/` 中运行——`.corazon/` 是项目根下 git 忽略的私有目录，承载凭据（`credentials.md`，含 ai 密钥）、sqlite 数据（`corazon.db`）等运行时数据；`.corazon/.playground/` 是其下的空白或 mock corazon 项目，由测试准备步骤搭建（如从 `tests/.playground/` 这类 fixture 生成），绝不拷贝真实项目。被测后端启动时将项目根指向 `.corazon/.playground/`，测试与真实 schema 内容完全解耦，增删改只落在 mock 上。`.corazon/.playground/` 可随时删除重建。
 
 ## Devtime 文件 — 开发时记录
 

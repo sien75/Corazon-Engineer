@@ -1,6 +1,8 @@
 import { Graph, CanvasBlock } from "https://esm.sh/@gravity-ui/graph@1.11.3";
 
-const API_BASE = "http://localhost:8080";
+const STATIC_BASE = "http://localhost:7502"; // static: schema
+const AI_BASE = "http://localhost:7501";      // ai: conversation
+const LOG_BASE = "http://localhost:7503";     // log: records
 
 const panelEl = document.getElementById("panel");
 const panelTitleEl = document.getElementById("panel-title");
@@ -148,7 +150,7 @@ function toConnections(edges) {
 }
 
 async function loadSchema() {
-  const res = await fetch(`${API_BASE}/schema/query`, {
+  const res = await fetch(`${STATIC_BASE}/static/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",
@@ -156,6 +158,43 @@ async function loadSchema() {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
   return data;
+}
+
+// subscribe to static schema-change stream; reload schema on mutation events
+function subscribeSchemaStream() {
+  fetch(`${STATIC_BASE}/static/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ env: "dev", kinds: "schema" }),
+  })
+    .then(async (res) => {
+      if (!res.ok || !res.body) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const frames = buf.split("\n\n");
+        buf = frames.pop();
+        for (const frame of frames) {
+          for (const line of frame.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload) continue;
+            let ev;
+            try {
+              ev = JSON.parse(payload);
+            } catch {
+              continue;
+            }
+            if (ev.kind === "schema") refresh();
+          }
+        }
+      }
+    })
+    .catch(() => {});
 }
 
 async function refresh() {
@@ -181,7 +220,7 @@ async function refresh() {
   } catch (err) {
     contentEl.hidden = false;
     graphEl.hidden = true;
-    contentEl.innerHTML = `<div class="empty-hint">load failed: ${escapeHtml(err.message)} (is core running on ${API_BASE}?)</div>`;
+    contentEl.innerHTML = `<div class="empty-hint">load failed: ${escapeHtml(err.message)} (is static running on ${STATIC_BASE}?)</div>`;
   }
 }
 
@@ -391,7 +430,7 @@ function route() {
 }
 
 async function fetchDetail(type, id) {
-  const res = await fetch(`${API_BASE}/schema/query-detail`, {
+  const res = await fetch(`${STATIC_BASE}/static/query-detail`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type, id }),
@@ -443,8 +482,163 @@ contentEl.addEventListener("click", (event) => {
   navigate(link.getAttribute("href"));
 });
 
+// ---------- ai panel ----------
+
+const aiEl = document.getElementById("ai");
+const aiToggleEl = document.getElementById("ai-toggle");
+const aiMessagesEl = document.getElementById("ai-messages");
+const aiInputEl = document.getElementById("ai-input-field");
+const aiSendEl = document.getElementById("ai-send");
+let aiSession = null;
+let aiSeenSeq = 0;
+
+function aiAppend(role, text) {
+  const div = document.createElement("div");
+  div.className = `ai-msg ai-${role}`;
+  div.textContent = text;
+  aiMessagesEl.appendChild(div);
+  aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
+  return div;
+}
+
+function aiApprovalCard(approval) {
+  const div = document.createElement("div");
+  div.className = "ai-msg ai-assistant ai-approval";
+  div.innerHTML = `
+    <div class="ai-approval-title">${escapeHtml(approval?.title || "approval requested")}</div>
+    <button class="ai-approval-btn" type="button">approve</button>`;
+  const btn = div.querySelector(".ai-approval-btn");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "approving…";
+    try {
+      const res = await fetch(`${AI_BASE}/ai/approval`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: aiSession, approvalId: approval.approvalId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error?.message || res.status);
+      btn.textContent = "approved ✓";
+    } catch (err) {
+      btn.textContent = `failed: ${err.message}`;
+      btn.disabled = false;
+    }
+  });
+  aiMessagesEl.appendChild(div);
+  aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
+}
+
+async function aiNew() {
+  const res = await fetch(`${AI_BASE}/ai/new`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+  aiSession = data.sessionId;
+  aiSeenSeq = 0;
+}
+
+async function aiStream() {
+  const res = await fetch(`${AI_BASE}/ai/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: aiSession }),
+  });
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}));
+    aiAppend("assistant", `[error] ${data.error?.message || res.status}`);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let assistant = null;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const frames = buf.split("\n\n");
+    buf = frames.pop();
+    for (const frame of frames) {
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload) continue;
+        let ev;
+        try {
+          ev = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+        if (typeof ev.seq === "number") {
+          if (ev.seq <= aiSeenSeq) continue; // already rendered from an earlier stream
+          aiSeenSeq = ev.seq;
+        }
+        if (ev.kind === "markdown" && ev.markdown) {
+          if (!assistant) assistant = aiAppend("assistant", "");
+          assistant.textContent += ev.markdown;
+          aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
+        } else if (ev.kind === "error") {
+          aiAppend("assistant", `[error] ${ev.error?.message || ""}`);
+        } else if (ev.kind === "approval") {
+          aiApprovalCard(ev.approval);
+        }
+        if (ev.done) assistant = null;
+      }
+    }
+  }
+}
+
+async function aiSend() {
+  const prompt = aiInputEl.value.trim();
+  if (!prompt || !aiSession) return;
+  aiInputEl.value = "";
+  aiAppend("user", prompt);
+  const res = await fetch(`${AI_BASE}/ai/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: aiSession, prompt }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    aiAppend("assistant", `[error] ${data.error?.message || res.status}`);
+    return;
+  }
+  await aiStream();
+}
+
+aiToggleEl.addEventListener("click", async () => {
+  const open = aiEl.hidden;
+  aiEl.hidden = !open;
+  aiToggleEl.classList.toggle("active", open);
+  if (open) {
+    if (!aiSession) {
+      try {
+        await aiNew();
+      } catch (err) {
+        aiAppend("assistant", `[error] ${err.message}`);
+      }
+    }
+    aiInputEl.focus();
+  }
+  graph?.updateSize();
+});
+
+aiSendEl.addEventListener("click", aiSend);
+aiInputEl.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  if (event.isComposing || event.keyCode === 229) return; // IME 组词确认,不发送
+  if (event.shiftKey) return; // Shift+Enter 换行
+  event.preventDefault(); // Enter 发送
+  aiSend();
+});
+
 window.addEventListener("popstate", route);
 
 route();
 refresh();
+subscribeSchemaStream();
 

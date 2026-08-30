@@ -2,23 +2,29 @@ runtime:
   dev:
     description: Local development environment
     endpoints:
-      core:
+      static:
         channel: network
-        address: http://localhost:8080
+        address: http://localhost:7502
+      ai:
+        channel: network
+        address: http://localhost:7501
+      log:
+        channel: network
+        address: http://localhost:7503
     tests:
-      - id: core-schema-query
-        description: schema-query / schema-query-detail contract conformance
-        atoms: [core]
-        case: ./tests/core-schema-query.md
-      - id: core-schema-mutation
-        description: schema-mutation add/update/remove + validation failures
-        atoms: [core]
-        case: ./tests/core-schema-mutation.md
+      - id: core-static-query
+        description: static-query / static-query-detail contract conformance
+        atoms: [static]
+        case: ./tests/core-static-query.md
+      - id: core-static-mutation
+        description: static-mutation add/update/remove + validation failures
+        atoms: [static]
+        case: ./tests/core-static-mutation.md
       - id: core-search-event
-        description: search + event SSE subscription
-        atoms: [core]
+        description: search + static-stream SSE subscription
+        atoms: [static]
         case: ./tests/core-search-event.md
       - id: core-ai-flow
         description: AI session flow — new / ask / stream / approval / delete
-        atoms: [core]
+        atoms: [ai]
         case: ./tests/core-ai-flow.md

@@ -1,0 +1,47 @@
+atoms:
+  - name: static
+    description: Corazon static service — parses the corazon schema and exposes schema query/detail/search/mutation/stream APIs
+    path: ./workspace/static
+    runtime_type: go
+    runtime_version: "1.22"
+    role: service
+
+    interfaces:
+      provides:
+        - id: static-query
+          channel: network
+          protocol: http
+          contract: ./contracts/static-query.yaml
+          extend:
+            path: /static/query
+            method: POST
+        - id: static-query-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/static-query-detail.yaml
+          extend:
+            path: /static/query-detail
+            method: POST
+        - id: static-mutation
+          channel: network
+          protocol: http
+          contract: ./contracts/static-mutation.yaml
+          extend:
+            path: /static/mutation
+            method: POST
+        - id: static-search
+          channel: network
+          protocol: http
+          contract: ./contracts/static-search.yaml
+          extend:
+            path: /static/search
+            method: POST
+        - id: static-stream
+          channel: network
+          protocol: http
+          contract: ./contracts/static-stream.yaml
+          extend:
+            path: /static/stream
+            method: POST
+
+      consumes: []

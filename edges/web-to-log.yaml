@@ -1,0 +1,9 @@
+edges:
+  - id: web-to-log
+    from: web
+    from_interface: log-query
+    to: log
+    to_interface: log-query
+    channel: network
+    protocol: http
+    description: Web frontend queries log records (call / observe / conversation) for the records panel

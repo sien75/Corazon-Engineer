@@ -1,0 +1,17 @@
+edges:
+  - id: web-to-ai
+    from: web
+    from_interface: ai-new
+    to: ai
+    to_interface: ai-new
+    channel: network
+    protocol: http
+    description: Web frontend creates an ai conversation session
+  - id: web-to-ai-ask
+    from: web
+    from_interface: ai-ask
+    to: ai
+    to_interface: ai-ask
+    channel: network
+    protocol: http
+    description: Web frontend sends a prompt to ai; ai orchestrates the operation (reply streams back)

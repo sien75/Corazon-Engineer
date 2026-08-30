@@ -1,0 +1,102 @@
+id: static-mutation
+description: Atomic schema mutation; one object at a time (add/update/remove), backed by file changes, for AI orchestration and audit trail
+
+request:
+  body:
+    op: add | update | remove
+    type: atom | edge | runtime | devtime | contract | test | docs | notes
+    id: string  # relative path; backend may generate on add
+
+    # exactly one field matching type (required on add/update, ignored on remove)
+    atom?:
+      name: string  # atom id / unique name
+      description: string
+      repo?: string  # git repository URL
+      path?: string  # local checkout path
+      runtime_type: string  # native | go | browser | node | bun | jre | python | dotnet | beam | ruby | php
+      runtime_version?: string  # e.g. "1.22"
+      role?: string  # service | database | cache | queue | storage | gateway | scheduler | worker | proxy
+
+      interfaces:
+        provides:  # capabilities this atom provides (others call this atom)
+          - id: string
+            channel: network | stdio | ipc
+            protocol: string  # per channel, see devtime/schema/enums_zh.md
+            contract?: string  # path under contracts/, e.g. "contracts/create-user-api.yaml"
+            extend?: object  # protocol-specific fields (path, method, command, topic, ...); shape varies by protocol
+        consumes:  # capabilities this atom consumes (this atom calls others)
+          - id: string
+            channel: network | stdio | ipc
+            protocol: string  # per channel, see devtime/schema/enums_zh.md
+            contract?: string  # path under contracts/, e.g. "contracts/user-created-event.yaml"
+            extend?: object  # protocol-specific fields (topic, ...); shape varies by protocol
+
+    edge?:
+      id: string
+      from: string  # source atom name
+      from_interface: string  # source atom out interface id
+      to: string  # target atom name
+      to_interface: string  # target atom in interface id
+      channel: network | stdio | ipc
+      protocol: string  # per channel, see devtime/schema/enums_zh.md
+      description: string
+
+    runtime?:
+      description: string
+      endpoints:
+        <atom-id>:
+          channel: network | stdio | ipc
+          address?: string  # when channel=network|ipc
+          in?: string  # when channel=stdio
+          out?: string  # when channel=stdio
+      telemetry?:
+        <atom-id>:
+          backend: string  # e.g. otel
+          endpoint: string
+      tests?:
+        - id: string
+          description: string
+          atoms: [string]
+          edges?: [string]
+          case: string
+
+    devtime?: string  # raw markdown
+
+    contract?:
+      id: string
+      description: string
+      request: object
+      response: object
+      error: object
+
+    test?: string  # raw file content
+
+    docs?: string  # raw markdown
+    notes?: string  # raw markdown
+
+response:
+  status: 200
+  body:
+    op: add | update | remove  # echoed operation
+    type: atom | edge | runtime | devtime | contract | test | docs | notes  # echoed type
+    id: string  # affected object path (newly generated on add)
+    file: string  # modified file path (audit trail)
+    # validation failures are rejected before writing and returned as 422 (see errors)
+
+errors:
+  - status: 400
+    code: bad_request
+    description: invalid op/type/content or missing required fields
+  - status: 404
+    code: not_found
+    description: object not found on update/remove
+  - status: 422
+    code: validation_failed
+    description: content does not conform to the type's format conventions; file NOT written
+    body:
+      errors:
+        - field: string  # offending field path (e.g. "interfaces.provides[0].contract")
+          message: string  # failure reason
+  - status: 500
+    code: internal
+    description: server error

@@ -1,0 +1,17 @@
+edges:
+  - id: ai-to-log-write
+    from: ai
+    from_interface: log-mutation
+    to: log
+    to_interface: log-mutation
+    channel: network
+    protocol: http
+    description: ai writes records (call / observe / conversation) into log after an operation
+  - id: ai-to-log-read
+    from: ai
+    from_interface: log-query
+    to: log
+    to_interface: log-query
+    channel: network
+    protocol: http
+    description: ai queries log records to review history / context

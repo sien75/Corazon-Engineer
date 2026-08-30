@@ -1,0 +1,75 @@
+atoms:
+  - name: ai
+    description: Corazon ai service — DeepSeek-backed conversation / orchestration; exposes ai session APIs to the frontend, reads/writes schema via static, writes/reads records via log, connects external systems via CLI (credentials from .corazon/credentials.md)
+    path: ./workspace/ai
+    runtime_type: go
+    runtime_version: "1.22"
+    role: service
+
+    interfaces:
+      provides:
+        - id: ai-new
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-new.yaml
+          extend:
+            path: /ai/new
+            method: POST
+        - id: ai-ask
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-ask.yaml
+          extend:
+            path: /ai/ask
+            method: POST
+        - id: ai-stream
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-stream.yaml
+          extend:
+            path: /ai/stream
+            method: POST
+        - id: ai-approval
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-approval.yaml
+          extend:
+            path: /ai/approval
+            method: POST
+        - id: ai-delete
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-delete.yaml
+          extend:
+            path: /ai/delete
+            method: POST
+
+      consumes:
+        - id: static-query
+          channel: network
+          protocol: http
+          contract: ./contracts/static-query.yaml
+          extend:
+            path: /static/query
+            method: POST
+        - id: static-mutation
+          channel: network
+          protocol: http
+          contract: ./contracts/static-mutation.yaml
+          extend:
+            path: /static/mutation
+            method: POST
+        - id: log-mutation
+          channel: network
+          protocol: http
+          contract: ./contracts/log-mutation.yaml
+          extend:
+            path: /log/mutation
+            method: POST
+        - id: log-query
+          channel: network
+          protocol: http
+          contract: ./contracts/log-query.yaml
+          extend:
+            path: /log/query
+            method: POST

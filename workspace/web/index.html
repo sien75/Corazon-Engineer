@@ -18,14 +18,25 @@
       <button type="button" data-view="notes">notes</button>
       <button type="button" data-view="tests">tests</button>
     </nav>
+    <button id="ai-toggle" type="button">ai</button>
   </header>
   <main id="main">
-    <div id="graph"></div>
-    <div id="content" hidden></div>
-    <aside id="panel" hidden>
-      <button id="panel-close" type="button">×</button>
-      <h2 id="panel-title"></h2>
-      <div id="panel-body"></div>
+    <div id="left">
+      <div id="graph"></div>
+      <div id="content" hidden></div>
+      <aside id="panel" hidden>
+        <button id="panel-close" type="button">×</button>
+        <h2 id="panel-title"></h2>
+        <div id="panel-body"></div>
+      </aside>
+    </div>
+    <aside id="ai" hidden>
+      <div id="ai-head">ai</div>
+      <div id="ai-messages"></div>
+      <div id="ai-input">
+        <textarea id="ai-input-field" rows="2" placeholder="ask… (Enter send, Shift+Enter newline)" autocomplete="off"></textarea>
+        <button id="ai-send" type="button">send</button>
+      </div>
     </aside>
   </main>
   <script type="module" src="/app.js"></script>

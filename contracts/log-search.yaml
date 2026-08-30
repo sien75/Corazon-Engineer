@@ -1,0 +1,29 @@
+id: log-search
+description: Full-text search across records
+
+request:
+  body:
+    q: string  # search query
+    pageNum?: number  # page number, 1-based, default 1
+
+response:
+  status: 200
+  body:
+    q: string
+    results:
+      - id: string
+        createdAt: string  # record creation time, RFC3339
+        kind: call | observe | conversation
+        summary: string  # one-line summary
+        snippet: string  # matched snippet
+    pageNum: number  # echoed page number
+    hasMore: boolean  # whether more pages exist
+    pageSize: 100  # fixed page size, 100 records per page
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 500
+    code: internal
+    description: server error

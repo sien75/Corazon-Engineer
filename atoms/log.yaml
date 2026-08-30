@@ -1,0 +1,47 @@
+atoms:
+  - name: log
+    description: Corazon log service — owns sqlite records (call / observe / conversation); exposes log query/detail/search/mutation/stream APIs
+    path: ./workspace/log
+    runtime_type: go
+    runtime_version: "1.22"
+    role: service
+
+    interfaces:
+      provides:
+        - id: log-query
+          channel: network
+          protocol: http
+          contract: ./contracts/log-query.yaml
+          extend:
+            path: /log/query
+            method: POST
+        - id: log-query-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/log-query-detail.yaml
+          extend:
+            path: /log/query-detail
+            method: POST
+        - id: log-search
+          channel: network
+          protocol: http
+          contract: ./contracts/log-search.yaml
+          extend:
+            path: /log/search
+            method: POST
+        - id: log-mutation
+          channel: network
+          protocol: http
+          contract: ./contracts/log-mutation.yaml
+          extend:
+            path: /log/mutation
+            method: POST
+        - id: log-stream
+          channel: network
+          protocol: http
+          contract: ./contracts/log-stream.yaml
+          extend:
+            path: /log/stream
+            method: POST
+
+      consumes: []

@@ -1,0 +1,60 @@
+id: static-query
+description: Return full schema data for rendering the architecture graph and atom/edge details
+
+request:
+  body:
+    env?: string  # runtime env name; when set, runtime only includes that env
+
+response:
+  status: 200
+  body:
+    atoms:  # all atoms, full content (for graph rendering)
+      - name: string  # atom id / unique name
+        description: string
+        repo?: string  # git repository URL
+        path?: string  # local checkout path
+        runtime_type: string  # native | go | browser | node | bun | jre | python | dotnet | beam | ruby | php
+        runtime_version?: string  # e.g. "1.22"
+        role?: string  # service | database | cache | queue | storage | gateway | scheduler | worker | proxy
+
+        interfaces:
+          provides:  # capabilities this atom provides (others call this atom)
+            - id: string
+              channel: network | stdio | ipc
+              protocol: string  # per channel, see devtime/schema/enums_zh.md
+              contract?: string  # path under contracts/, e.g. "contracts/create-user-api.yaml"
+              extend?: object  # protocol-specific fields (path, method, command, topic, ...); shape varies by protocol
+          consumes:  # capabilities this atom consumes (this atom calls others)
+            - id: string
+              channel: network | stdio | ipc
+              protocol: string  # per channel, see devtime/schema/enums_zh.md
+              contract?: string  # path under contracts/, e.g. "contracts/user-created-event.yaml"
+              extend?: object  # protocol-specific fields (topic, ...); shape varies by protocol
+
+    edges:  # all edges, full content
+      - id: string
+        from: string  # source atom name
+        from_interface: string  # source atom out interface id
+        to: string  # target atom name
+        to_interface: string  # target atom in interface id
+        channel: network | stdio | ipc
+        protocol: string  # per channel, see devtime/schema/enums_zh.md
+        description: string
+
+    runtime: [string]  # entries under runtime/, relative paths e.g. "runtime/dev.yaml"
+    contracts: [string]  # entries under contracts/, relative paths e.g. "contracts/ai-ask.yaml"
+    devtime: [string]  # entries under devtime/, relative paths
+    docs: [string]  # entries under docs/, relative paths
+    notes: [string]  # entries under notes/, relative paths
+    tests: [string]  # entries under tests/, relative paths e.g. "tests/core-ai-flow.md"
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 404
+    code: not_found
+    description: not found
+  - status: 500
+    code: internal
+    description: server error

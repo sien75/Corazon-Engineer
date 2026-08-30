@@ -1,6 +1,6 @@
 atoms:
   - name: web
-    description: Corazon web frontend — renders the architecture graph from schema-query and shows atom/edge details
+    description: Corazon web frontend — renders the architecture graph (static-query), drives ai conversation, shows log records
     path: ./workspace/web
     runtime_type: browser
     role: service
@@ -8,17 +8,52 @@ atoms:
     interfaces:
       provides: []
       consumes:
-        - id: schema-query
+        - id: static-query
           channel: network
           protocol: http
-          contract: ./contracts/schema-query.yaml
+          contract: ./contracts/static-query.yaml
           extend:
-            path: /schema/query
+            path: /static/query
             method: POST
-        - id: schema-query-detail
+        - id: static-query-detail
           channel: network
           protocol: http
-          contract: ./contracts/schema-query-detail.yaml
+          contract: ./contracts/static-query-detail.yaml
           extend:
-            path: /schema/query-detail
+            path: /static/query-detail
+            method: POST
+        - id: ai-new
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-new.yaml
+          extend:
+            path: /ai/new
+            method: POST
+        - id: ai-ask
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-ask.yaml
+          extend:
+            path: /ai/ask
+            method: POST
+        - id: ai-stream
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-stream.yaml
+          extend:
+            path: /ai/stream
+            method: POST
+        - id: log-query
+          channel: network
+          protocol: http
+          contract: ./contracts/log-query.yaml
+          extend:
+            path: /log/query
+            method: POST
+        - id: log-stream
+          channel: network
+          protocol: http
+          contract: ./contracts/log-stream.yaml
+          extend:
+            path: /log/stream
             method: POST

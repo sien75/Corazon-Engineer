@@ -1,0 +1,34 @@
+id: log-query
+description: Query records (atom call / telemetry observe / ai conversation); list view
+
+request:
+  body:
+    kind?: call | observe | conversation  # record kind filter
+    env?: string  # runtime env filter (call / observe)
+    atom?: string  # related atom filter (call / observe)
+    sessionId?: string  # ai session filter (kind=conversation)
+    start?: string  # start time, RFC3339
+    end?: string  # end time, RFC3339
+    pageNum?: number  # page number, 1-based, default 1
+
+response:
+  status: 200
+  body:
+    records:
+      - id: string  # record id
+        createdAt: string  # record creation time, RFC3339
+        kind: call | observe | conversation
+        env?: string
+        atom?: string
+        summary: string  # one-line summary for list display
+    pageNum: number  # echoed page number
+    hasMore: boolean  # whether more pages exist
+    pageSize: 100  # fixed page size, 100 records per page
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 500
+    code: internal
+    description: server error

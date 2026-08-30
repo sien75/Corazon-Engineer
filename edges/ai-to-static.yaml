@@ -1,0 +1,17 @@
+edges:
+  - id: ai-to-static-read
+    from: ai
+    from_interface: static-query
+    to: static
+    to_interface: static-query
+    channel: network
+    protocol: http
+    description: ai reads the schema to understand the system structure before operating
+  - id: ai-to-static-mutate
+    from: ai
+    from_interface: static-mutation
+    to: static
+    to_interface: static-mutation
+    channel: network
+    protocol: http
+    description: ai modifies the schema (add/update/remove) after user approval

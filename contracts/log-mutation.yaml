@@ -1,0 +1,28 @@
+id: log-mutation
+description: Write a record (ai only); op is add for now
+
+request:
+  body:
+    op: add  # only add for now
+    kind: call | observe | conversation
+    env?: string  # runtime env
+    atom?: string  # related atom
+    sessionId?: string  # kind=conversation
+    payload: object  # kind-specific content
+      # kind=call:       source, interface, req, resp, result
+      # kind=observe:    signal (trace | metric | log), query, result
+      # kind=conversation: seq, msgKind, content
+
+response:
+  status: 200
+  body:
+    id: string  # assigned record id
+    createdAt: string  # record creation time, RFC3339
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 500
+    code: internal
+    description: server error

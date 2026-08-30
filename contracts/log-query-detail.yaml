@@ -1,0 +1,31 @@
+id: log-query-detail
+description: Fetch a single record's full content
+
+request:
+  body:
+    id: string  # record id
+
+response:
+  status: 200
+  body:
+    id: string
+    createdAt: string  # record creation time, RFC3339
+    kind: call | observe | conversation
+    env?: string
+    atom?: string
+    sessionId?: string
+    payload: object  # kind-specific detail
+      # kind=call:       source, interface, req, resp, result
+      # kind=observe:    signal (trace | metric | log), query, result
+      # kind=conversation: seq, msgKind (markdown | approval | ...), content
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 404
+    code: not_found
+    description: record not found
+  - status: 500
+    code: internal
+    description: server error
