@@ -2,11 +2,13 @@ runtime:
   dev:
     description: Playground dev environment
     endpoints:
-      demo-service:
+      - id: demo-service
         channel: network
+        protocol: http
         address: http://localhost:9000
-      demo-worker:
+      - id: demo-worker
         channel: stdio
+        protocol: ndjson
         in: /tmp/playground.worker.in
         out: /tmp/playground.worker.out
     tests:

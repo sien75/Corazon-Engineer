@@ -18,8 +18,6 @@ Protocols must be compatible with their channel.
 network channel:
   http       — HTTP/HTTPS
   grpc       — gRPC
-  ws         — WebSocket
-  sse        — Server-Sent Events
   pgwire     — PostgreSQL native protocol
   mysql      — MySQL protocol
   redis      — RESP (Redis serialization protocol)
@@ -75,32 +73,4 @@ gateway      — Gateway / reverse proxy
 scheduler    — Scheduled task / Cron
 worker       — Background task processor
 proxy        — Proxy service
-```
-
----
-
-## Runtime Endpoint (runtime.endpoints)
-
-Field shape depends on `channel`. Same atom maps to different endpoint entries across runtime envs. How an atom is launched is out of scope — only how to reach it.
-
-```
-network channel:
-  url            — Address to dial (http://, grpc://, redis://, postgres://, ...)
-
-stdio channel:
-  in             — Named pipe the atom reads (its stdin)
-  out            — Named pipe the atom writes (its stdout)
-
-ipc channel (fields depend on protocol):
-  unix-socket:
-    path         — Socket file path
-  dbus:
-    bus          — session | system
-    service      — D-Bus service name
-    object       — Object path
-  shared-mem:
-    name         — POSIX shm name
-    size         — Shared memory size in bytes
-  signal:
-    pid          — Target process ID
 ```

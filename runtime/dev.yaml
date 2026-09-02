@@ -2,14 +2,17 @@ runtime:
   dev:
     description: Local development environment
     endpoints:
-      static:
+      - id: static
         channel: network
+        protocol: http
         address: http://localhost:7502
-      ai:
+      - id: ai
         channel: network
+        protocol: http
         address: http://localhost:7501
-      log:
+      - id: log
         channel: network
+        protocol: http
         address: http://localhost:7503
     tests:
       - id: core-static-query

@@ -44,15 +44,16 @@ request:
     runtime?:
       description: string
       endpoints:
-        <atom-id>:
+        - id: string  # atom id
           channel: network | stdio | ipc
+          protocol: string  # per channel, see devtime/schema/enums_zh.md
           address?: string  # when channel=network|ipc
           in?: string  # when channel=stdio
           out?: string  # when channel=stdio
       telemetry?:
-        <atom-id>:
+        - id: string  # atom id
           backend: string  # e.g. otel
-          endpoint: string
+          address: string
       tests?:
         - id: string
           description: string

@@ -81,9 +81,9 @@ var builtinToolsRaw = `[
                       }
                     },
                     "required": [
-                      "protocol",
                       "id",
-                      "channel"
+                      "channel",
+                      "protocol"
                     ],
                     "type": "object"
                   },
@@ -144,10 +144,10 @@ var builtinToolsRaw = `[
             }
           },
           "required": [
+            "interfaces",
             "name",
             "description",
-            "runtime_type",
-            "interfaces"
+            "runtime_type"
           ],
           "type": "object"
         },
@@ -170,11 +170,11 @@ var builtinToolsRaw = `[
             }
           },
           "required": [
-            "id",
             "description",
             "request",
             "response",
-            "error"
+            "error",
+            "id"
           ],
           "type": "object"
         },
@@ -212,14 +212,14 @@ var builtinToolsRaw = `[
             }
           },
           "required": [
-            "id",
-            "from",
-            "from_interface",
             "to",
             "to_interface",
             "channel",
             "protocol",
-            "description"
+            "description",
+            "id",
+            "from",
+            "from_interface"
           ],
           "type": "object"
         },
@@ -238,55 +238,57 @@ var builtinToolsRaw = `[
               "type": "string"
             },
             "endpoints": {
-              "properties": {
-                "\u003catom-id\u003e": {
-                  "properties": {
-                    "address": {
-                      "type": "string"
-                    },
-                    "channel": {
-                      "type": "string"
-                    },
-                    "in": {
-                      "type": "string"
-                    },
-                    "out": {
-                      "type": "string"
-                    }
+              "items": {
+                "properties": {
+                  "address": {
+                    "type": "string"
                   },
-                  "required": [
-                    "channel"
-                  ],
-                  "type": "object"
-                }
+                  "channel": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "in": {
+                    "type": "string"
+                  },
+                  "out": {
+                    "type": "string"
+                  },
+                  "protocol": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "channel",
+                  "protocol",
+                  "id"
+                ],
+                "type": "object"
               },
-              "required": [
-                "\u003catom-id\u003e"
-              ],
-              "type": "object"
+              "type": "array"
             },
             "telemetry": {
-              "properties": {
-                "\u003catom-id\u003e": {
-                  "properties": {
-                    "backend": {
-                      "type": "string"
-                    },
-                    "endpoint": {
-                      "type": "string"
-                    }
+              "items": {
+                "properties": {
+                  "address": {
+                    "type": "string"
                   },
-                  "required": [
-                    "backend",
-                    "endpoint"
-                  ],
-                  "type": "object"
-                }
+                  "backend": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "backend",
+                  "address"
+                ],
+                "type": "object"
               },
-              "required": [
-                "\u003catom-id\u003e"
-              ],
-              "type": "object"
+              "type": "array"
             },
             "tests": {
               "items": {
@@ -314,10 +316,10 @@ var builtinToolsRaw = `[
                   }
                 },
                 "required": [
+                  "id",
                   "description",
                   "atoms",
-                  "case",
-                  "id"
+                  "case"
                 ],
                 "type": "object"
               },

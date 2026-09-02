@@ -46,7 +46,7 @@ curl -s -X POST http://localhost:7502/static/query-detail \
   -d '{"type": "runtime", "id": "runtime/dev.yaml"}'
 ```
 
-Expected: 200, `runtime.description` is `Playground dev environment`, `runtime.endpoints.demo-service.address` is `http://localhost:9000`, `runtime.endpoints.demo-worker.channel` is `stdio` (with `in`/`out` pipes), `runtime.tests` has 1 entry.
+Expected: 200, `runtime.description` is `Playground dev environment`, `runtime.endpoints` is an array of 2 entries: the entry with `id: demo-service` has `channel: network`, `protocol: http`, `address: http://localhost:9000`; the entry with `id: demo-worker` has `channel: stdio`, `protocol: ndjson` and `in`/`out` pipes. `runtime.tests` has 1 entry.
 
 ## 4. static-query-detail contract content
 

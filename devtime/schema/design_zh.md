@@ -147,30 +147,38 @@ edges:
 
 ## Runtime 层 — 运行环境映射
 
-把 schema 映射到具体运行环境。位于 `runtime/`，**文件名即 env 名**（`dev.yaml` → env `dev`）。每个 env 有四个块：`description`（环境描述）、`endpoints`（每个 atom 怎么接入 —— 按 atom 为键，字段随 channel 变化）、`telemetry`（监控观测：logs/metrics/traces）、`tests`（绑定到该环境的系统级测试）。atom 怎么被拉起是它自己的事，不进架构 schema。
+把 schema 映射到具体运行环境。位于 `runtime/`，**文件名即 env 名**（`dev.yaml` → env `dev`）。每个 env 有四个块：`description`（环境描述）、`endpoints`（每个 atom 怎么接入 —— **数组**，每项自带 `id` + `channel` + `protocol`，连接字段随 channel 变化）、`telemetry`（监控观测：logs/metrics/traces，**数组**，同一 atom 可多条）、`tests`（绑定到该环境的系统级测试）。atom 怎么被拉起是它自己的事，不进架构 schema。
 
 ```yaml
 runtime:
   dev:
     description: 本地开发环境
     endpoints:
-      user-service:
+      - id: user-service
         channel: network
+        protocol: http
         address: http://localhost:8080
-      notification-service:
+      - id: user-service
         channel: network
+        protocol: pgwire
+        address: postgres://localhost:5432
+      - id: notification-service
+        channel: network
+        protocol: http
         address: http://localhost:9090
-      mcp-server:
+      - id: mcp-server
         channel: stdio
+        protocol: ndjson
         in: /tmp/corazon.mcp.in
         out: /tmp/corazon.mcp.out
-      local-daemon:
+      - id: local-daemon
         channel: ipc
+        protocol: unix-socket
         address: /var/run/corazon.sock
     telemetry:
-      user-service:
+      - id: user-service
         backend: otel
-        endpoint: http://localhost:4317
+        address: http://localhost:4317
     tests:
       - id: user-registration-flow
         description: 端到端 —— 用户注册后发送欢迎通知
@@ -185,21 +193,25 @@ runtime:
   staging:
     description: 预发环境
     endpoints:
-      user-service:
+      - id: user-service
         channel: network
+        protocol: http
         address: https://user.staging.corazon.com
-      notification-service:
+      - id: notification-service
         channel: network
+        protocol: http
         address: https://notify.staging.corazon.com
 
   prod:
     description: 线上环境
     endpoints:
-      user-service:
+      - id: user-service
         channel: network
+        protocol: http
         address: https://user.api.corazon.com
-      notification-service:
+      - id: notification-service
         channel: network
+        protocol: http
         address: https://notify.api.corazon.com
 ```
 
@@ -211,7 +223,9 @@ runtime:
 | `stdio` | `in` + `out` | 命名管道（atom 自身怎么拉起不在 schema 范畴内） |
 | `ipc` | `address` | 本地通信资源，如 unix socket 路径 |
 
-**telemetry** —— 监控（读/监听）侧：在哪里观测 logs/metrics/traces。目前按 atom 为键（粒度待定）。统一为单个 otel endpoint 承载三种信号，不再按信号拆分。
+同一 atom 可有多条 endpoint（如一个服务同时提供 HTTP API 和直连其 PostgreSQL）。`protocol` 取值见 `devtime/schema/enums_zh.md`。
+
+**telemetry** —— 监控（读/监听）侧：在哪里观测 logs/metrics/traces。数组形态，每项必填 `id` + `backend` + `address`，同一 atom 可挂多条。统一为单个 otel address 承载三种信号，不再按信号拆分。
 
 **tests** —— 每个 runtime env 可挂一个 `tests:` 块，承载绑定到该环境的系统级测试。一个 test 圈定一组 atoms/edges（按 id）并把具体定义指向 `tests/` 下的 `case` 文件。atom 声明接口，test 去验证它们。`dev` 可跑全套，`prod` 可不跑或只跑只读检查。
 

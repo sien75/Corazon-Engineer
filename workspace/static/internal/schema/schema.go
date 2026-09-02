@@ -181,35 +181,7 @@ func Validate(objType string, body map[string]interface{}) []FieldError {
 		}
 		validateChannelProtocol(body, "", fail)
 	case "runtime":
-		if str(body, "description") == "" {
-			fail("description", "required")
-		}
-		endpoints, _ := body["endpoints"].(map[string]interface{})
-		if len(endpoints) == 0 {
-			fail("endpoints", "required, must map atom id to runtime endpoint")
-		}
-		for id, raw := range endpoints {
-			ep, _ := raw.(map[string]interface{})
-			if ep == nil {
-				fail("endpoints."+id, "required")
-				continue
-			}
-			ch := str(ep, "channel")
-			if !contains(Channels, ch) {
-				fail("endpoints."+id+".channel", "must be one of network | stdio | ipc")
-				continue
-			}
-			switch ch {
-			case "network", "ipc":
-				if str(ep, "address") == "" {
-					fail("endpoints."+id+".address", "required when channel="+ch)
-				}
-			case "stdio":
-				if str(ep, "in") == "" || str(ep, "out") == "" {
-					fail("endpoints."+id, "in and out are required when channel=stdio")
-				}
-			}
-		}
+		validateRuntime(body, fail)
 	case "contract":
 		if str(body, "id") == "" {
 			fail("id", "required")
@@ -227,6 +199,58 @@ func Validate(objType string, body map[string]interface{}) []FieldError {
 		// raw content, no structural validation
 	}
 	return errs
+}
+
+func validateRuntime(body map[string]interface{}, fail func(field, msg string)) {
+	if str(body, "description") == "" {
+		fail("description", "required")
+	}
+
+	endpoints, _ := body["endpoints"].([]interface{})
+	if len(endpoints) == 0 {
+		fail("endpoints", "required, must be a non-empty array of runtime endpoints")
+	}
+	for i, raw := range endpoints {
+		prefix := fmt.Sprintf("endpoints[%d]", i)
+		ep, _ := raw.(map[string]interface{})
+		if ep == nil {
+			fail(prefix, "required")
+			continue
+		}
+		if str(ep, "id") == "" {
+			fail(prefix+".id", "required")
+		}
+		validateChannelProtocol(ep, prefix, fail)
+		switch str(ep, "channel") {
+		case "network", "ipc":
+			if str(ep, "address") == "" {
+				fail(prefix+".address", "required when channel="+str(ep, "channel"))
+			}
+		case "stdio":
+			if str(ep, "in") == "" || str(ep, "out") == "" {
+				fail(prefix, "in and out are required when channel=stdio")
+			}
+		}
+	}
+
+	telemetry, _ := body["telemetry"].([]interface{})
+	for i, raw := range telemetry {
+		prefix := fmt.Sprintf("telemetry[%d]", i)
+		tel, _ := raw.(map[string]interface{})
+		if tel == nil {
+			fail(prefix, "required")
+			continue
+		}
+		if str(tel, "id") == "" {
+			fail(prefix+".id", "required")
+		}
+		if str(tel, "backend") == "" {
+			fail(prefix+".backend", "required")
+		}
+		if str(tel, "address") == "" {
+			fail(prefix+".address", "required")
+		}
+	}
 }
 
 func validateAtom(body map[string]interface{}, fail func(field, msg string)) {

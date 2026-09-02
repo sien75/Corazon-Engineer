@@ -14,16 +14,17 @@ response:
 
     runtime?:  # when type=runtime, parsed runtime env (per schema design)
       description: string
-      endpoints:  # map: atom id -> runtime endpoint
-        <atom-id>:
+      endpoints:  # array of runtime endpoints; one atom may have multiple entries
+        - id: string  # atom id
           channel: network | stdio | ipc
+          protocol: string  # per channel, see devtime/schema/enums_zh.md
           address?: string  # when channel=network or ipc
           in?: string  # when channel=stdio
           out?: string  # when channel=stdio
-      telemetry?:  # per-atom observability endpoints
-        <atom-id>:
+      telemetry?:  # observability items; one atom may have multiple entries
+        - id: string  # atom id
           backend: string  # e.g. otel
-          endpoint: string  # single otel endpoint carries all three signals
+          address: string  # single otel address carries all three signals
       tests?:  # tests bound to this env
         - id: string
           description: string

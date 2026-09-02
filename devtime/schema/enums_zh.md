@@ -20,8 +20,6 @@ ipc       — 同机进程间通信（共享内存、信号量、消息队列等
 network 通道:
   http       — HTTP/HTTPS
   grpc       — gRPC
-  ws         — WebSocket
-  sse        — Server-Sent Events
   pgwire     — PostgreSQL 原生协议
   mysql      — MySQL 协议
   redis      — RESP (Redis 序列化协议)
@@ -79,33 +77,5 @@ gateway      — 网关 / 反向代理
 scheduler    — 定时任务 / Cron
 worker       — 后台任务处理器
 proxy        — 代理服务
-```
-
----
-
-## Runtime 端点 (runtime.endpoints)
-
-字段形态随 `channel` 变化。同一个 atom 在不同 runtime env 下映射为不同的 endpoint 条目。atom 怎么被拉起不在 schema 范畴内，这里只描述怎么连到它。
-
-```
-network 通道:
-  url            — 拨号目标地址 (http://, grpc://, redis://, postgres://, ...)
-
-stdio 通道:
-  in             — atom 读取的命名管道（它的 stdin）
-  out            — atom 写入的命名管道（它的 stdout）
-
-ipc 通道 (字段随 protocol 不同):
-  unix-socket:
-    path         — socket 文件路径
-  dbus:
-    bus          — session | system
-    service      — D-Bus 服务名
-    object       — 对象路径
-  shared-mem:
-    name         — POSIX shm 名称
-    size         — 共享内存大小 (bytes)
-  signal:
-    pid          — 目标进程 ID
 ```
 

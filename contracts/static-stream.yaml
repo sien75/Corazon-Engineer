@@ -58,15 +58,16 @@ response:
       runtime?:  # when type=runtime
         description: string
         endpoints:
-          <atom-id>:
+          - id: string  # atom id
             channel: network | stdio | ipc
+            protocol: string
             address?: string
             in?: string
             out?: string
         telemetry?:
-          <atom-id>:
+          - id: string  # atom id
             backend: string
-            endpoint: string
+            address: string
         tests?:
           - id: string
             description: string
