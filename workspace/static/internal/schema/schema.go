@@ -205,6 +205,9 @@ func validateRuntime(body map[string]interface{}, fail func(field, msg string)) 
 	if str(body, "description") == "" {
 		fail("description", "required")
 	}
+	if _, ok := body["run"]; ok && str(body, "run") == "" {
+		fail("run", "must be a non-empty string path when present")
+	}
 
 	endpoints, _ := body["endpoints"].([]interface{})
 	if len(endpoints) == 0 {

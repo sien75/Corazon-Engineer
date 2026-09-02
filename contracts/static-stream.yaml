@@ -57,6 +57,7 @@ response:
 
       runtime?:  # when type=runtime
         description: string
+        run?: string  # path to runbook md
         endpoints:
           - id: string  # atom id
             channel: network | stdio | ipc

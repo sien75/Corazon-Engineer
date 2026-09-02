@@ -147,12 +147,13 @@ edges:
 
 ## Runtime 层 — 运行环境映射
 
-把 schema 映射到具体运行环境。位于 `runtime/`，**文件名即 env 名**（`dev.yaml` → env `dev`）。每个 env 有四个块：`description`（环境描述）、`endpoints`（每个 atom 怎么接入 —— **数组**，每项自带 `id` + `channel` + `protocol`，连接字段随 channel 变化）、`telemetry`（监控观测：logs/metrics/traces，**数组**，同一 atom 可多条）、`tests`（绑定到该环境的系统级测试）。atom 怎么被拉起是它自己的事，不进架构 schema。
+把 schema 映射到具体运行环境。位于 `runtime/`，**文件名即 env 名**（`dev.yaml` → env `dev`）。每个 env 有五个块：`description`（环境描述）、`run`（怎么把这个环境跑起来 —— 指向一个 runbook markdown 文件，可选）、`endpoints`（每个 atom 怎么接入 —— **数组**，每项自带 `id` + `channel` + `protocol`，连接字段随 channel 变化）、`telemetry`（监控观测：logs/metrics/traces，**数组**，同一 atom 可多条）、`tests`（绑定到该环境的系统级测试）。
 
 ```yaml
 runtime:
   dev:
     description: 本地开发环境
+    run: dev.run.md
     endpoints:
       - id: user-service
         channel: network
@@ -220,10 +221,12 @@ runtime:
 | channel | 字段 | 含义 |
 |---|---|---|
 | `network` | `address` | 拨号目标地址，如 `http://`、`grpc://`、`redis://...` |
-| `stdio` | `in` + `out` | 命名管道（atom 自身怎么拉起不在 schema 范畴内） |
+| `stdio` | `in` + `out` | 命名管道（拉起方式见 `run` 指向的 runbook） |
 | `ipc` | `address` | 本地通信资源，如 unix socket 路径 |
 
 同一 atom 可有多条 endpoint（如一个服务同时提供 HTTP API 和直连其 PostgreSQL）。`protocol` 取值见 `devtime/schema/enums_zh.md`。
+
+**run** —— 拉起说明：怎么把这个环境跑起来（启动顺序、每个 atom 的启动命令、依赖、注意事项）。为普通 markdown 文件，不做格式约定；路径写在 env 的 `run` 字段里，相对项目根。约定与 env 同名——`dev.yaml` 配 `dev.run.md`——但这是约定不是强制，以 `run` 字段的路径为准。runbook 里的端口/地址必须与该 env 的 `endpoints` 一致：跑起来是在实现这个 env，不是随意起服务。
 
 **telemetry** —— 监控（读/监听）侧：在哪里观测 logs/metrics/traces。数组形态，每项必填 `id` + `backend` + `address`，同一 atom 可挂多条。统一为单个 otel address 承载三种信号，不再按信号拆分。
 

@@ -109,9 +109,9 @@ var builtinToolsRaw = `[
                       }
                     },
                     "required": [
-                      "id",
                       "channel",
-                      "protocol"
+                      "protocol",
+                      "id"
                     ],
                     "type": "object"
                   },
@@ -170,11 +170,11 @@ var builtinToolsRaw = `[
             }
           },
           "required": [
-            "description",
             "request",
             "response",
             "error",
-            "id"
+            "id",
+            "description"
           ],
           "type": "object"
         },
@@ -212,14 +212,14 @@ var builtinToolsRaw = `[
             }
           },
           "required": [
-            "to",
-            "to_interface",
-            "channel",
             "protocol",
             "description",
             "id",
             "from",
-            "from_interface"
+            "from_interface",
+            "to",
+            "to_interface",
+            "channel"
           ],
           "type": "object"
         },
@@ -260,13 +260,16 @@ var builtinToolsRaw = `[
                   }
                 },
                 "required": [
+                  "id",
                   "channel",
-                  "protocol",
-                  "id"
+                  "protocol"
                 ],
                 "type": "object"
               },
               "type": "array"
+            },
+            "run": {
+              "type": "string"
             },
             "telemetry": {
               "items": {
@@ -340,9 +343,9 @@ var builtinToolsRaw = `[
         }
       },
       "required": [
-        "id",
         "op",
-        "type"
+        "type",
+        "id"
       ],
       "type": "object"
     }

@@ -147,12 +147,13 @@ edges:
 
 ## Runtime Layer
 
-Maps the schema to a concrete runtime environment. Under `runtime/`, **filename = env name** (`dev.yaml` → env `dev`). Each env has four blocks: `description` (environment description), `endpoints` (how each atom is reached — an **array**; each entry carries its own `id` + `channel` + `protocol`, connection fields depend on the channel), `telemetry` (monitoring observation for logs/metrics/traces — an **array**, one atom may have multiple entries), and `tests` (system-level tests bound to this environment). How an atom is launched is the atom's own concern and is not part of the architecture schema.
+Maps the schema to a concrete runtime environment. Under `runtime/`, **filename = env name** (`dev.yaml` → env `dev`). Each env has five blocks: `description` (environment description), `run` (how to launch this environment — points to a runbook markdown file, optional), `endpoints` (how each atom is reached — an **array**; each entry carries its own `id` + `channel` + `protocol`, connection fields depend on the channel), `telemetry` (monitoring observation for logs/metrics/traces — an **array**, one atom may have multiple entries), and `tests` (system-level tests bound to this environment).
 
 ```yaml
 runtime:
   dev:
     description: Local development environment
+    run: dev.run.md
     endpoints:
       - id: user-service
         channel: network
@@ -220,10 +221,12 @@ runtime:
 | channel | field | meaning |
 |---|---|---|
 | `network` | `address` | the address to dial, e.g. `http://`, `grpc://`, `redis://...` |
-| `stdio` | `in` + `out` | named pipes (the atom's own launch is out of scope for the schema) |
+| `stdio` | `in` + `out` | named pipes (how atoms are launched lives in the runbook pointed to by `run`) |
 | `ipc` | `address` | a local inter-process resource, e.g. a unix socket path |
 
 An atom may appear in multiple endpoint entries (e.g. one service exposing both an HTTP API and direct access to its PostgreSQL). `protocol` values are enumerated in `devtime/schema/enums.md`.
+
+**run** — launch instructions: how to bring this environment up (start order, per-atom launch commands, dependencies, caveats). A plain markdown file with no format constraints; its path (relative to the project root) goes in the env's `run` field. By convention it pairs with the env name — `dev.yaml` pairs with `dev.run.md` — but this is a convention, not a requirement; the `run` field's path is authoritative. Ports/addresses in the runbook must match the env's `endpoints`: launching the project means realizing this env, not starting services arbitrarily.
 
 **telemetry** — the monitoring (read/listen) side of the runtime: where to observe logs/metrics/traces. Array form; each entry requires `id` + `backend` + `address`, and one atom may have multiple entries. A single otel address carries all three signals — no per-signal split.
 

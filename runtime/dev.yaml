@@ -1,6 +1,7 @@
 runtime:
   dev:
     description: Local development environment
+    run: dev.run.md
     endpoints:
       - id: static
         channel: network
@@ -14,6 +15,10 @@ runtime:
         channel: network
         protocol: http
         address: http://localhost:7503
+      - id: web
+        channel: network
+        protocol: http
+        address: http://localhost:7500
     tests:
       - id: core-static-query
         description: static-query / static-query-detail contract conformance

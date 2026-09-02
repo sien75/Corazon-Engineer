@@ -43,6 +43,7 @@ request:
 
     runtime?:
       description: string
+      run?: string  # path to runbook md — how to launch this env (relative to project root)
       endpoints:
         - id: string  # atom id
           channel: network | stdio | ipc
