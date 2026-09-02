@@ -10,13 +10,13 @@ response:
   body:
     id: string
     createdAt: string  # record creation time, RFC3339
-    kind: call | observe | conversation
+    kind: test | telemetry | conversation
     env?: string
     atom?: string
     sessionId?: string
     payload: object  # kind-specific detail
-      # kind=call:       source, interface, req, resp, result
-      # kind=observe:    signal (trace | metric | log), query, result
+      # kind=test:       case, atoms, req, resp, result
+      # kind=telemetry:  signal (trace | metric | log), query, result
       # kind=conversation: seq, msgKind (markdown | approval | ...), content
 
 errors:

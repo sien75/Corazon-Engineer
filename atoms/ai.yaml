@@ -1,6 +1,6 @@
 atoms:
   - name: ai
-    description: Corazon ai service — DeepSeek-backed conversation / orchestration; exposes ai session APIs to the frontend, reads/writes schema via static, writes/reads records via log, connects external systems via CLI (credentials from .corazon/credentials.md)
+    description: Corazon ai service — DeepSeek-backed conversation / orchestration; exposes ai session APIs to the frontend, reads/writes schema via static, writes/reads records via log, connects external systems via CLI (credentials from .corazon/credentials/<provider>.md)
     path: ./workspace/ai
     runtime_type: go
     runtime_version: "1.22"

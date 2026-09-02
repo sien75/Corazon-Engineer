@@ -4,7 +4,7 @@ description: Subscribe to record stream; frontend receives each new record in re
 request:
   body:
     env?: string  # runtime env filter
-    kinds?: string  # comma-separated filter, e.g. "call,observe"
+    kinds?: string  # comma-separated filter, e.g. "test,telemetry"
 
 response:
   status: 200
@@ -14,7 +14,7 @@ response:
     record:
       id: string
       createdAt: string  # record creation time, RFC3339
-      kind: call | observe | conversation
+      kind: test | telemetry | conversation
       env?: string
       atom?: string
       summary: string  # one-line summary

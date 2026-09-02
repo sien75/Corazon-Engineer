@@ -4,25 +4,25 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
+	"gopkg.in/yaml.v3"
 )
 
 const PageSize = 100
 
 type Record struct {
-	ID        string          `json:"id"`
-	CreatedAt string          `json:"createdAt"`
-	Kind      string          `json:"kind"`
-	Env       string          `json:"env,omitempty"`
-	Atom      string          `json:"atom,omitempty"`
-	SessionID string          `json:"sessionId,omitempty"`
-	Summary   string          `json:"summary"`
-	Payload   json.RawMessage `json:"payload"`
+	ID        string      `yaml:"id"`
+	CreatedAt string      `yaml:"createdAt"`
+	Kind      string      `yaml:"kind"`
+	Env       string      `yaml:"env,omitempty"`
+	Atom      string      `yaml:"atom,omitempty"`
+	SessionID string      `yaml:"sessionId,omitempty"`
+	Summary   string      `yaml:"summary"`
+	Payload   interface{} `yaml:"payload"`
 }
 
 func (r Record) ListItem() map[string]interface{} {
@@ -99,27 +99,33 @@ func (s *Store) Insert(rec Record) (Record, error) {
 		rec.Summary = deriveSummary(rec)
 	}
 	payload := rec.Payload
-	if len(payload) == 0 {
-		payload = json.RawMessage("{}")
+	if payload == nil {
+		payload = map[string]interface{}{}
 	}
-	_, err := s.db.Exec(`INSERT INTO records (id, created_at, kind, env, atom, session_id, summary, payload)
+	// payload is stored as yaml text; existing rows holding json text still
+	// load fine (json is valid yaml)
+	payloadText, err := yaml.Marshal(payload)
+	if err != nil {
+		return rec, err
+	}
+	_, err = s.db.Exec(`INSERT INTO records (id, created_at, kind, env, atom, session_id, summary, payload)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.ID, rec.CreatedAt, rec.Kind, nullable(rec.Env), nullable(rec.Atom), nullable(rec.SessionID), rec.Summary, string(payload))
+		rec.ID, rec.CreatedAt, rec.Kind, nullable(rec.Env), nullable(rec.Atom), nullable(rec.SessionID), rec.Summary, string(payloadText))
 	return rec, err
 }
 
 func deriveSummary(rec Record) string {
 	switch rec.Kind {
-	case "call":
+	case "test":
 		if rec.Atom != "" {
-			return "call " + rec.Atom
+			return "test " + rec.Atom
 		}
-		return "call"
-	case "observe":
+		return "test"
+	case "telemetry":
 		if rec.Atom != "" {
-			return "observe " + rec.Atom
+			return "telemetry " + rec.Atom
 		}
-		return "observe"
+		return "telemetry"
 	case "conversation":
 		if rec.SessionID != "" {
 			return "conversation " + rec.SessionID
@@ -211,7 +217,9 @@ func (s *Store) Get(id string) (Record, error) {
 		return Record{}, err
 	}
 	r.Env, r.Atom, r.SessionID = env.String, atom.String, session.String
-	r.Payload = json.RawMessage(payload)
+	if err := yaml.Unmarshal([]byte(payload), &r.Payload); err != nil {
+		return Record{}, err
+	}
 	return r, nil
 }
 

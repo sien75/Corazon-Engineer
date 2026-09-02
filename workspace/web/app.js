@@ -1,4 +1,5 @@
-import { Graph, CanvasBlock } from "https://esm.sh/@gravity-ui/graph@1.11.3";
+import { Graph, CanvasBlock } from "./vendor/graph.js";
+import yaml from "./vendor/js-yaml.js";
 
 const STATIC_BASE = "http://localhost:7502"; // static: schema
 const AI_BASE = "http://localhost:7501";      // ai: conversation
@@ -149,23 +150,29 @@ function toConnections(edges) {
   }));
 }
 
-async function loadSchema() {
-  const res = await fetch(`${STATIC_BASE}/static/query`, {
+// static speaks yaml on the wire (application/yaml)
+async function staticCall(path, body) {
+  const res = await fetch(`${STATIC_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump(body ?? {}),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+  const data = yaml.load(await res.text());
+  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
   return data;
 }
 
+async function loadSchema() {
+  return staticCall("/static/query");
+}
+
 // subscribe to static schema-change stream; reload schema on mutation events
+// events are yaml docs, one "data:" line per yaml line (SSE multi-line data)
 function subscribeSchemaStream() {
   fetch(`${STATIC_BASE}/static/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ env: "dev", kinds: "schema" }),
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump({ env: "dev", kinds: "schema" }),
   })
     .then(async (res) => {
       if (!res.ok || !res.body) return;
@@ -179,18 +186,18 @@ function subscribeSchemaStream() {
         const frames = buf.split("\n\n");
         buf = frames.pop();
         for (const frame of frames) {
+          const lines = [];
           for (const line of frame.split("\n")) {
-            if (!line.startsWith("data:")) continue;
-            const payload = line.slice(5).trim();
-            if (!payload) continue;
-            let ev;
-            try {
-              ev = JSON.parse(payload);
-            } catch {
-              continue;
-            }
-            if (ev.kind === "schema") refresh();
+            if (line.startsWith("data:")) lines.push(line.slice(5).replace(/^ /, ""));
           }
+          if (!lines.length) continue;
+          let ev;
+          try {
+            ev = yaml.load(lines.join("\n"));
+          } catch {
+            continue;
+          }
+          if (ev?.kind === "schema") refresh();
         }
       }
     })
@@ -323,7 +330,7 @@ function kv(k, v) {
 function ifaceHtml(i) {
   const extra = [
     i.contract ? `contract: ${i.contract}` : "",
-    i.extend ? JSON.stringify(i.extend) : "",
+    i.extend ? `extend:\n${yaml.dump(i.extend).trimEnd()}` : "",
   ].filter(Boolean).join("\n");
   return `<div class="iface">
     <div><span class="iface-id">${escapeHtml(i.id)}</span> <span class="tag">${escapeHtml(i.channel)}</span><span class="tag">${escapeHtml(i.protocol)}</span></div>
@@ -430,14 +437,7 @@ function route() {
 }
 
 async function fetchDetail(type, id) {
-  const res = await fetch(`${STATIC_BASE}/static/query-detail`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type, id }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-  return data;
+  return staticCall("/static/query-detail", { type, id });
 }
 
 function renderList(view) {
@@ -463,7 +463,7 @@ async function renderDetail(view, id) {
   try {
     const data = await fetchDetail(type, id);
     const body = data[type];
-    pre.textContent = typeof body === "string" ? body : JSON.stringify(body, null, 2);
+    pre.textContent = typeof body === "string" ? body : yaml.dump(body);
   } catch (err) {
     pre.textContent = `load failed: ${err.message}`;
   }

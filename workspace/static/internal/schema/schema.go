@@ -36,8 +36,8 @@ var TypeDirs = map[string]string{
 }
 
 type FieldError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
+	Field   string `yaml:"field"`
+	Message string `yaml:"message"`
 }
 
 func contains(list []string, s string) bool {

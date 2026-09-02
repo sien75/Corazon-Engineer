@@ -1,1 +1,5 @@
 /.corazon/
+
+# Compiled binaries
+workspace/ai/corazon-ai
+workspace/log/corazon-log

@@ -1,8 +1,8 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -52,14 +52,20 @@ func cors(next http.Handler) http.Handler {
 
 // ---------- helpers ----------
 
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
+// The static API speaks YAML on the wire (application/yaml).
+
+func writeYAMLResp(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/yaml")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	data, err := yaml.Marshal(v)
+	if err != nil {
+		return
+	}
+	_, _ = w.Write(data)
 }
 
 func writeErr(w http.ResponseWriter, status int, code, msg string) {
-	writeJSON(w, status, map[string]interface{}{
+	writeYAMLResp(w, status, map[string]interface{}{
 		"error": map[string]string{"code": code, "message": msg},
 	})
 }
@@ -68,8 +74,13 @@ func decode(w http.ResponseWriter, r *http.Request, v interface{}) bool {
 	if r.Body == nil || r.ContentLength == 0 {
 		return true
 	}
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid json body: "+err.Error())
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body: "+err.Error())
+		return false
+	}
+	if err := yaml.Unmarshal(data, v); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid yaml body: "+err.Error())
 		return false
 	}
 	return true
@@ -93,7 +104,7 @@ func (s *Server) safePath(id string) (string, error) {
 
 func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Env string `json:"env"`
+		Env string `yaml:"env"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -119,7 +130,7 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 	} else {
 		runtimeEntries = schema.ListEntries(s.root, "runtime")
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
 		"atoms":     atoms,
 		"edges":     edges,
 		"runtime":   runtimeEntries,
@@ -135,8 +146,8 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
+		Type string `yaml:"type"`
+		ID   string `yaml:"id"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -179,7 +190,7 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 		}
 		resp[req.Type] = string(data)
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeYAMLResp(w, http.StatusOK, resp)
 }
 
 // ---------- static-mutation ----------
@@ -214,7 +225,7 @@ func (s *Server) handleSchemaMutation(w http.ResponseWriter, r *http.Request) {
 		}
 		if !isRaw {
 			if errs := schema.Validate(objType, body); len(errs) > 0 {
-				writeJSON(w, http.StatusUnprocessableEntity, map[string]interface{}{
+				writeYAMLResp(w, http.StatusUnprocessableEntity, map[string]interface{}{
 					"error": map[string]interface{}{
 						"code":    "validation_failed",
 						"message": "content does not conform to the type's format conventions; file NOT written",
@@ -279,7 +290,7 @@ func (s *Server) handleSchemaMutation(w http.ResponseWriter, r *http.Request) {
 		File:    id,
 		Content: req[objType],
 	})
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
 		"op": op, "type": objType, "id": id, "file": id,
 	})
 }
@@ -337,7 +348,7 @@ var searchDirs = map[string]string{
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Q string `json:"q"`
+		Q string `yaml:"q"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -348,10 +359,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	q := strings.ToLower(req.Q)
 	type result struct {
-		Type    string `json:"type"`
-		File    string `json:"file"`
-		Lines   [2]int `json:"lines"`
-		Snippet string `json:"snippet"`
+		Type    string `yaml:"type"`
+		File    string `yaml:"file"`
+		Lines   [2]int `yaml:"lines"`
+		Snippet string `yaml:"snippet"`
 	}
 	results := []result{}
 	dirs := make([]string, 0, len(searchDirs))
@@ -383,16 +394,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"q": req.Q, "results": results})
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"q": req.Q, "results": results})
 }
 
 // ---------- event (SSE) ----------
 
 func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Env   string `json:"env"`
-		Kinds string `json:"kinds"`
-		Edges string `json:"edges"`
+		Env   string `yaml:"env"`
+		Kinds string `yaml:"kinds"`
+		Edges string `yaml:"edges"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -451,8 +462,16 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 					ev.Type: ev.Content,
 				},
 			}
-			data := marshalNoEscape(payload)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			data, err := yaml.Marshal(payload)
+			if err != nil {
+				continue
+			}
+			// SSE carries multi-line yaml as one "data:" line per yaml line;
+			// the client joins them back before parsing (per SSE spec)
+			for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+				fmt.Fprintf(w, "data: %s\n", line)
+			}
+			fmt.Fprint(w, "\n")
 			flusher.Flush()
 		}
 	}
@@ -504,14 +523,6 @@ func (b *Broker) Publish(ev SchemaEvent) {
 		default:
 		}
 	}
-}
-
-func marshalNoEscape(v interface{}) string {
-	var sb strings.Builder
-	enc := json.NewEncoder(&sb)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(v)
-	return strings.TrimRight(sb.String(), "\n")
 }
 
 func containsStr(list []string, s string) bool {

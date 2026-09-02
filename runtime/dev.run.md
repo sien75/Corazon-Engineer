@@ -6,7 +6,7 @@ Local development environment: run the static / ai / log Go services plus the we
 
 - Go 1.22+
 - Node.js (web frontend only)
-- DeepSeek key for the ai service in `.corazon/credentials.md` (`.corazon/` is a git-ignored private directory; create it on first use)
+- DeepSeek key for the ai service in `.corazon/credentials/deepseek.md` (`.corazon/` is a git-ignored private directory; create it on first use)
 
 ## Start order
 

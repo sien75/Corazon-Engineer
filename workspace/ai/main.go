@@ -1,7 +1,5 @@
 package main
 
-//go:generate go run ./cmd/gen
-
 import (
 	"flag"
 	"fmt"
@@ -20,20 +18,19 @@ func main() {
 	fs := flag.NewFlagSet("serve-ai", flag.ExitOnError)
 	addr := fs.String("addr", ":7501", "listen address")
 	root := fs.String("root", "", "corazon project root (auto-detected from cwd if empty)")
-	staticBase := fs.String("static", "http://localhost:7502", "static service base url")
-	logBase := fs.String("log", "http://localhost:7503", "log service base url")
+	logBase := fs.String("log", "http://localhost:7503", "log service base url (conversation records)")
 	_ = fs.Parse(os.Args[2:])
 	r := *root
 	if r == "" {
 		r = findRoot()
 	}
-	creds := ai.LoadCredentials(r)
+	creds := ai.LoadCredentials(r, ai.DeepSeekFile)
 	key := creds[ai.KeyDeepSeek]
 	if key == "" {
-		fmt.Fprintln(os.Stderr, "warning: DEEPSEEK_API_KEY not found in "+r+"/"+ai.CredentialsPath+"; ai falls back to echo stub")
+		fmt.Fprintln(os.Stderr, "warning: DEEPSEEK_API_KEY not found in "+r+"/"+ai.CredentialsDir+"/"+ai.DeepSeekFile+"; ai falls back to echo stub")
 	}
-	srv := server.New(ai.NewStore(key, *staticBase, *logBase))
-	fmt.Printf("corazon ai: serving on %s (static=%s log=%s)\n", *addr, *staticBase, *logBase)
+	srv := server.New(ai.NewStore(key, *logBase))
+	fmt.Printf("corazon ai: serving on %s (log=%s)\n", *addr, *logBase)
 	if err := srv.Listen(*addr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -4,13 +4,13 @@ description: Write a record (ai only); op is add for now
 request:
   body:
     op: add  # only add for now
-    kind: call | observe | conversation
+    kind: test | telemetry | conversation
     env?: string  # runtime env
     atom?: string  # related atom
     sessionId?: string  # kind=conversation
     payload: object  # kind-specific content
-      # kind=call:       source, interface, req, resp, result
-      # kind=observe:    signal (trace | metric | log), query, result
+      # kind=test:       case, atoms, req, resp, result — triggered by a runtime test
+      # kind=telemetry:  signal (trace | metric | log), query, result — listening per runtime telemetry
       # kind=conversation: seq, msgKind, content
 
 response:

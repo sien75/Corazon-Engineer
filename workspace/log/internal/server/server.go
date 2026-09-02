@@ -1,8 +1,8 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"corazon/log/internal/store"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Server struct {
@@ -45,14 +47,20 @@ func cors(next http.Handler) http.Handler {
 	})
 }
 
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
+// The log API speaks YAML on the wire (application/yaml).
+
+func writeYAMLResp(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/yaml")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	data, err := yaml.Marshal(v)
+	if err != nil {
+		return
+	}
+	_, _ = w.Write(data)
 }
 
 func writeErr(w http.ResponseWriter, status int, code, msg string) {
-	writeJSON(w, status, map[string]interface{}{
+	writeYAMLResp(w, status, map[string]interface{}{
 		"error": map[string]string{"code": code, "message": msg},
 	})
 }
@@ -61,8 +69,13 @@ func decode(w http.ResponseWriter, r *http.Request, v interface{}) bool {
 	if r.Body == nil || r.ContentLength == 0 {
 		return true
 	}
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid json body: "+err.Error())
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body: "+err.Error())
+		return false
+	}
+	if err := yaml.Unmarshal(data, v); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid yaml body: "+err.Error())
 		return false
 	}
 	return true
@@ -84,12 +97,12 @@ func pageNum(raw interface{}) int {
 
 func (s *Server) handleMutation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Op        string          `json:"op"`
-		Kind      string          `json:"kind"`
-		Env       string          `json:"env"`
-		Atom      string          `json:"atom"`
-		SessionID string          `json:"sessionId"`
-		Payload   json.RawMessage `json:"payload"`
+		Op        string          `yaml:"op"`
+		Kind      string          `yaml:"kind"`
+		Env       string          `yaml:"env"`
+		Atom      string          `yaml:"atom"`
+		SessionID string          `yaml:"sessionId"`
+		Payload   interface{} `yaml:"payload"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -98,8 +111,8 @@ func (s *Server) handleMutation(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "op must be add")
 		return
 	}
-	if !containsStr([]string{"call", "observe", "conversation"}, req.Kind) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "kind must be call | observe | conversation")
+	if !containsStr([]string{"test", "telemetry", "conversation"}, req.Kind) {
+		writeErr(w, http.StatusBadRequest, "bad_request", "kind must be test | telemetry | conversation")
 		return
 	}
 	rec := store.Record{
@@ -115,26 +128,26 @@ func (s *Server) handleMutation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.broker.Publish(rec)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"id": rec.ID, "createdAt": rec.CreatedAt})
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"id": rec.ID, "createdAt": rec.CreatedAt})
 }
 
 // ---------- log/query ----------
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Kind      string      `json:"kind"`
-		Env       string      `json:"env"`
-		Atom      string      `json:"atom"`
-		SessionID string      `json:"sessionId"`
-		Start     string      `json:"start"`
-		End       string      `json:"end"`
-		PageNum   interface{} `json:"pageNum"`
+		Kind      string      `yaml:"kind"`
+		Env       string      `yaml:"env"`
+		Atom      string      `yaml:"atom"`
+		SessionID string      `yaml:"sessionId"`
+		Start     string      `yaml:"start"`
+		End       string      `yaml:"end"`
+		PageNum   interface{} `yaml:"pageNum"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	if req.Kind != "" && !containsStr([]string{"call", "observe", "conversation"}, req.Kind) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "kind must be call | observe | conversation")
+	if req.Kind != "" && !containsStr([]string{"test", "telemetry", "conversation"}, req.Kind) {
+		writeErr(w, http.StatusBadRequest, "bad_request", "kind must be test | telemetry | conversation")
 		return
 	}
 	items, hasMore, err := s.store.Query(req.Kind, req.Env, req.Atom, req.SessionID, req.Start, req.End, pageNum(req.PageNum))
@@ -142,7 +155,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
 		"records":  items,
 		"pageNum":  pageNum(req.PageNum),
 		"hasMore":  hasMore,
@@ -154,7 +167,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleQueryDetail(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID string `json:"id"`
+		ID string `yaml:"id"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -168,15 +181,15 @@ func (s *Server) handleQueryDetail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "record not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, rec)
+	writeYAMLResp(w, http.StatusOK, rec)
 }
 
 // ---------- log/search ----------
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Q       string      `json:"q"`
-		PageNum interface{} `json:"pageNum"`
+		Q       string      `yaml:"q"`
+		PageNum interface{} `yaml:"pageNum"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -190,7 +203,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
 		"q":        req.Q,
 		"results":  items,
 		"pageNum":  pageNum(req.PageNum),
@@ -203,8 +216,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Env   string `json:"env"`
-		Kinds string `json:"kinds"`
+		Env   string `yaml:"env"`
+		Kinds string `yaml:"kinds"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -249,8 +262,15 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				"seq":    seq,
 				"record": rec.ListItem(),
 			}
-			data := marshalNoEscape(payload)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			data, err := yaml.Marshal(payload)
+			if err != nil {
+				continue
+			}
+			// SSE carries multi-line yaml as one "data:" line per yaml line
+			for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+				fmt.Fprintf(w, "data: %s\n", line)
+			}
+			fmt.Fprint(w, "\n")
 			flusher.Flush()
 		}
 	}
@@ -293,14 +313,6 @@ func (b *Broker) Publish(rec store.Record) {
 		default:
 		}
 	}
-}
-
-func marshalNoEscape(v interface{}) string {
-	var sb strings.Builder
-	enc := json.NewEncoder(&sb)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(v)
-	return strings.TrimRight(sb.String(), "\n")
 }
 
 func containsStr(list []string, s string) bool {

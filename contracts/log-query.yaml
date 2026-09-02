@@ -1,11 +1,11 @@
 id: log-query
-description: Query records (atom call / telemetry observe / ai conversation); list view
+description: Query records (test run / telemetry observe / ai conversation); list view
 
 request:
   body:
-    kind?: call | observe | conversation  # record kind filter
-    env?: string  # runtime env filter (call / observe)
-    atom?: string  # related atom filter (call / observe)
+    kind?: test | telemetry | conversation  # record kind filter
+    env?: string  # runtime env filter (test / telemetry)
+    atom?: string  # related atom filter (test / telemetry)
     sessionId?: string  # ai session filter (kind=conversation)
     start?: string  # start time, RFC3339
     end?: string  # end time, RFC3339
@@ -17,7 +17,7 @@ response:
     records:
       - id: string  # record id
         createdAt: string  # record creation time, RFC3339
-        kind: call | observe | conversation
+        kind: test | telemetry | conversation
         env?: string
         atom?: string
         summary: string  # one-line summary for list display

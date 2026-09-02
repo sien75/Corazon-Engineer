@@ -1,13 +1,13 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"corazon/ai/internal/tools"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Event struct {
@@ -36,32 +38,36 @@ type Session struct {
 }
 
 type Store struct {
-	mu         sync.Mutex
-	sessions   map[string]*Session
-	ds         *deepseekClient
-	tools      []tools.Tool
-	staticBase string
-	logBase    string
-	http       *http.Client
+	mu       sync.Mutex
+	sessions map[string]*Session
+	ds       *deepseekClient
+	tools    []tools.Tool
+	logBase  string // log service base url; empty = conversation recording off
+	http     *http.Client
 }
 
 // NewStore creates a store. apiKey may be empty, in which case Ask falls back to the echo stub.
-func NewStore(apiKey, staticBase, logBase string) *Store {
+//
+// The only tool exposed to the model is `cli`: internal atomic APIs (static /
+// log) are plain HTTP interfaces listed in the system prompt, and the model
+// reaches them with curl like any other network tool — no per-endpoint tools.
+// Conversation records (kind=conversation), however, are written by this
+// service itself to logBase — deterministically, without model involvement.
+func NewStore(apiKey, logBase string) *Store {
 	var ds *deepseekClient
 	if apiKey != "" {
 		ds = newDeepseekClient(apiKey)
 	}
 	s := &Store{
-		sessions:   map[string]*Session{},
-		ds:         ds,
-		staticBase: staticBase,
-		logBase:    logBase,
-		http:       &http.Client{Timeout: 60 * time.Second},
+		sessions: map[string]*Session{},
+		ds:       ds,
+		logBase:  logBase,
+		http:     &http.Client{Timeout: 10 * time.Second},
 	}
 	s.tools = []tools.Tool{
 		{
 			Name:        "cli",
-			Description: "Execute a shell command to interact with external systems (connect endpoints, query otel / application logs, inspect infra). Follow the CLI safety rules: read-only commands may run directly; side-effectful commands require approval.",
+			Description: "Execute a shell command to interact with external systems and internal HTTP APIs (curl the static / log services, connect endpoints, query otel / application logs, inspect infra). Follow the CLI safety rules: read-only commands may run directly; side-effectful commands require approval.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -70,9 +76,6 @@ func NewStore(apiKey, staticBase, logBase string) *Store {
 				"required": []interface{}{"command"},
 			},
 		},
-	}
-	if b, err := tools.BuiltinTools(); err == nil {
-		s.tools = append(s.tools, b...)
 	}
 	return s
 }
@@ -118,14 +121,20 @@ func (s *Store) Delete(id string) error {
 func (s *Store) Ask(sess *Session, prompt string) {
 	s.mu.Lock()
 	sess.messages = append(sess.messages, ChatMessage{Role: "user", Content: prompt})
+	seq := len(sess.messages)
 	ds := s.ds
 	s.mu.Unlock()
+	go s.record(sess.ID, seq, "user", prompt)
 
 	if ds == nil {
+		reply := fmt.Sprintf("Corazon AI (dev stub) received your prompt:\n\n> %s", prompt)
 		s.mu.Lock()
-		defer s.mu.Unlock()
-		sess.appendLocked(Event{Kind: "markdown", Markdown: fmt.Sprintf("Corazon AI (dev stub) received your prompt:\n\n> %s", prompt)})
+		sess.messages = append(sess.messages, ChatMessage{Role: "assistant", Content: reply})
+		sess.appendLocked(Event{Kind: "markdown", Markdown: reply})
 		sess.appendLocked(Event{Kind: "markdown", Done: true})
+		seq = len(sess.messages)
+		s.mu.Unlock()
+		go s.record(sess.ID, seq, "assistant", reply)
 		return
 	}
 	go s.runTurn(sess)
@@ -166,9 +175,11 @@ func (s *Store) runTurn(sess *Session) {
 
 func (s *Store) finishTurn(sess *Session, content string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	sess.messages = append(sess.messages, ChatMessage{Role: "assistant", Content: content})
 	sess.appendLocked(Event{Kind: "markdown", Done: true})
+	seq := len(sess.messages)
+	s.mu.Unlock()
+	go s.record(sess.ID, seq, "assistant", content)
 }
 
 func (s *Store) messagesFor(sess *Session) []ChatMessage {
@@ -191,6 +202,26 @@ func (s *Store) appendTool(sess *Session, tc ToolCall, result string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess.messages = append(sess.messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: result})
+}
+
+// record writes a conversation record to the log service (fire-and-forget;
+// logging must never block or break the chat flow).
+func (s *Store) record(sessionID string, seq int, msgKind, content string) {
+	if s.logBase == "" {
+		return
+	}
+	body, err := yaml.Marshal(map[string]interface{}{
+		"op": "add", "kind": "conversation", "sessionId": sessionID,
+		"payload": map[string]interface{}{"seq": seq, "msgKind": msgKind, "content": content},
+	})
+	if err != nil {
+		return
+	}
+	resp, err := s.http.Post(s.logBase+"/log/mutation", "application/yaml", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // Approve grants a pending approval; the waiting tool call resumes.
@@ -233,57 +264,14 @@ func (s *Store) requestApproval(sess *Session, tc ToolCall) bool {
 
 // needsApproval reports whether a tool call must be user-approved before running.
 func (s *Store) needsApproval(tc ToolCall) bool {
-	switch tc.Function.Name {
-	case "static_mutation":
-		return true
-	case "cli":
-		return !cliReadOnly(tc.Function.Arguments)
-	}
-	return false
+	return tc.Function.Name == "cli" && !cliReadOnly(tc.Function.Arguments)
 }
 
 func (s *Store) executeTool(tc ToolCall) string {
-	base, path := s.toolTarget(tc.Function.Name)
-	if base == "" {
-		if tc.Function.Name == "cli" {
-			return execCLI(tc.Function.Arguments)
-		}
+	if tc.Function.Name != "cli" {
 		return "unknown tool: " + tc.Function.Name
 	}
-	req, err := http.NewRequest(http.MethodPost, base+path, strings.NewReader(tc.Function.Arguments))
-	if err != nil {
-		return "error: " + err.Error()
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return "error: " + err.Error()
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
-	return fmt.Sprintf("[%d] %s", resp.StatusCode, string(data))
-}
-
-func (s *Store) toolTarget(name string) (base, path string) {
-	switch name {
-	case "static_query":
-		return s.staticBase, "/static/query"
-	case "static_query_detail":
-		return s.staticBase, "/static/query-detail"
-	case "static_search":
-		return s.staticBase, "/static/search"
-	case "static_mutation":
-		return s.staticBase, "/static/mutation"
-	case "log_query":
-		return s.logBase, "/log/query"
-	case "log_query_detail":
-		return s.logBase, "/log/query-detail"
-	case "log_search":
-		return s.logBase, "/log/search"
-	case "log_mutation":
-		return s.logBase, "/log/mutation"
-	}
-	return "", ""
+	return execCLI(tc.Function.Arguments)
 }
 
 func execCLI(argsJSON string) string {
@@ -322,6 +310,7 @@ func cliReadOnly(argsJSON string) bool {
 	case "git":
 		return len(fields) > 1 && containsStr([]string{"status", "log", "show", "diff", "branch", "remote"}, fields[1])
 	case "curl":
+		readOnly := true
 		for i := 1; i < len(fields); i++ {
 			f := fields[i]
 			switch {
@@ -329,21 +318,42 @@ func cliReadOnly(argsJSON string) bool {
 				if i+1 < len(fields) {
 					m := strings.ToUpper(fields[i+1])
 					if m != "GET" && m != "HEAD" {
-						return false
+						readOnly = false
 					}
 					i++
 				}
 			case f == "-d" || f == "--data" || f == "-F" || strings.HasPrefix(f, "--data-") || strings.HasPrefix(f, "-d"):
-				return false
+				readOnly = false
 			}
 		}
-		return true
+		if readOnly {
+			return true
+		}
+		// internal HTTP APIs are POST-only; query/search endpoints are still
+		// read-only by contract and may run without approval
+		return internalReadOnly(cmd)
 	case "psql":
 		return strings.Contains(cmd, "SELECT")
 	case "redis-cli":
 		return len(fields) > 1 && containsStr([]string{"GET", "MGET", "SCAN", "TTL", "TYPE", "INFO", "KEYS", "HGETALL", "LRANGE"}, strings.ToUpper(fields[1]))
 	case "sqlite3":
 		return strings.Contains(cmd, "SELECT")
+	}
+	return false
+}
+
+// internalReadOnlyPaths are internal API endpoints that are read-only by
+// contract, even though they are invoked via POST.
+var internalReadOnlyPaths = []string{
+	"/static/query", "/static/query-detail", "/static/search",
+	"/log/query", "/log/query-detail", "/log/search",
+}
+
+func internalReadOnly(cmd string) bool {
+	for _, p := range internalReadOnlyPaths {
+		if strings.Contains(cmd, p) {
+			return true
+		}
 	}
 	return false
 }
