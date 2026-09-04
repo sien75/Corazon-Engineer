@@ -1,5 +1,7 @@
 /.corazon/
 
+node_modules
+
 # Compiled binaries
 workspace/ai/corazon-ai
 workspace/log/corazon-log
