@@ -386,9 +386,10 @@ document.getElementById("panel-close").addEventListener("click", hidePanel);
 
 const contentEl = document.getElementById("content");
 const graphEl = document.getElementById("graph");
-const SECTIONS = ["runtime", "devtime", "contracts", "docs", "notes", "tests"];
+const SECTIONS = ["runtime", "devtime", "contracts", "tests", "runbooks", "docs", "notes"];
 const SECTION_DETAIL_TYPE = {
   runtime: "runtime",
+  runbooks: "runbook",
   contracts: "contract",
   devtime: "devtime",
   docs: "docs",
@@ -464,6 +465,24 @@ async function renderDetail(view, id) {
     const data = await fetchDetail(type, id);
     const body = data[type];
     pre.textContent = typeof body === "string" ? body : yaml.dump(body);
+    // runtime env: render the linked runbook (env.runbook → runbooks/) below the env yaml
+    if (type === "runtime" && body && typeof body === "object" && body.runbook) {
+      const runId = String(body.runbook).replace(/^\.\//, "");
+      const entry = contentEl.querySelector(".entry");
+      const head = document.createElement("div");
+      head.className = "entry-title";
+      head.textContent = `runbook — ${runId}`;
+      const rb = document.createElement("pre");
+      rb.textContent = "loading…";
+      entry.appendChild(head);
+      entry.appendChild(rb);
+      try {
+        const r = await fetchDetail("runbook", runId);
+        rb.textContent = typeof r.runbook === "string" ? r.runbook : yaml.dump(r.runbook);
+      } catch (err) {
+        rb.textContent = `runbook load failed: ${err.message}`;
+      }
+    }
   } catch (err) {
     pre.textContent = `load failed: ${err.message}`;
   }
@@ -514,10 +533,10 @@ function aiApprovalCard(approval) {
     try {
       const res = await fetch(`${AI_BASE}/ai/approval`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: aiSession, approvalId: approval.approvalId }),
+        headers: { "Content-Type": "application/yaml" },
+        body: yaml.dump({ id: aiSession, approvalId: approval.approvalId }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = yaml.load(await res.text()) || {};
       if (!res.ok) throw new Error(data.error?.message || res.status);
       btn.textContent = "approved ✓";
     } catch (err) {
@@ -532,10 +551,10 @@ function aiApprovalCard(approval) {
 async function aiNew() {
   const res = await fetch(`${AI_BASE}/ai/new`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/yaml" },
     body: "{}",
   });
-  const data = await res.json();
+  const data = yaml.load(await res.text());
   if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
   aiSession = data.sessionId;
   aiSeenSeq = 0;
@@ -544,11 +563,11 @@ async function aiNew() {
 async function aiStream() {
   const res = await fetch(`${AI_BASE}/ai/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: aiSession }),
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump({ id: aiSession }),
   });
   if (!res.ok || !res.body) {
-    const data = await res.json().catch(() => ({}));
+    const data = yaml.load(await res.text().catch(() => "")) || {};
     aiAppend("assistant", `[error] ${data.error?.message || res.status}`);
     return;
   }
@@ -563,31 +582,32 @@ async function aiStream() {
     const frames = buf.split("\n\n");
     buf = frames.pop();
     for (const frame of frames) {
+      // events are yaml docs, one "data:" line per yaml line (SSE multi-line data)
+      const lines = [];
       for (const line of frame.split("\n")) {
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (!payload) continue;
-        let ev;
-        try {
-          ev = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-        if (typeof ev.seq === "number") {
-          if (ev.seq <= aiSeenSeq) continue; // already rendered from an earlier stream
-          aiSeenSeq = ev.seq;
-        }
-        if (ev.kind === "markdown" && ev.markdown) {
-          if (!assistant) assistant = aiAppend("assistant", "");
-          assistant.textContent += ev.markdown;
-          aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
-        } else if (ev.kind === "error") {
-          aiAppend("assistant", `[error] ${ev.error?.message || ""}`);
-        } else if (ev.kind === "approval") {
-          aiApprovalCard(ev.approval);
-        }
-        if (ev.done) assistant = null;
+        if (line.startsWith("data:")) lines.push(line.slice(5).replace(/^ /, ""));
       }
+      if (!lines.length) continue;
+      let ev;
+      try {
+        ev = yaml.load(lines.join("\n"));
+      } catch {
+        continue;
+      }
+      if (typeof ev.seq === "number") {
+        if (ev.seq <= aiSeenSeq) continue; // already rendered from an earlier stream
+        aiSeenSeq = ev.seq;
+      }
+      if (ev.kind === "markdown" && ev.markdown) {
+        if (!assistant) assistant = aiAppend("assistant", "");
+        assistant.textContent += ev.markdown;
+        aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
+      } else if (ev.kind === "error") {
+        aiAppend("assistant", `[error] ${ev.error?.message || ""}`);
+      } else if (ev.kind === "approval") {
+        aiApprovalCard(ev.approval);
+      }
+      if (ev.done) assistant = null;
     }
   }
 }
@@ -599,10 +619,10 @@ async function aiSend() {
   aiAppend("user", prompt);
   const res = await fetch(`${AI_BASE}/ai/ask`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: aiSession, prompt }),
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump({ id: aiSession, prompt }),
   });
-  const data = await res.json().catch(() => ({}));
+  const data = yaml.load(await res.text()) || {};
   if (!res.ok) {
     aiAppend("assistant", `[error] ${data.error?.message || res.status}`);
     return;

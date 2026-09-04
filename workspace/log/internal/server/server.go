@@ -237,6 +237,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	flusher.Flush() // send headers immediately so the connection establishes at once
 
 	sub := s.broker.Subscribe()
 	defer s.broker.Unsubscribe(sub)

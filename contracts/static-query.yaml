@@ -41,12 +41,13 @@ response:
         protocol: string  # per channel, see devtime/schema/enums_zh.md
         description: string
 
-    runtime: [string]  # entries under runtime/, relative paths e.g. "runtime/dev.yaml"
+    runtime: [string]  # env definitions under runtime/ (*.yaml only), e.g. "runtime/dev.yaml"; companion files like <env>.run.md are not listed — reach them via the env's run field
     contracts: [string]  # entries under contracts/, relative paths e.g. "contracts/ai-ask.yaml"
     devtime: [string]  # entries under devtime/, relative paths
     docs: [string]  # entries under docs/, relative paths
     notes: [string]  # entries under notes/, relative paths
     tests: [string]  # entries under tests/, relative paths e.g. "tests/core-ai-flow.md"
+    runbooks: [string]  # entries under runbooks/, relative paths e.g. "runbooks/dev.md"
 
 errors:
   - status: 400

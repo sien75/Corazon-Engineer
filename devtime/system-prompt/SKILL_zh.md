@@ -9,9 +9,9 @@
 ### static 服务 —— schema(http://localhost:7502)
 线上格式为 YAML(`application/yaml`)。
 - `/static/query` — 查全量架构(atoms / edges / runtime 条目 + 各目录清单)
-- `/static/query-detail` — 查单个文件内容(runtime / contract / devtime / docs / notes / test)
+- `/static/query-detail` — 查单个文件内容(runtime / contract / devtime / test / runbook / docs / notes)
 - `/static/search` — 全局搜索(schema 内任意内容)
-- `/static/mutation` — 增删改 atom / edge / runtime / contract / devtime / docs / notes / test(有副作用)
+- `/static/mutation` — 增删改 atom / edge / runtime / contract / devtime / test / runbook / docs / notes(有副作用)
 - `/static/stream` — SSE 订阅 schema 变更事件(长连接;不要直接跑阻塞式 curl)
 
 ### log 服务 —— 记录(http://localhost:7503)

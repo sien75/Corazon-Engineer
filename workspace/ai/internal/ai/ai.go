@@ -20,12 +20,12 @@ import (
 )
 
 type Event struct {
-	Seq      int                    `json:"seq"`
-	Kind     string                 `json:"kind"`
-	Markdown string                 `json:"markdown,omitempty"`
-	Approval map[string]interface{} `json:"approval,omitempty"`
-	Done     bool                   `json:"done,omitempty"`
-	Err      map[string]string      `json:"error,omitempty"`
+	Seq      int                    `yaml:"seq"`
+	Kind     string                 `yaml:"kind"`
+	Markdown string                 `yaml:"markdown,omitempty"`
+	Approval map[string]interface{} `yaml:"approval,omitempty"`
+	Done     bool                   `yaml:"done,omitempty"`
+	Err      map[string]string      `yaml:"error,omitempty"`
 }
 
 type Session struct {

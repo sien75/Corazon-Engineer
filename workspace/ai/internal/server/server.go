@@ -1,12 +1,14 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
 	"corazon/ai/internal/ai"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Server struct {
@@ -41,14 +43,21 @@ func cors(next http.Handler) http.Handler {
 	})
 }
 
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
+// The ai API speaks YAML on the wire (application/yaml), like static / log.
+// JSON request bodies still parse, since JSON is a subset of YAML.
+
+func writeYAML(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/yaml")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	data, err := yaml.Marshal(v)
+	if err != nil {
+		return
+	}
+	_, _ = w.Write(data)
 }
 
 func writeErr(w http.ResponseWriter, status int, code, msg string) {
-	writeJSON(w, status, map[string]interface{}{
+	writeYAML(w, status, map[string]interface{}{
 		"error": map[string]string{"code": code, "message": msg},
 	})
 }
@@ -57,8 +66,13 @@ func decode(w http.ResponseWriter, r *http.Request, v interface{}) bool {
 	if r.Body == nil || r.ContentLength == 0 {
 		return true
 	}
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid json body: "+err.Error())
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body: "+err.Error())
+		return false
+	}
+	if err := yaml.Unmarshal(data, v); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid yaml body: "+err.Error())
 		return false
 	}
 	return true
@@ -68,13 +82,13 @@ func decode(w http.ResponseWriter, r *http.Request, v interface{}) bool {
 
 func (s *Server) handleAINew(w http.ResponseWriter, r *http.Request) {
 	sess := s.ai.New()
-	writeJSON(w, http.StatusOK, map[string]interface{}{"sessionId": sess.ID})
+	writeYAML(w, http.StatusOK, map[string]interface{}{"sessionId": sess.ID})
 }
 
 func (s *Server) handleAIAsk(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID     string `json:"id"`
-		Prompt string `json:"prompt"`
+		ID     string `yaml:"id"`
+		Prompt string `yaml:"prompt"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -89,12 +103,12 @@ func (s *Server) handleAIAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.ai.Ask(sess, req.Prompt)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"sessionId": sess.ID})
+	writeYAML(w, http.StatusOK, map[string]interface{}{"sessionId": sess.ID})
 }
 
 func (s *Server) handleAIStream(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID string `json:"id"`
+		ID string `yaml:"id"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -112,14 +126,20 @@ func (s *Server) handleAIStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
+	flusher.Flush() // send headers immediately so the connection establishes at once
 
 	backlog, ch := s.ai.Subscribe(sess)
 	send := func(ev ai.Event) bool {
-		var sb strings.Builder
-		enc := json.NewEncoder(&sb)
-		enc.SetEscapeHTML(false)
-		_ = enc.Encode(ev)
-		fmt.Fprintf(w, "data: %s\n\n", strings.TrimRight(sb.String(), "\n"))
+		data, err := yaml.Marshal(ev)
+		if err != nil {
+			return ev.Done
+		}
+		// SSE carries multi-line yaml as one "data:" line per yaml line;
+		// the client joins them back before parsing (per SSE spec)
+		for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+			fmt.Fprintf(w, "data: %s\n", line)
+		}
+		fmt.Fprint(w, "\n")
 		flusher.Flush()
 		return ev.Done
 	}
@@ -142,8 +162,8 @@ func (s *Server) handleAIStream(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAIApproval(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID         string `json:"id"`
-		ApprovalID string `json:"approvalId"`
+		ID         string `yaml:"id"`
+		ApprovalID string `yaml:"approvalId"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -161,7 +181,7 @@ func (s *Server) handleAIApproval(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "session or approvalId not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeYAML(w, http.StatusOK, map[string]interface{}{
 		"sessionId":  sess.ID,
 		"approvalId": req.ApprovalID,
 		"granted":    true,
@@ -170,7 +190,7 @@ func (s *Server) handleAIApproval(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAIDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID string `json:"id"`
+		ID string `yaml:"id"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -183,5 +203,5 @@ func (s *Server) handleAIDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "session not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"sessionId": req.ID})
+	writeYAML(w, http.StatusOK, map[string]interface{}{"sessionId": req.ID})
 }

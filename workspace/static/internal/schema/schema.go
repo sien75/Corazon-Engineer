@@ -22,7 +22,7 @@ var RuntimeTypes = []string{"native", "go", "browser", "node", "bun", "jre", "py
 
 var AtomRoles = []string{"service", "database", "cache", "queue", "storage", "gateway", "scheduler", "worker", "proxy"}
 
-var ObjectTypes = []string{"atom", "edge", "runtime", "devtime", "contract", "test", "docs", "notes"}
+var ObjectTypes = []string{"atom", "edge", "runtime", "devtime", "contract", "test", "runbook", "docs", "notes"}
 
 var TypeDirs = map[string]string{
 	"atom":     "atoms",
@@ -30,6 +30,7 @@ var TypeDirs = map[string]string{
 	"runtime":  "runtime",
 	"contract": "contracts",
 	"test":     "tests",
+	"runbook":  "runbooks",
 	"devtime":  "devtime",
 	"docs":     "docs",
 	"notes":    "notes",
@@ -123,9 +124,14 @@ func ListEntries(root, dir string) []string {
 }
 
 // RuntimeEnvs returns the env names available under runtime/ (filename without .yaml).
+// runtime/ holds env definitions only (*.yaml); runbooks live under runbooks/
+// and are referenced by the env's runbook field.
 func RuntimeEnvs(root string) []string {
 	envs := []string{}
 	for _, p := range ListEntries(root, "runtime") {
+		if !strings.HasSuffix(p, ".yaml") {
+			continue
+		}
 		name := strings.TrimSuffix(filepath.Base(p), ".yaml")
 		envs = append(envs, name)
 	}
@@ -195,7 +201,7 @@ func Validate(objType string, body map[string]interface{}) []FieldError {
 		if _, ok := body["response"]; !ok {
 			fail("response", "required")
 		}
-	case "test", "devtime", "docs", "notes":
+	case "test", "devtime", "docs", "notes", "runbook":
 		// raw content, no structural validation
 	}
 	return errs
@@ -205,8 +211,8 @@ func validateRuntime(body map[string]interface{}, fail func(field, msg string)) 
 	if str(body, "description") == "" {
 		fail("description", "required")
 	}
-	if _, ok := body["run"]; ok && str(body, "run") == "" {
-		fail("run", "must be a non-empty string path when present")
+	if _, ok := body["runbook"]; ok && str(body, "runbook") == "" {
+		fail("runbook", "must be a non-empty string path when present")
 	}
 
 	endpoints, _ := body["endpoints"].([]interface{})

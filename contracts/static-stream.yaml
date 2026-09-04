@@ -19,7 +19,7 @@ response:
     payload:
       # kind=schema: content snapshot, shape matches the type below (see static-mutation)
       op: add | update | remove
-      type: atom | edge | runtime | devtime | contract | test | docs | notes
+      type: atom | edge | runtime | devtime | contract | test | runbook | docs | notes
       id: string  # object path, e.g. "contracts/ai-ask.yaml"; backend-generated on add
       file: string  # written file; coincides with id for leaf files
 
@@ -57,7 +57,7 @@ response:
 
       runtime?:  # when type=runtime
         description: string
-        run?: string  # path to runbook md
+        runbook?: string  # path to the runbook md under runbooks/
         endpoints:
           - id: string  # atom id
             channel: network | stdio | ipc
@@ -86,6 +86,8 @@ response:
         error: object
 
       test?: string  # when type=test
+
+      runbook?: string  # when type=runbook
 
       docs?: string  # when type=docs
 

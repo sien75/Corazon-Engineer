@@ -128,7 +128,13 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		runtimeEntries = []string{p}
 	} else {
-		runtimeEntries = schema.ListEntries(s.root, "runtime")
+		// runtime listing shows env definitions (*.yaml) only; runbooks live
+		// under runbooks/ and are reached via the env's runbook field
+		for _, p := range schema.ListEntries(s.root, "runtime") {
+			if strings.HasSuffix(p, ".yaml") {
+				runtimeEntries = append(runtimeEntries, p)
+			}
+		}
 	}
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
 		"atoms":     atoms,
@@ -139,6 +145,7 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 		"docs":      schema.ListEntries(s.root, "docs"),
 		"notes":     schema.ListEntries(s.root, "notes"),
 		"tests":     schema.ListEntries(s.root, "tests"),
+		"runbooks":  schema.ListEntries(s.root, "runbooks"),
 	})
 }
 
@@ -152,7 +159,7 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 	if !decode(w, r, &req) {
 		return
 	}
-	if !containsStr([]string{"runtime", "devtime", "contract", "test", "docs", "notes"}, req.Type) {
+	if !containsStr([]string{"runtime", "devtime", "contract", "test", "runbook", "docs", "notes"}, req.Type) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid type: "+req.Type)
 		return
 	}
@@ -182,7 +189,7 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		resp["contract"] = doc
-	default: // devtime, test, docs, notes — raw text
+	default: // devtime, test, docs, notes, runbook — raw text
 		data, err := os.ReadFile(path)
 		if err != nil {
 			writeErr(w, http.StatusNotFound, "not_found", "file not found: "+req.ID)
@@ -213,9 +220,11 @@ func (s *Server) handleSchemaMutation(w http.ResponseWriter, r *http.Request) {
 	}
 	body, _ := req[objType].(map[string]interface{})
 	rawStr, isRaw := req[objType].(string)
+	// raw-content types take a string body
+	rawType := objType == "test" || objType == "devtime" || objType == "docs" || objType == "notes" || objType == "runbook"
 
 	if op != "remove" {
-		if isRaw != (objType == "test" || objType == "devtime" || objType == "docs" || objType == "notes") {
+		if isRaw != rawType {
 			writeErr(w, http.StatusBadRequest, "bad_request", "field "+objType+" has wrong shape for its type")
 			return
 		}
@@ -306,7 +315,7 @@ func generateID(objType string, body map[string]interface{}) string {
 		}
 	}
 	ext := ".yaml"
-	if objType == "test" || objType == "devtime" || objType == "docs" || objType == "notes" {
+	if objType == "test" || objType == "devtime" || objType == "docs" || objType == "notes" || objType == "runbook" {
 		ext = ".md"
 	}
 	return dir + "/" + name + ext
@@ -326,7 +335,7 @@ func (s *Server) writeObject(objType, path, id string, body map[string]interface
 		return writeYAML(path, map[string]interface{}{"runtime": map[string]interface{}{env: body}})
 	case "contract":
 		return writeYAML(path, body)
-	default: // test, devtime, docs, notes — raw content
+	default: // test, devtime, docs, notes, runbook — raw content
 		return os.WriteFile(path, []byte(raw), 0o644)
 	}
 }
@@ -343,7 +352,7 @@ func writeYAML(path string, v interface{}) error {
 
 var searchDirs = map[string]string{
 	"atoms": "atom", "edges": "edge", "runtime": "runtime", "contracts": "contract",
-	"tests": "test", "devtime": "devtime", "docs": "docs", "notes": "notes",
+	"tests": "test", "devtime": "devtime", "docs": "docs", "notes": "notes", "runbooks": "runbook",
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -431,6 +440,7 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	flusher.Flush() // send headers immediately so the connection establishes at once
 
 	sub := s.broker.Subscribe()
 	defer s.broker.Unsubscribe(sub)

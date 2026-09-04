@@ -15,19 +15,20 @@ schema 由 **静态结构** 与 **场景** 组成：
 
 场景 —— 填充具体内容
 ├── Runtime       runtime/    运行环境映射
+│   ├── Runbook   runbooks/   拉起说明（被 env 的 runbook 字段引用）
 │   └── Test      tests/      测试用例（引用 contract）
 │       └── Contract  contracts/  接口契约
 └── Devtime       devtime/    开发时记录
     └── Contract  contracts/  接口契约
 ```
 
-加载策略：`atoms` 和 `edges` 全量加载（schema 查询返回完整内容 —— 画图要用）。`runtime` / `contracts` / `tests` / `devtime` / `docs` / `notes` 按需加载 —— 查询只返回路径 / 条目，用到时再取内容。
+加载策略：`atoms` 和 `edges` 全量加载（schema 查询返回完整内容 —— 画图要用）。`runtime` / `contracts` / `tests` / `devtime` / `docs` / `notes` / `runbooks` 按需加载 —— 查询只返回路径 / 条目，用到时再取内容。
 
 ---
 
 ## 文件组织
 
-根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 和 `tests/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目一律忽略——永不解析为内容——因此 dot 目录可自由存放 fixture、临时数据和工具文件（如 `tests/.playground/`）。
+根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` / `runbooks/` 靠目录约定自动发现；`contracts/` 和 `tests/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目一律忽略——永不解析为内容——因此 dot 目录可自由存放 fixture、临时数据和工具文件（如 `tests/.playground/`）。
 
 ```yaml
 # corazon.yaml —— 只放根 meta，不枚举数据文件
@@ -68,6 +69,7 @@ project/
 │   └── ...
 ├── docs/                      # *.md → 参考文档（引用 contract）
 ├── notes/                     # *.md → 批注（anchor 指向实体）
+├── runbooks/                  # *.md → 环境拉起说明（被 runtime env 的 runbook 字段引用）
 └── workspace/                 # 本地代码仓库
 ```
 
@@ -147,13 +149,13 @@ edges:
 
 ## Runtime 层 — 运行环境映射
 
-把 schema 映射到具体运行环境。位于 `runtime/`，**文件名即 env 名**（`dev.yaml` → env `dev`）。每个 env 有五个块：`description`（环境描述）、`run`（怎么把这个环境跑起来 —— 指向一个 runbook markdown 文件，可选）、`endpoints`（每个 atom 怎么接入 —— **数组**，每项自带 `id` + `channel` + `protocol`，连接字段随 channel 变化）、`telemetry`（监控观测：logs/metrics/traces，**数组**，同一 atom 可多条）、`tests`（绑定到该环境的系统级测试）。
+把 schema 映射到具体运行环境。位于 `runtime/`，**文件名即 env 名**（`dev.yaml` → env `dev`）。每个 env 有五个块：`description`（环境描述）、`runbook`（怎么把这个环境跑起来 —— 指向 `runbooks/` 下的一个 runbook markdown 文件，可选）、`endpoints`（每个 atom 怎么接入 —— **数组**，每项自带 `id` + `channel` + `protocol`，连接字段随 channel 变化）、`telemetry`（监控观测：logs/metrics/traces，**数组**，同一 atom 可多条）、`tests`（绑定到该环境的系统级测试）。
 
 ```yaml
 runtime:
   dev:
     description: 本地开发环境
-    run: dev.run.md
+    runbook: ./runbooks/dev.md
     endpoints:
       - id: user-service
         channel: network
@@ -221,12 +223,12 @@ runtime:
 | channel | 字段 | 含义 |
 |---|---|---|
 | `network` | `address` | 拨号目标地址，如 `http://`、`grpc://`、`redis://...` |
-| `stdio` | `in` + `out` | 命名管道（拉起方式见 `run` 指向的 runbook） |
+| `stdio` | `in` + `out` | 命名管道（拉起方式见 `runbook` 指向的 runbook 文件） |
 | `ipc` | `address` | 本地通信资源，如 unix socket 路径 |
 
 同一 atom 可有多条 endpoint（如一个服务同时提供 HTTP API 和直连其 PostgreSQL）。`protocol` 取值见 `devtime/schema/enums_zh.md`。
 
-**run** —— 拉起说明：怎么把这个环境跑起来（启动顺序、每个 atom 的启动命令、依赖、注意事项）。为普通 markdown 文件，不做格式约定；路径写在 env 的 `run` 字段里，相对项目根。约定与 env 同名——`dev.yaml` 配 `dev.run.md`——但这是约定不是强制，以 `run` 字段的路径为准。runbook 里的端口/地址必须与该 env 的 `endpoints` 一致：跑起来是在实现这个 env，不是随意起服务。
+**runbook** —— 拉起说明：怎么把这个环境跑起来（启动顺序、每个 atom 的启动命令、依赖、注意事项）。runbook 是独立的内容类型，位于 `runbooks/`，为普通 markdown 文件，不做格式约定；路径写在 env 的 `runbook` 字段里，相对项目根（`./` 前缀，与 test 的 `case` 一致）。约定与 env 同名——`runtime/dev.yaml` 配 `runbooks/dev.md`——但这是约定不是强制，以 `runbook` 字段的路径为准。`runtime/` 只放 env 定义（`*.yaml`），runbook 不放在这里。runbook 里的端口/地址必须与该 env 的 `endpoints` 一致：跑起来是在实现这个 env，不是随意起服务。
 
 **telemetry** —— 监控（读/监听）侧：在哪里观测 logs/metrics/traces。数组形态，每项必填 `id` + `backend` + `address`，同一 atom 可挂多条。统一为单个 otel address 承载三种信号，不再按信号拆分。
 
@@ -287,3 +289,7 @@ errors:
 ## Notes 文件 — 批注
 
 针对某个实体的标记与讨论，位于 `notes/`。为普通 markdown 文件，不做格式约定。
+
+## Runbook 文件 — 环境拉起说明
+
+记录怎么把某个 runtime env 跑起来，位于 `runbooks/`。为普通 markdown 文件，不做格式约定，被 env 的 `runbook` 字段引用（见 Runtime 层）。

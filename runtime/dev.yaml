@@ -1,7 +1,7 @@
 runtime:
   dev:
     description: Local development environment
-    run: dev.run.md
+    runbook: ./runbooks/dev.md
     endpoints:
       - id: static
         channel: network
