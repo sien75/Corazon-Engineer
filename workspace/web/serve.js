@@ -2,8 +2,15 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-const root = __dirname;
-const port = Number(process.argv[2]) || 7500;
+// args: [port] [--root <dir>] — root defaults to the script's own directory;
+// --root matters when compiled (bun build --compile) and assets live elsewhere
+const args = process.argv.slice(2);
+let root = __dirname;
+let port = 7500;
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--root" && args[i + 1]) root = path.resolve(args[++i]);
+  else if (/^\d+$/.test(args[i])) port = Number(args[i]);
+}
 const types = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",

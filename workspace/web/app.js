@@ -386,10 +386,10 @@ document.getElementById("panel-close").addEventListener("click", hidePanel);
 
 const contentEl = document.getElementById("content");
 const graphEl = document.getElementById("graph");
-const SECTIONS = ["runtime", "devtime", "contracts", "tests", "runbooks", "docs", "notes"];
+const SECTIONS = ["runtime", "devtime", "contracts", "tests", "cookbooks", "docs", "notes"];
 const SECTION_DETAIL_TYPE = {
   runtime: "runtime",
-  runbooks: "runbook",
+  cookbooks: "cookbook",
   contracts: "contract",
   devtime: "devtime",
   docs: "docs",
@@ -465,22 +465,22 @@ async function renderDetail(view, id) {
     const data = await fetchDetail(type, id);
     const body = data[type];
     pre.textContent = typeof body === "string" ? body : yaml.dump(body);
-    // runtime env: render the linked runbook (env.runbook → runbooks/) below the env yaml
-    if (type === "runtime" && body && typeof body === "object" && body.runbook) {
-      const runId = String(body.runbook).replace(/^\.\//, "");
+    // runtime env: render the linked cookbook (env.cookbook → cookbooks/) below the env yaml
+    if (type === "runtime" && body && typeof body === "object" && body.cookbook) {
+      const runId = String(body.cookbook).replace(/^\.\//, "");
       const entry = contentEl.querySelector(".entry");
       const head = document.createElement("div");
       head.className = "entry-title";
-      head.textContent = `runbook — ${runId}`;
+      head.textContent = `cookbook — ${runId}`;
       const rb = document.createElement("pre");
       rb.textContent = "loading…";
       entry.appendChild(head);
       entry.appendChild(rb);
       try {
-        const r = await fetchDetail("runbook", runId);
-        rb.textContent = typeof r.runbook === "string" ? r.runbook : yaml.dump(r.runbook);
+        const r = await fetchDetail("cookbook", runId);
+        rb.textContent = typeof r.cookbook === "string" ? r.cookbook : yaml.dump(r.cookbook);
       } catch (err) {
-        rb.textContent = `runbook load failed: ${err.message}`;
+        rb.textContent = `cookbook load failed: ${err.message}`;
       }
     }
   } catch (err) {

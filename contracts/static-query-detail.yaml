@@ -3,18 +3,18 @@ description: Fetch content of a single leaf file
 
 request:
   body:
-    type: runtime | devtime | contract | test | runbook | docs | notes  # leaf file type
+    type: runtime | devtime | contract | test | cookbook | docs | notes  # leaf file type
     id: string  # relative path (directory entry from static-query), e.g. "contracts/ai-ask.yaml"
 
 response:
   status: 200
   body:
-    type: runtime | devtime | contract | test | runbook | docs | notes  # echoed request type
+    type: runtime | devtime | contract | test | cookbook | docs | notes  # echoed request type
     id: string  # echoed request id
 
     runtime?:  # when type=runtime, parsed runtime env (per schema design)
       description: string
-      runbook?: string  # path to the runbook md under runbooks/ — how to launch this env
+      cookbook?: string  # path to the cookbook md under cookbooks/ — how to launch this env
       endpoints:  # array of runtime endpoints; one atom may have multiple entries
         - id: string  # atom id
           channel: network | stdio | ipc
@@ -44,7 +44,7 @@ response:
 
     test?: string  # when type=test, raw file content
 
-    runbook?: string  # when type=runbook, raw markdown text
+    cookbook?: string  # when type=cookbook, raw markdown text
 
     docs?: string  # when type=docs, raw markdown text
 

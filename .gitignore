@@ -6,3 +6,6 @@ node_modules
 workspace/ai/corazon-ai
 workspace/log/corazon-log
 workspace/static/corazon-static
+
+# Packaged deploy artifacts (cookbooks/prod.deploy.md)
+dist/

@@ -4,7 +4,7 @@ description: Atomic schema mutation; one object at a time (add/update/remove), b
 request:
   body:
     op: add | update | remove
-    type: atom | edge | runtime | devtime | contract | test | runbook | docs | notes
+    type: atom | edge | runtime | devtime | contract | test | cookbook | docs | notes
     id: string  # relative path; backend may generate on add
 
     # exactly one field matching type (required on add/update, ignored on remove)
@@ -43,7 +43,7 @@ request:
 
     runtime?:
       description: string
-      runbook?: string  # path to the runbook md under runbooks/ — how to launch this env (relative to project root)
+      cookbook?: string  # path to the cookbook md under cookbooks/ — how to launch this env (relative to project root)
       endpoints:
         - id: string  # atom id
           channel: network | stdio | ipc
@@ -73,7 +73,7 @@ request:
 
     test?: string  # raw file content
 
-    runbook?: string  # raw markdown
+    cookbook?: string  # raw markdown
 
     docs?: string  # raw markdown
     notes?: string  # raw markdown
@@ -82,7 +82,7 @@ response:
   status: 200
   body:
     op: add | update | remove  # echoed operation
-    type: atom | edge | runtime | devtime | contract | test | runbook | docs | notes  # echoed type
+    type: atom | edge | runtime | devtime | contract | test | cookbook | docs | notes  # echoed type
     id: string  # affected object path (newly generated on add)
     file: string  # modified file path (audit trail)
     # validation failures are rejected before writing and returned as 422 (see errors)

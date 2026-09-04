@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { Registry } from "./registry.ts";
 import { serve } from "./server.ts";
+// text import: embedded into the binary by `bun build --compile`, so the
+// compiled single-file executable carries the prompt (no runtime file lookup)
+import systemPrompt from "../system-prompt.md" with { type: "text" };
 
 // usage: bun run src/main.ts [--addr :7501] [--root <project dir>]
 //        [--log http://localhost:7503] [--model provider/model-id]
@@ -69,11 +72,6 @@ const logBase = flags.log || "http://localhost:7503";
 
 // Provider keys from .corazon/credentials/pi.md → env, for pi's ModelRuntime.
 loadCredentials(root);
-
-const systemPrompt = readFileSync(
-  path.join(import.meta.dir, "..", "system-prompt.md"),
-  "utf8",
-);
 
 const registry = new Registry({
   root,

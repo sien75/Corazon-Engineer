@@ -1,4 +1,4 @@
-# dev environment runbook
+# dev environment cookbook
 
 Local development environment: run the static / log Go services, the ai Bun/TS service, plus the web frontend on this machine. Ports must match the `endpoints` in `dev.yaml` (static: 7502, ai: 7501, log: 7503).
 
@@ -10,7 +10,7 @@ Local development environment: run the static / log Go services, the ai Bun/TS s
 
 ## Start order
 
-log and static have no interdependency; ai depends on both (its flags point at their addresses); web comes last.
+log and static have no interdependency; ai depends on log (its `--log` flag points at the log address); web comes last.
 
 ```bash
 # 1. log — sqlite record service, :7503
@@ -19,7 +19,7 @@ cd workspace/log && go run . serve-log --root <project root>
 # 2. static — schema parsing service, :7502
 cd workspace/static && go run . serve-static --root <project root>
 
-# 3. ai — session/orchestration service (pi SDK, in-process), :7501 (defaults already point at localhost:7502 / 7503)
+# 3. ai — session/orchestration service (pi SDK, in-process), :7501 (default log address: localhost:7503)
 cd workspace/ai && bun install && bun run src/main.ts --root <project root>
 # optional: pin a model, e.g. --model anthropic/claude-sonnet-4-6
 

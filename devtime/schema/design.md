@@ -15,20 +15,20 @@ Static structure (atom & edge) — define the system structure
 
 Scenario — fill in concrete content
 ├── Runtime         runtime/     runtime environment mapping
-│   ├── Runbook     runbooks/    launch runbook (cited by the env's runbook field)
+│   ├── Cookbook    cookbooks/   launch cookbook (cited by the env's cookbook field)
 │   └── Test        tests/       test case (cites contract)
 │       └── Contract contracts/  interface contract
 └── Devtime         devtime/     dev-time records
     └── Contract    contracts/   interface contract
 ```
 
-Loading strategy: `atoms` and `edges` are loaded in full (the schema query returns their complete content — needed to draw the graph). `runtime`, `contracts`, `tests`, `devtime`, `docs`, `notes`, and `runbooks` are loaded on demand — the query returns only paths/entries, content fetched when needed.
+Loading strategy: `atoms` and `edges` are loaded in full (the schema query returns their complete content — needed to draw the graph). `runtime`, `contracts`, `tests`, `devtime`, `docs`, `notes`, and `cookbooks` are loaded on demand — the query returns only paths/entries, content fetched when needed.
 
 ---
 
 ## File Organization
 
-A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` / `runbooks/` are discovered by directory convention; `contracts/` and `tests/` are content directories. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are ignored everywhere — never parsed as content — so dot-directories are free for fixtures, scratch data, and tooling (e.g. `tests/.playground/`).
+A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` / `cookbooks/` are discovered by directory convention; `contracts/` and `tests/` are content directories. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are ignored everywhere — never parsed as content — so dot-directories are free for fixtures, scratch data, and tooling (e.g. `tests/.playground/`).
 
 ```yaml
 # corazon.yaml — root meta only, does NOT enumerate data files
@@ -69,7 +69,7 @@ corazon/
 │   └── ...
 ├── docs/                      # *.md → reference doc (cites contracts)
 ├── notes/                     # *.md → annotation (marker + thread, anchored to entity)
-├── runbooks/                  # *.md → env launch runbook (cited by the env's runbook field)
+├── cookbooks/                 # *.md → env launch cookbook (cited by the env's cookbook field)
 └── workspace/                 # Local code repositories
 ```
 
@@ -149,13 +149,13 @@ edges:
 
 ## Runtime Layer
 
-Maps the schema to a concrete runtime environment. Under `runtime/`, **filename = env name** (`dev.yaml` → env `dev`). Each env has five blocks: `description` (environment description), `runbook` (how to launch this environment — points to a runbook markdown file under `runbooks/`, optional), `endpoints` (how each atom is reached — an **array**; each entry carries its own `id` + `channel` + `protocol`, connection fields depend on the channel), `telemetry` (monitoring observation for logs/metrics/traces — an **array**, one atom may have multiple entries), and `tests` (system-level tests bound to this environment).
+Maps the schema to a concrete runtime environment. Under `runtime/`, **filename = env name** (`dev.yaml` → env `dev`). Each env has five blocks: `description` (environment description), `cookbook` (how to launch this environment — points to a cookbook markdown file under `cookbooks/`, optional), `endpoints` (how each atom is reached — an **array**; each entry carries its own `id` + `channel` + `protocol`, connection fields depend on the channel), `telemetry` (monitoring observation for logs/metrics/traces — an **array**, one atom may have multiple entries), and `tests` (system-level tests bound to this environment).
 
 ```yaml
 runtime:
   dev:
     description: Local development environment
-    runbook: ./runbooks/dev.md
+    cookbook: ./cookbooks/dev.run.md
     endpoints:
       - id: user-service
         channel: network
@@ -223,12 +223,12 @@ runtime:
 | channel | field | meaning |
 |---|---|---|
 | `network` | `address` | the address to dial, e.g. `http://`, `grpc://`, `redis://...` |
-| `stdio` | `in` + `out` | named pipes (how atoms are launched lives in the runbook file pointed to by `runbook`) |
+| `stdio` | `in` + `out` | named pipes (how atoms are launched lives in the cookbook file pointed to by `cookbook`) |
 | `ipc` | `address` | a local inter-process resource, e.g. a unix socket path |
 
 An atom may appear in multiple endpoint entries (e.g. one service exposing both an HTTP API and direct access to its PostgreSQL). `protocol` values are enumerated in `devtime/schema/enums.md`.
 
-**runbook** — launch instructions: how to bring this environment up (start order, per-atom launch commands, dependencies, caveats). Runbooks are their own content type under `runbooks/` — plain markdown files with no format constraints; the path (relative to the project root, `./`-prefixed, like a test's `case`) goes in the env's `runbook` field. By convention it pairs with the env name — `runtime/dev.yaml` pairs with `runbooks/dev.md` — but this is a convention, not a requirement; the `runbook` field's path is authoritative. `runtime/` holds env definitions only (`*.yaml`); runbooks do not live there. Ports/addresses in the runbook must match the env's `endpoints`: launching the project means realizing this env, not starting services arbitrarily.
+**cookbook** — launch instructions: how to bring this environment up (start order, per-atom launch commands, dependencies, caveats). Cookbooks are their own content type under `cookbooks/` — plain markdown files with no format constraints; the path (relative to the project root, `./`-prefixed, like a test's `case`) goes in the env's `cookbook` field. By convention it pairs with the env name plus an action suffix — `runtime/dev.yaml` pairs with `cookbooks/dev.run.md` — but this is a convention, not a requirement; the `cookbook` field's path is authoritative. `runtime/` holds env definitions only (`*.yaml`); cookbooks do not live there. Cookbooks not tied to a single env (e.g. packaging/deployment like `cookbooks/prod.deploy.md`) simply live under `cookbooks/` unreferenced. Ports/addresses in the cookbook must match the env's `endpoints`: launching the project means realizing this env, not starting services arbitrarily.
 
 **telemetry** — the monitoring (read/listen) side of the runtime: where to observe logs/metrics/traces. Array form; each entry requires `id` + `backend` + `address`, and one atom may have multiple entries. A single otel address carries all three signals — no per-signal split.
 
@@ -290,6 +290,6 @@ User-facing reference docs, under `docs/`. Plain markdown files, no format conve
 
 Markers and discussions targeting an entity, under `notes/`. Plain markdown files, no format convention.
 
-## Runbook Files — Env Launch Instructions
+## Cookbook Files — Env Launch Instructions
 
-How to bring a runtime env up, under `runbooks/`. Plain markdown files, no format convention; cited by the env's `runbook` field (see the Runtime layer).
+How to bring a runtime env up, under `cookbooks/`. Plain markdown files, no format convention; cited by the env's `cookbook` field (see the Runtime layer). Filenames conventionally carry an action suffix: `<env>.run.md` for launching an env, `<target>.deploy.md` for packaging/deployment.

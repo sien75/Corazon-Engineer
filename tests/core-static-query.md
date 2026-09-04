@@ -26,7 +26,7 @@ Expected: 200, body contains:
 - `edges`: all edges in full (includes `demo-to-worker`)
 - `runtime`: entry list, includes `runtime/dev.yaml`
 - `contracts`: entry list, exactly `[contracts/demo-api.yaml]` (dot-prefixed files are ignored)
-- `devtime`: exactly `[devtime/note.md]`; `docs` / `notes` / `runbooks` are empty arrays
+- `devtime`: exactly `[devtime/note.md]`; `docs` / `notes` / `cookbooks` are empty arrays
 
 ## 2. static-query filtered by env
 

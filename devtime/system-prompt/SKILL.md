@@ -9,9 +9,9 @@ You have exactly two tools: `http` (make an HTTP request: method / url / headers
 ### static service — schema (http://localhost:7502)
 Speaks YAML on the wire (`application/yaml`).
 - `/static/query` — fetch the full architecture (atoms / edges / runtime entries + all directory listings)
-- `/static/query-detail` — fetch a single file's content (runtime / contract / devtime / test / runbook / docs / notes)
+- `/static/query-detail` — fetch a single file's content (runtime / contract / devtime / test / cookbook / docs / notes)
 - `/static/search` — global search over any schema content
-- `/static/mutation` — add / update / remove atom / edge / runtime / contract / devtime / test / runbook / docs / notes (side effects)
+- `/static/mutation` — add / update / remove atom / edge / runtime / contract / devtime / test / cookbook / docs / notes (side effects)
 - `/static/stream` — SSE subscription for schema-change events (long-lived; do NOT run a bare blocking curl)
 
 ### log service — records (http://localhost:7503)
