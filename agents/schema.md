@@ -22,13 +22,11 @@ Scenario — fill in concrete content
     └── Contract    contracts/   interface contract
 ```
 
-Loading strategy: `atoms` and `edges` are loaded in full (the schema query returns their complete content — needed to draw the graph). `runtime`, `contracts`, `tests`, `devtime`, `docs`, `notes`, and `cookbooks` are loaded on demand — the query returns only paths/entries, content fetched when needed.
-
 ---
 
 ## File Organization
 
-A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` / `cookbooks/` are discovered by directory convention; `contracts/` and `tests/` are content directories. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are ignored everywhere — never parsed as content — so dot-directories are free for fixtures, scratch data, and tooling (e.g. `tests/.playground/`).
+A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` / `cookbooks/` are discovered by directory convention; `contracts/` and `tests/` are content directories. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are ignored everywhere — never parsed as content.
 
 ```yaml
 # corazon.yaml — root meta only, does NOT enumerate data files
@@ -43,7 +41,7 @@ exclude:
 ```
 
 ```
-corazon/
+project/
 ├── corazon.yaml               # Root meta only (project, version, default_runtime, include/exclude)
 ├── atoms/                     # *.yaml → atom
 │   ├── user-service.yaml
@@ -123,7 +121,7 @@ atoms:
 ```
 
 - `interfaces.provides` / `interfaces.consumes` declare the atom's interfaces by role: `provides` = capabilities this atom exposes (others call this atom), `consumes` = capabilities this atom depends on (this atom calls others)
-- `role` is the atom's role in the architecture (service | database | cache | queue | storage | gateway | scheduler | worker | proxy), see devtime/schema/enums.md
+- `role` is the atom's role in the architecture (service | database | cache | queue | storage | gateway | scheduler | worker | proxy), see ./enum.md
 - Common interface fields: `id` / `channel` / `protocol` / `contract` (pointing to a contract file under `contracts/`)
 - Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.). Bind addresses/ports belong to the Runtime layer's `endpoints.address`, not to the atom
 
@@ -226,9 +224,9 @@ runtime:
 | `stdio` | `in` + `out` | named pipes (how atoms are launched lives in the cookbook file pointed to by `cookbook`) |
 | `ipc` | `address` | a local inter-process resource, e.g. a unix socket path |
 
-An atom may appear in multiple endpoint entries (e.g. one service exposing both an HTTP API and direct access to its PostgreSQL). `protocol` values are enumerated in `devtime/schema/enums.md`.
+An atom may appear in multiple endpoint entries (e.g. one service exposing both an HTTP API and direct access to its PostgreSQL). `protocol` values are enumerated in `./enum.md`.
 
-**cookbook** — launch instructions: how to bring this environment up (start order, per-atom launch commands, dependencies, caveats). Cookbooks are their own content type under `cookbooks/` — plain markdown files with no format constraints; the path (relative to the project root, `./`-prefixed, like a test's `case`) goes in the env's `cookbook` field. By convention it pairs with the env name plus an action suffix — `runtime/dev.yaml` pairs with `cookbooks/dev.run.md` — but this is a convention, not a requirement; the `cookbook` field's path is authoritative. `runtime/` holds env definitions only (`*.yaml`); cookbooks do not live there. Cookbooks not tied to a single env (e.g. packaging/deployment like `cookbooks/prod.deploy.md`) simply live under `cookbooks/` unreferenced. Ports/addresses in the cookbook must match the env's `endpoints`: launching the project means realizing this env, not starting services arbitrarily.
+**cookbook** — launch instructions: how to bring this environment up (start order, per-atom launch commands, dependencies, caveats). Cookbooks are their own content type under `cookbooks/` — plain markdown files with no format constraints; the path (relative to the project root, `./`-prefixed, like a test's `case`) goes in the env's `cookbook` field. `runtime/` holds env definitions only (`*.yaml`); cookbooks do not live there. Cookbooks not tied to a single env (e.g. packaging/deployment like `cookbooks/prod.deploy.md`) simply live under `cookbooks/` unreferenced. Ports/addresses in the cookbook must match the env's `endpoints`: launching the project means realizing this env, not starting services arbitrarily.
 
 **telemetry** — the monitoring (read/listen) side of the runtime: where to observe logs/metrics/traces. Array form; each entry requires `id` + `backend` + `address`, and one atom may have multiple entries. A single otel address carries all three signals — no per-signal split.
 
@@ -268,7 +266,7 @@ errors:
 
 - `request` / `response` body is the real data structure; `stream: sse` marks streaming interfaces where body is the schema of each event
 - `errors` lists the errors this interface may return (status / code / description)
-- Field-writing conventions (types, enums, optional, arrays, comments) live in `devtime/iteration-2608/contract 规范.md`
+- Field-writing conventions (types, enums, optional, arrays, comments) live in `./contract.md`
 
 ---
 
@@ -276,7 +274,7 @@ errors:
 
 Describe system-level tests, under `tests/`, referenced by runtime env `tests.case`. Plain markdown files, no format convention.
 
-Tests never run against the real project tree. They run in `.playground/` — a blank or mock corazon project at the repo root (git-ignored), scaffolded by the test setup (e.g. from fixtures like `tests/.playground/`), never copied from the real project. The backend under test is started with its project root pointed at `.playground/`, so tests are fully decoupled from real schema content and add/update/remove mutations only touch the mock. `.playground/` can be deleted and re-scaffolded at any time.
+Tests never run against the real project tree. They run in `.corazon/.playground/` — `.corazon/` is the git-ignored private directory at the project root, and `.corazon/.playground/` is a blank or mock corazon project under it, scaffolded by the test setup (e.g. from fixtures like `tests/.playground/`). The backend under test is started with its project root pointed at `.corazon/.playground/`, so add/update/remove mutations only touch the mock.
 
 ## Devtime Files — Dev-Time Records
 

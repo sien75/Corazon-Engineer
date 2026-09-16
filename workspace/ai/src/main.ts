@@ -2,9 +2,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { Registry } from "./registry.ts";
 import { serve } from "./server.ts";
-// text import: embedded into the binary by `bun build --compile`, so the
-// compiled single-file executable carries the prompt (no runtime file lookup)
-import systemPrompt from "../system-prompt.md" with { type: "text" };
 
 // usage: bun run src/main.ts [--addr :7501] [--root <project dir>]
 //        [--log http://localhost:7503] [--model provider/model-id]
@@ -69,6 +66,21 @@ const flags = parseFlags(process.argv.slice(2));
 const root = flags.root || findRoot();
 const addr = flags.addr || ":7501";
 const logBase = flags.log || "http://localhost:7503";
+
+// TODO: the system prompt belongs to the Corazon tool itself (the agents/
+// shipped with the tool), not to the project being processed; where the tool
+// resolves it from is still to be decided. For now, read it from the project
+// root.
+function loadSystemPrompt(root: string): string {
+  const primary = path.join(root, "agents", "AGENTS.md");
+  try {
+    return readFileSync(primary, "utf8");
+  } catch {
+    console.error(`agents/AGENTS.md not found under project root ${root}`);
+    process.exit(1);
+  }
+}
+const systemPrompt = loadSystemPrompt(root);
 
 // Provider keys from .corazon/credentials/pi.md → env, for pi's ModelRuntime.
 loadCredentials(root);

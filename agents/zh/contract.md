@@ -190,9 +190,8 @@ id: ai-ask
 description: 提问;携带 prompt(决定 AI 做什么)
 
 request:
-  path:
-    id: string      # session id
   body:
+    id: string      # session id
     prompt: string  # 决定 AI 做什么
 
 response:

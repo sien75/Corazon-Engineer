@@ -56,6 +56,9 @@ interface Sess {
 // gracefully after this many turns (mirrors the historical maxRounds=12).
 const MAX_TURNS = 12;
 
+// Default model when --model is not given: DeepSeek Flash.
+const DEFAULT_MODEL = "deepseek/deepseek-flash";
+
 // cli approvals wait this long for the user, then count as denied.
 const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 
@@ -93,22 +96,20 @@ export class Registry {
   // authenticated provider it falls back to the dev echo stub.
   async init(): Promise<void> {
     this.modelRuntime = await ModelRuntime.create();
-    if (this.opts.model) {
-      const r = resolveCliModel({
-        cliModel: this.opts.model,
-        modelRuntime: this.modelRuntime,
-      });
-      if (r.warning) console.error(`warning: ${r.warning}`);
-      if (r.error) {
-        console.error(`warning: ${r.error}; falling back to auto selection`);
-      } else {
-        this.model = r.model;
-      }
+    const requested = this.opts.model ?? DEFAULT_MODEL;
+    const r = resolveCliModel({
+      cliModel: requested,
+      modelRuntime: this.modelRuntime,
+    });
+    if (r.warning) console.error(`warning: ${r.warning}`);
+    if (r.error) {
+      console.error(`warning: ${r.error}; falling back to auto selection`);
+    } else {
+      this.model = r.model;
     }
     if (!this.model) {
       const available = await this.modelRuntime.getAvailable();
-      // Prefer deepseek when several providers are authenticated (historical
-      // default); otherwise take whatever is available.
+      // Prefer any deepseek provider, otherwise take whatever is available.
       this.model =
         available.find((m) => m.provider === "deepseek") ?? available[0];
     }

@@ -22,13 +22,11 @@ schema 由 **静态结构** 与 **场景** 组成：
     └── Contract  contracts/  接口契约
 ```
 
-加载策略：`atoms` 和 `edges` 全量加载（schema 查询返回完整内容 —— 画图要用）。`runtime` / `contracts` / `tests` / `devtime` / `docs` / `notes` / `cookbooks` 按需加载 —— 查询只返回路径 / 条目，用到时再取内容。
-
 ---
 
 ## 文件组织
 
-根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` / `cookbooks/` 靠目录约定自动发现；`contracts/` 和 `tests/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目一律忽略——永不解析为内容——因此 dot 目录可自由存放 fixture、临时数据和工具文件（如 `tests/.playground/`）。
+根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` / `cookbooks/` 靠目录约定自动发现；`contracts/` 和 `tests/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目一律忽略——永不解析为内容。
 
 ```yaml
 # corazon.yaml —— 只放根 meta，不枚举数据文件
@@ -123,7 +121,7 @@ atoms:
 ```
 
 - `interfaces.provides` / `interfaces.consumes` 按角色声明接口：`provides` = 本 atom 提供的能力（别人调本 atom）,`consumes` = 本 atom 依赖的能力（本 atom 调别人）
-- `role` 是 atom 在架构中的角色（service | database | cache | queue | storage | gateway | scheduler | worker | proxy），见 devtime/schema/enums_zh.md
+- `role` 是 atom 在架构中的角色（service | database | cache | queue | storage | gateway | scheduler | worker | proxy），见 ./enum.md
 - 接口公共字段：`id` / `channel` / `protocol` / `contract`（指向 `contracts/` 下的契约文件）
 - 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）。监听地址/端口属于部署关注点，由 Runtime 层的 `endpoints.address` 表达，不写在 atom 里
 
@@ -226,9 +224,9 @@ runtime:
 | `stdio` | `in` + `out` | 命名管道（拉起方式见 `cookbook` 指向的 cookbook 文件） |
 | `ipc` | `address` | 本地通信资源，如 unix socket 路径 |
 
-同一 atom 可有多条 endpoint（如一个服务同时提供 HTTP API 和直连其 PostgreSQL）。`protocol` 取值见 `devtime/schema/enums_zh.md`。
+同一 atom 可有多条 endpoint（如一个服务同时提供 HTTP API 和直连其 PostgreSQL）。`protocol` 取值见 `./enum.md`。
 
-**cookbook** —— 拉起说明：怎么把这个环境跑起来（启动顺序、每个 atom 的启动命令、依赖、注意事项）。cookbook 是独立的内容类型，位于 `cookbooks/`，为普通 markdown 文件，不做格式约定；路径写在 env 的 `cookbook` 字段里，相对项目根（`./` 前缀，与 test 的 `case` 一致）。约定与 env 同名并带动作后缀——`runtime/dev.yaml` 配 `cookbooks/dev.run.md`——但这是约定不是强制，以 `cookbook` 字段的路径为准。`runtime/` 只放 env 定义（`*.yaml`），cookbook 不放在这里。不属于单个 env 的 cookbook（如打包部署 `cookbooks/prod.deploy.md`）直接放在 `cookbooks/` 下、不被引用即可。cookbook 里的端口/地址必须与该 env 的 `endpoints` 一致：跑起来是在实现这个 env，不是随意起服务。
+**cookbook** —— 拉起说明：怎么把这个环境跑起来（启动顺序、每个 atom 的启动命令、依赖、注意事项）。cookbook 是独立的内容类型，位于 `cookbooks/`，为普通 markdown 文件，不做格式约定；路径写在 env 的 `cookbook` 字段里，相对项目根（`./` 前缀，与 test 的 `case` 一致）。`runtime/` 只放 env 定义（`*.yaml`），cookbook 不放在这里。不属于单个 env 的 cookbook（如打包部署 `cookbooks/prod.deploy.md`）直接放在 `cookbooks/` 下、不被引用即可。cookbook 里的端口/地址必须与该 env 的 `endpoints` 一致：跑起来是在实现这个 env，不是随意起服务。
 
 **telemetry** —— 监控（读/监听）侧：在哪里观测 logs/metrics/traces。数组形态，每项必填 `id` + `backend` + `address`，同一 atom 可挂多条。统一为单个 otel address 承载三种信号，不再按信号拆分。
 
@@ -268,7 +266,7 @@ errors:
 
 - `request` / `response` 的 body 即真实数据结构；`stream: sse` 标记流式接口，body 为每条 event 的 schema
 - `errors` 列出本接口可能出现的错误（status / code / description）
-- 字段书写规范（类型、枚举、可选、数组、注释）见 `devtime/iteration-2608/contract 规范.md`
+- 字段书写规范（类型、枚举、可选、数组、注释）见 `./contract.md`
 
 ---
 
@@ -276,7 +274,7 @@ errors:
 
 描述系统级测试，位于 `tests/`，被 runtime env 的 `tests.case` 引用。为普通 markdown 文件，不做格式约定。
 
-测试绝不对真实项目树执行。测试在 `.corazon/.playground/` 中运行——`.corazon/` 是项目根下 git 忽略的私有目录，承载凭据（`credentials/pi.md` 等，含 ai 密钥）、sqlite 数据（`corazon.db`）等运行时数据；`.corazon/.playground/` 是其下的空白或 mock corazon 项目，由测试准备步骤搭建（如从 `tests/.playground/` 这类 fixture 生成），绝不拷贝真实项目。被测后端启动时将项目根指向 `.corazon/.playground/`，测试与真实 schema 内容完全解耦，增删改只落在 mock 上。`.corazon/.playground/` 可随时删除重建。
+测试绝不对真实项目树执行。测试在 `.corazon/.playground/` 中运行——`.corazon/` 是项目根下 git 忽略的私有目录，`.corazon/.playground/` 是其下的空白或 mock corazon 项目，由测试准备步骤搭建（如从 `tests/.playground/` 这类 fixture 生成）。被测后端启动时将项目根指向 `.corazon/.playground/`，增删改只落在 mock 上。
 
 ## Devtime 文件 — 开发时记录
 

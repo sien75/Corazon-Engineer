@@ -21,13 +21,13 @@ response:
           provides:  # capabilities this atom provides (others call this atom)
             - id: string
               channel: network | stdio | ipc
-              protocol: string  # per channel, see devtime/schema/enums_zh.md
+              protocol: string  # per channel, see agents/enum.md
               contract?: string  # path under contracts/, e.g. "contracts/create-user-api.yaml"
               extend?: object  # protocol-specific fields (path, method, command, topic, ...); shape varies by protocol
           consumes:  # capabilities this atom consumes (this atom calls others)
             - id: string
               channel: network | stdio | ipc
-              protocol: string  # per channel, see devtime/schema/enums_zh.md
+              protocol: string  # per channel, see agents/enum.md
               contract?: string  # path under contracts/, e.g. "contracts/user-created-event.yaml"
               extend?: object  # protocol-specific fields (topic, ...); shape varies by protocol
 
@@ -38,7 +38,7 @@ response:
         to: string  # target atom name
         to_interface: string  # target atom in interface id
         channel: network | stdio | ipc
-        protocol: string  # per channel, see devtime/schema/enums_zh.md
+        protocol: string  # per channel, see agents/enum.md
         description: string
 
     runtime: [string]  # env definitions under runtime/ (*.yaml only), e.g. "runtime/dev.yaml"; launch cookbooks are not listed here — reach them via the env's cookbook field

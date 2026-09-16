@@ -18,7 +18,7 @@ response:
       endpoints:  # array of runtime endpoints; one atom may have multiple entries
         - id: string  # atom id
           channel: network | stdio | ipc
-          protocol: string  # per channel, see devtime/schema/enums_zh.md
+          protocol: string  # per channel, see agents/enum.md
           address?: string  # when channel=network or ipc
           in?: string  # when channel=stdio
           out?: string  # when channel=stdio

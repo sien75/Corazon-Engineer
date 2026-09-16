@@ -4,6 +4,8 @@
 
 ### channel
 
+The underlying way data flows.
+
 ```
 network   — TCP/UDP/Unix Socket
 stdio     — stdin/stdout / pipe
@@ -12,7 +14,7 @@ ipc       — Inter-process communication (shared memory, semaphore, message que
 
 ### protocol
 
-Protocols must be compatible with their channel.
+The application-layer protocol carried over the channel. Protocols must be compatible with their channel.
 
 ```
 network channel:
@@ -62,6 +64,8 @@ php      — PHP interpreter
 ---
 
 ## Atom Role (atom.role)
+
+The role this atom plays in the architecture.
 
 ```
 service      — Business service
