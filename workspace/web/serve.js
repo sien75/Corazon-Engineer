@@ -2,13 +2,24 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-// args: [port] [--root <dir>] — root defaults to the script's own directory;
-// --root matters when compiled (bun build --compile) and assets live elsewhere
+// args: [port] [--root <dir>] [--static <url>] [--ai <url>] [--log <url>]
+// --root defaults to the script's own directory; it matters when compiled
+// (bun build --compile) and assets live elsewhere. The three *-url flags are
+// the runtime addresses the frontend should call; they are handed down by the
+// launcher (which owns port selection) and served back as /config.js.
 const args = process.argv.slice(2);
 let root = __dirname;
 let port = 7500;
+const runtime = {
+  static: "http://localhost:7502",
+  ai: "http://localhost:7501",
+  log: "http://localhost:7503",
+};
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--root" && args[i + 1]) root = path.resolve(args[++i]);
+  else if (args[i] === "--static" && args[i + 1]) runtime.static = args[++i];
+  else if (args[i] === "--ai" && args[i + 1]) runtime.ai = args[++i];
+  else if (args[i] === "--log" && args[i + 1]) runtime.log = args[++i];
   else if (/^\d+$/.test(args[i])) port = Number(args[i]);
 }
 const types = {
@@ -26,6 +37,11 @@ http
     if (urlPath === "/favicon.ico") {
       res.writeHead(404);
       res.end();
+      return;
+    }
+    if (urlPath === "/config.js") {
+      res.writeHead(200, { "Content-Type": types[".js"] });
+      res.end(`window.CORAZON = ${JSON.stringify(runtime)};\n`);
       return;
     }
     let file = path.join(root, urlPath);

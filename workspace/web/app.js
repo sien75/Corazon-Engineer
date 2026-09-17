@@ -1,9 +1,16 @@
 import { Graph, CanvasBlock } from "./vendor/graph.js";
 import yaml from "./vendor/js-yaml.js";
 
-const STATIC_BASE = "http://localhost:7502"; // static: schema
-const AI_BASE = "http://localhost:7501";      // ai: conversation
-const LOG_BASE = "http://localhost:7503";     // log: records
+// Runtime addresses are injected by the launcher and served as /config.js
+// (see serve.js). Fall back to the default ports when opened without it.
+const RUNTIME = window.CORAZON ?? {
+  static: "http://localhost:7502",
+  ai: "http://localhost:7501",
+  log: "http://localhost:7503",
+};
+const STATIC_BASE = RUNTIME.static; // static: schema
+const AI_BASE = RUNTIME.ai;         // ai: conversation
+const LOG_BASE = RUNTIME.log;       // log: records
 
 const panelEl = document.getElementById("panel");
 const panelTitleEl = document.getElementById("panel-title");
@@ -386,15 +393,13 @@ document.getElementById("panel-close").addEventListener("click", hidePanel);
 
 const contentEl = document.getElementById("content");
 const graphEl = document.getElementById("graph");
-const SECTIONS = ["runtime", "devtime", "contracts", "tests", "cookbooks", "docs", "notes"];
+const SECTIONS = ["runtime", "devtime", "contracts", "docs", "notes"];
 const SECTION_DETAIL_TYPE = {
   runtime: "runtime",
-  cookbooks: "cookbook",
   contracts: "contract",
   devtime: "devtime",
   docs: "docs",
   notes: "notes",
-  tests: "test",
 };
 
 function parseRoute() {
@@ -465,24 +470,6 @@ async function renderDetail(view, id) {
     const data = await fetchDetail(type, id);
     const body = data[type];
     pre.textContent = typeof body === "string" ? body : yaml.dump(body);
-    // runtime env: render the linked cookbook (env.cookbook → cookbooks/) below the env yaml
-    if (type === "runtime" && body && typeof body === "object" && body.cookbook) {
-      const runId = String(body.cookbook).replace(/^\.\//, "");
-      const entry = contentEl.querySelector(".entry");
-      const head = document.createElement("div");
-      head.className = "entry-title";
-      head.textContent = `cookbook — ${runId}`;
-      const rb = document.createElement("pre");
-      rb.textContent = "loading…";
-      entry.appendChild(head);
-      entry.appendChild(rb);
-      try {
-        const r = await fetchDetail("cookbook", runId);
-        rb.textContent = typeof r.cookbook === "string" ? r.cookbook : yaml.dump(r.cookbook);
-      } catch (err) {
-        rb.textContent = `cookbook load failed: ${err.message}`;
-      }
-    }
   } catch (err) {
     pre.textContent = `load failed: ${err.message}`;
   }

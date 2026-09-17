@@ -1,6 +1,6 @@
 atoms:
   - name: ai
-    description: Corazon ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from .corazon/credentials/pi.md, env, or pi auth.json); exposes ai session APIs to the frontend, reads/writes schema via static, writes/reads records via log, connects external systems via the http tool and approved cli programs
+    description: Corazon ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema via static, writes/reads records via log, connects external systems via the http tool and approved cli programs
     path: ./workspace/ai
     runtime_type: bun
     runtime_version: "1.3"

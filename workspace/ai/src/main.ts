@@ -4,7 +4,8 @@ import { Registry } from "./registry.ts";
 import { serve } from "./server.ts";
 
 // usage: bun run src/main.ts [--addr :7501] [--root <project dir>]
-//        [--log http://localhost:7503] [--model provider/model-id]
+//        [--log http://localhost:7503] [--static http://localhost:7502]
+//        [--model provider/model-id]
 
 function parseFlags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -33,39 +34,11 @@ function findRoot(): string {
   }
 }
 
-// loadCredentials reads key=value pairs from <root>/.corazon/credentials/pi.md
-// (blank lines and # comments ignored) into process env, without overriding
-// variables that are already set. pi's ModelRuntime picks up provider keys
-// from env (DEEPSEEK_API_KEY, KIMI_API_KEY, ANTHROPIC_API_KEY, ...), so any
-// pi-supported provider can be configured in that one file. Other files under
-// credentials/ belong to other purposes and are NOT touched.
-function loadCredentials(root: string): void {
-  let data: string;
-  try {
-    data = readFileSync(
-      path.join(root, ".corazon", "credentials", "pi.md"),
-      "utf8",
-    );
-  } catch {
-    return;
-  }
-  for (const line of data.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const idx = trimmed.indexOf("=");
-    if (idx > 0) {
-      const key = trimmed.slice(0, idx).trim();
-      if (!process.env[key]) {
-        process.env[key] = trimmed.slice(idx + 1).trim();
-      }
-    }
-  }
-}
-
 const flags = parseFlags(process.argv.slice(2));
 const root = flags.root || findRoot();
 const addr = flags.addr || ":7501";
 const logBase = flags.log || "http://localhost:7503";
+const staticBase = flags.static || "http://localhost:7502";
 
 // TODO: the system prompt belongs to the Corazon tool itself (the agents/
 // shipped with the tool), not to the project being processed; where the tool
@@ -80,10 +53,16 @@ function loadSystemPrompt(root: string): string {
     process.exit(1);
   }
 }
-const systemPrompt = loadSystemPrompt(root);
-
-// Provider keys from .corazon/credentials/pi.md → env, for pi's ModelRuntime.
-loadCredentials(root);
+// The launcher owns port selection and passes the actual addresses down; append
+// them so the model always calls the services on this run's ports rather than
+// any address hard-coded in the prose.
+const runtimeEndpoints =
+  "\n\n---\n\n# Runtime endpoints\n\n" +
+  "These services were started for this run; use exactly these addresses:\n" +
+  `- static (schema): ${staticBase}\n` +
+  `- log (records): ${logBase}\n` +
+  `- ai (this service): http://localhost${addr}\n`;
+const systemPrompt = loadSystemPrompt(root) + runtimeEndpoints;
 
 const registry = new Registry({
   root,
@@ -94,9 +73,8 @@ const registry = new Registry({
 await registry.init();
 if (registry.stub) {
   console.error(
-    "warning: no authenticated LLM provider found (env vars, " +
-      `${root}/.corazon/credentials/pi.md, or pi's auth.json); ` +
-      "ai falls back to echo stub",
+    "warning: no authenticated LLM provider found (env vars or " +
+      "pi's auth.json); ai falls back to echo stub",
   );
 } else {
   console.log(`corazon ai: model=${registry.modelInfo}`);
