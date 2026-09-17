@@ -41,13 +41,11 @@ response:
         protocol: string  # per channel, see agents/enum.md
         description: string
 
-    runtime: [string]  # env definitions under runtime/ (*.yaml only), e.g. "runtime/dev.yaml"; launch cookbooks are not listed here — reach them via the env's cookbook field
+    runtime: [string]  # plain file tree under runtime/, recursive relative paths, e.g. "runtime/cookbooks/dev/BOOK.md", "runtime/tests/dev/case-x/TEST.md"; when env is set, only that env's cookbooks/[env]/ and tests/[env]/ subtrees
     contracts: [string]  # entries under contracts/, relative paths e.g. "contracts/ai-ask.yaml"
     devtime: [string]  # entries under devtime/, relative paths
     docs: [string]  # entries under docs/, relative paths
     notes: [string]  # entries under notes/, relative paths
-    tests: [string]  # entries under tests/, relative paths e.g. "tests/core-ai-flow.md"
-    cookbooks: [string]  # entries under cookbooks/, relative paths e.g. "cookbooks/dev.run.md"
 
 errors:
   - status: 400

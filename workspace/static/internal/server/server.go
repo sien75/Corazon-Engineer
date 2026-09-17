@@ -120,21 +120,22 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var runtimeEntries []string
+	all := schema.ListEntries(s.root, "runtime")
 	if req.Env != "" {
-		p := "runtime/" + req.Env + ".yaml"
-		if _, err := os.Stat(filepath.Join(s.root, filepath.FromSlash(p))); err != nil {
+		if !containsStr(schema.RuntimeEnvs(s.root), req.Env) {
 			writeErr(w, http.StatusNotFound, "not_found", "runtime env not found: "+req.Env)
 			return
 		}
-		runtimeEntries = []string{p}
-	} else {
-		// runtime listing shows env definitions (*.yaml) only; cookbooks live
-		// under cookbooks/ and are reached via the env's cookbook field
-		for _, p := range schema.ListEntries(s.root, "runtime") {
-			if strings.HasSuffix(p, ".yaml") {
+		// runtime content is a plain file tree; env filter keeps only that env's
+		// cookbooks/[env]/ and tests/[env]/ subtrees.
+		for _, p := range all {
+			if strings.HasPrefix(p, "runtime/cookbooks/"+req.Env+"/") ||
+				strings.HasPrefix(p, "runtime/tests/"+req.Env+"/") {
 				runtimeEntries = append(runtimeEntries, p)
 			}
 		}
+	} else {
+		runtimeEntries = all
 	}
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
 		"atoms":     atoms,
@@ -144,8 +145,6 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 		"devtime":   schema.ListEntries(s.root, "devtime"),
 		"docs":      schema.ListEntries(s.root, "docs"),
 		"notes":     schema.ListEntries(s.root, "notes"),
-		"tests":     schema.ListEntries(s.root, "tests"),
-		"cookbooks": schema.ListEntries(s.root, "cookbooks"),
 	})
 }
 
@@ -159,7 +158,7 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 	if !decode(w, r, &req) {
 		return
 	}
-	if !containsStr([]string{"runtime", "devtime", "contract", "test", "cookbook", "docs", "notes"}, req.Type) {
+	if !containsStr([]string{"runtime", "devtime", "contract", "docs", "notes"}, req.Type) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid type: "+req.Type)
 		return
 	}
@@ -174,14 +173,6 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 	}
 	resp := map[string]interface{}{"type": req.Type, "id": req.ID}
 	switch req.Type {
-	case "runtime":
-		env := strings.TrimSuffix(filepath.Base(req.ID), ".yaml")
-		content, err := schema.LoadRuntimeEnv(s.root, env)
-		if err != nil {
-			writeErr(w, http.StatusNotFound, "not_found", "runtime env not found: "+req.ID)
-			return
-		}
-		resp["runtime"] = content
 	case "contract":
 		doc, err := schema.LoadContractFile(s.root, req.ID)
 		if err != nil {
@@ -189,7 +180,7 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		resp["contract"] = doc
-	default: // devtime, test, docs, notes, cookbook — raw text
+	default: // runtime, devtime, docs, notes — raw text
 		data, err := os.ReadFile(path)
 		if err != nil {
 			writeErr(w, http.StatusNotFound, "not_found", "file not found: "+req.ID)
@@ -221,7 +212,7 @@ func (s *Server) handleSchemaMutation(w http.ResponseWriter, r *http.Request) {
 	body, _ := req[objType].(map[string]interface{})
 	rawStr, isRaw := req[objType].(string)
 	// raw-content types take a string body
-	rawType := objType == "test" || objType == "devtime" || objType == "docs" || objType == "notes" || objType == "cookbook"
+	rawType := objType == "runtime" || objType == "devtime" || objType == "docs" || objType == "notes"
 
 	if op != "remove" {
 		if isRaw != rawType {
@@ -315,7 +306,7 @@ func generateID(objType string, body map[string]interface{}) string {
 		}
 	}
 	ext := ".yaml"
-	if objType == "test" || objType == "devtime" || objType == "docs" || objType == "notes" || objType == "cookbook" {
+	if objType == "runtime" || objType == "devtime" || objType == "docs" || objType == "notes" {
 		ext = ".md"
 	}
 	return dir + "/" + name + ext
@@ -330,12 +321,9 @@ func (s *Server) writeObject(objType, path, id string, body map[string]interface
 		return writeYAML(path, map[string]interface{}{"atoms": []interface{}{body}})
 	case "edge":
 		return writeYAML(path, map[string]interface{}{"edges": []interface{}{body}})
-	case "runtime":
-		env := strings.TrimSuffix(filepath.Base(id), ".yaml")
-		return writeYAML(path, map[string]interface{}{"runtime": map[string]interface{}{env: body}})
 	case "contract":
 		return writeYAML(path, body)
-	default: // test, devtime, docs, notes, cookbook — raw content
+	default: // runtime, devtime, docs, notes — raw content
 		return os.WriteFile(path, []byte(raw), 0o644)
 	}
 }
@@ -352,7 +340,7 @@ func writeYAML(path string, v interface{}) error {
 
 var searchDirs = map[string]string{
 	"atoms": "atom", "edges": "edge", "runtime": "runtime", "contracts": "contract",
-	"tests": "test", "devtime": "devtime", "docs": "docs", "notes": "notes", "cookbooks": "cookbook",
+	"devtime": "devtime", "docs": "docs", "notes": "notes",
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {

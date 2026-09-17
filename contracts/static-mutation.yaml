@@ -4,7 +4,7 @@ description: Atomic schema mutation; one object at a time (add/update/remove), b
 request:
   body:
     op: add | update | remove
-    type: atom | edge | runtime | devtime | contract | test | cookbook | docs | notes
+    type: atom | edge | runtime | devtime | contract | docs | notes
     id: string  # relative path; backend may generate on add
 
     # exactly one field matching type (required on add/update, ignored on remove)
@@ -41,26 +41,7 @@ request:
       protocol: string  # per channel, see agents/enum.md
       description: string
 
-    runtime?:
-      description: string
-      cookbook?: string  # path to the cookbook md under cookbooks/ — how to launch this env (relative to project root)
-      endpoints:
-        - id: string  # atom id
-          channel: network | stdio | ipc
-          protocol: string  # per channel, see agents/enum.md
-          address?: string  # when channel=network|ipc
-          in?: string  # when channel=stdio
-          out?: string  # when channel=stdio
-      telemetry?:
-        - id: string  # atom id
-          backend: string  # e.g. otel
-          address: string
-      tests?:
-        - id: string
-          description: string
-          atoms: [string]
-          edges?: [string]
-          case: string
+    runtime?: string  # raw file text (prose markdown / config yaml)
 
     devtime?: string  # raw markdown
 
@@ -71,10 +52,6 @@ request:
       response: object
       error: object
 
-    test?: string  # raw file content
-
-    cookbook?: string  # raw markdown
-
     docs?: string  # raw markdown
     notes?: string  # raw markdown
 
@@ -82,7 +59,7 @@ response:
   status: 200
   body:
     op: add | update | remove  # echoed operation
-    type: atom | edge | runtime | devtime | contract | test | cookbook | docs | notes  # echoed type
+    type: atom | edge | runtime | devtime | contract | docs | notes  # echoed type
     id: string  # affected object path (newly generated on add)
     file: string  # modified file path (audit trail)
     # validation failures are rejected before writing and returned as 422 (see errors)

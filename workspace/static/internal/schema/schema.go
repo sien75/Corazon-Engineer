@@ -22,15 +22,13 @@ var RuntimeTypes = []string{"native", "go", "browser", "node", "bun", "jre", "py
 
 var AtomRoles = []string{"service", "database", "cache", "queue", "storage", "gateway", "scheduler", "worker", "proxy"}
 
-var ObjectTypes = []string{"atom", "edge", "runtime", "devtime", "contract", "test", "cookbook", "docs", "notes"}
+var ObjectTypes = []string{"atom", "edge", "runtime", "devtime", "contract", "docs", "notes"}
 
 var TypeDirs = map[string]string{
 	"atom":     "atoms",
 	"edge":     "edges",
 	"runtime":  "runtime",
 	"contract": "contracts",
-	"test":     "tests",
-	"cookbook": "cookbooks",
 	"devtime":  "devtime",
 	"docs":     "docs",
 	"notes":    "notes",
@@ -123,38 +121,21 @@ func ListEntries(root, dir string) []string {
 	return out
 }
 
-// RuntimeEnvs returns the env names available under runtime/ (filename without .yaml).
-// runtime/ holds env definitions only (*.yaml); cookbooks live under cookbooks/
-// and are referenced by the env's cookbook field.
+// RuntimeEnvs returns the env names available under runtime/cookbooks/
+// (each subdirectory is one env).
 func RuntimeEnvs(root string) []string {
 	envs := []string{}
-	for _, p := range ListEntries(root, "runtime") {
-		if !strings.HasSuffix(p, ".yaml") {
-			continue
-		}
-		name := strings.TrimSuffix(filepath.Base(p), ".yaml")
-		envs = append(envs, name)
-	}
-	return envs
-}
-
-// LoadRuntimeEnv parses runtime/<env>.yaml and returns the env's content.
-func LoadRuntimeEnv(root, env string) (map[string]interface{}, error) {
-	path := filepath.Join(root, "runtime", env+".yaml")
-	data, err := os.ReadFile(path)
+	entries, err := os.ReadDir(filepath.Join(root, "runtime", "cookbooks"))
 	if err != nil {
-		return nil, err
+		return envs
 	}
-	var doc map[string]interface{}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, err
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			envs = append(envs, e.Name())
+		}
 	}
-	rt, _ := doc["runtime"].(map[string]interface{})
-	content, ok := rt[env].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("env %q not found in runtime/%s.yaml", env, env)
-	}
-	return content, nil
+	sort.Strings(envs)
+	return envs
 }
 
 // LoadContractFile parses a contract yaml file into a generic map.
@@ -186,8 +167,6 @@ func Validate(objType string, body map[string]interface{}) []FieldError {
 			}
 		}
 		validateChannelProtocol(body, "", fail)
-	case "runtime":
-		validateRuntime(body, fail)
 	case "contract":
 		if str(body, "id") == "" {
 			fail("id", "required")
@@ -201,65 +180,10 @@ func Validate(objType string, body map[string]interface{}) []FieldError {
 		if _, ok := body["response"]; !ok {
 			fail("response", "required")
 		}
-	case "test", "devtime", "docs", "notes", "cookbook":
+	case "runtime", "devtime", "docs", "notes":
 		// raw content, no structural validation
 	}
 	return errs
-}
-
-func validateRuntime(body map[string]interface{}, fail func(field, msg string)) {
-	if str(body, "description") == "" {
-		fail("description", "required")
-	}
-	if _, ok := body["cookbook"]; ok && str(body, "cookbook") == "" {
-		fail("cookbook", "must be a non-empty string path when present")
-	}
-
-	endpoints, _ := body["endpoints"].([]interface{})
-	if len(endpoints) == 0 {
-		fail("endpoints", "required, must be a non-empty array of runtime endpoints")
-	}
-	for i, raw := range endpoints {
-		prefix := fmt.Sprintf("endpoints[%d]", i)
-		ep, _ := raw.(map[string]interface{})
-		if ep == nil {
-			fail(prefix, "required")
-			continue
-		}
-		if str(ep, "id") == "" {
-			fail(prefix+".id", "required")
-		}
-		validateChannelProtocol(ep, prefix, fail)
-		switch str(ep, "channel") {
-		case "network", "ipc":
-			if str(ep, "address") == "" {
-				fail(prefix+".address", "required when channel="+str(ep, "channel"))
-			}
-		case "stdio":
-			if str(ep, "in") == "" || str(ep, "out") == "" {
-				fail(prefix, "in and out are required when channel=stdio")
-			}
-		}
-	}
-
-	telemetry, _ := body["telemetry"].([]interface{})
-	for i, raw := range telemetry {
-		prefix := fmt.Sprintf("telemetry[%d]", i)
-		tel, _ := raw.(map[string]interface{})
-		if tel == nil {
-			fail(prefix, "required")
-			continue
-		}
-		if str(tel, "id") == "" {
-			fail(prefix+".id", "required")
-		}
-		if str(tel, "backend") == "" {
-			fail(prefix+".backend", "required")
-		}
-		if str(tel, "address") == "" {
-			fail(prefix+".address", "required")
-		}
-	}
 }
 
 func validateAtom(body map[string]interface{}, fail func(field, msg string)) {

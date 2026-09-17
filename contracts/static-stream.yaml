@@ -19,7 +19,7 @@ response:
     payload:
       # kind=schema: content snapshot, shape matches the type below (see static-mutation)
       op: add | update | remove
-      type: atom | edge | runtime | devtime | contract | test | cookbook | docs | notes
+      type: atom | edge | runtime | devtime | contract | docs | notes
       id: string  # object path, e.g. "contracts/ai-ask.yaml"; backend-generated on add
       file: string  # written file; coincides with id for leaf files
 
@@ -55,26 +55,7 @@ response:
         protocol: string
         description: string
 
-      runtime?:  # when type=runtime
-        description: string
-        cookbook?: string  # path to the cookbook md under cookbooks/
-        endpoints:
-          - id: string  # atom id
-            channel: network | stdio | ipc
-            protocol: string
-            address?: string
-            in?: string
-            out?: string
-        telemetry?:
-          - id: string  # atom id
-            backend: string
-            address: string
-        tests?:
-          - id: string
-            description: string
-            atoms: [string]
-            edges?: [string]
-            case: string
+      runtime?: string  # when type=runtime, raw file text
 
       devtime?: string  # when type=devtime
 
@@ -84,10 +65,6 @@ response:
         request: object
         response: object
         error: object
-
-      test?: string  # when type=test
-
-      cookbook?: string  # when type=cookbook
 
       docs?: string  # when type=docs
 

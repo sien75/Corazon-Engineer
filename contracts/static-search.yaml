@@ -1,5 +1,5 @@
 id: static-search
-description: Search schema content (atom / edge / runtime / test / contract / interface path / table / topic)
+description: Search schema content (atom / edge / runtime / contract / interface path / table / topic)
 
 request:
   body:
@@ -10,7 +10,7 @@ response:
   body:
     q: string
     results:
-      - type: atom | edge | runtime | devtime | contract | test | docs | notes  # hit object type
+      - type: atom | edge | runtime | devtime | contract | docs | notes  # hit object type
         file: string  # relative path under the type's folder, e.g. "contracts/ai-ask.yaml" / "atoms/payment/api.yaml"
         lines: [number, number]  # matched line range [start, end], 1-based
         snippet: string  # matched snippet
