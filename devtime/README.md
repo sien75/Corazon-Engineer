@@ -11,8 +11,8 @@
 ## 开发入口
 
 1. **流程**:按 `sop/development-workflow.md` 执行,不跳阶段。
-2. **环境**:按 `runbooks/dev.md` 拉起本地服务(log :7503 → static :7502 → ai :7501 → web :7500)。
-3. **验证**:按 `runtime/dev.yaml` 中 `tests` 块登记的系统级用例(`tests/core-*.md`)验证。
+2. **环境**:按 `runtime/cookbooks/dev/BOOK.md` 拉起本地服务(log :7503 → static :7502 → ai :7501 → web :7500)。
+3. **验证**:按 `runtime/tests/dev/` 下登记的系统级用例(`case-core-*/TEST.md`)验证。
 4. **结构理解**:改代码前先理解 schema —— 结构与枚举参考见 `agents/zh/schema.md` / `agents/zh/enum.md`,或服务起好后用 `/static/query` 在线查。
 
 ## 迭代沉淀

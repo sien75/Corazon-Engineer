@@ -19,17 +19,17 @@ Corazon 是运行中的系统。它的内部能力都是普通 HTTP 接口;本�
 
 没有按接口拆分的独立工具。
 
-## 内部 HTTP 接口(POST;默认端口见 `runtime/dev.yaml`)
+## 内部 HTTP 接口(POST;实际地址见本 prompt 末尾追加的 Runtime endpoints 段)
 
-**static 服务 —— schema(http://localhost:7502)**,线上格式 YAML(`application/yaml`):
+**static 服务 —— schema**,线上格式 YAML(`application/yaml`):
 
 - `/static/query` — 查全量架构(atoms / edges / runtime 条目 + 各目录清单)
-- `/static/query-detail` — 查单个文件内容(runtime / contract / devtime / test / docs / notes)
+- `/static/query-detail` — 查单个文件内容(runtime / contract / devtime / docs / notes)
 - `/static/search` — 全局搜索 schema 内容
 - `/static/mutation` — 增删改 schema 条目(有副作用)
 - `/static/stream` — SSE 订阅 schema 变更事件(长连接;不要直接跑阻塞式 curl)
 
-**log 服务 —— 记录(http://localhost:7503)**,线上格式 YAML:
+**log 服务 —— 记录**,线上格式 YAML:
 
 - `/log/query` — 查记录(test / telemetry / conversation)
 - `/log/query-detail` — 单条记录详情
@@ -44,7 +44,7 @@ Corazon 是运行中的系统。它的内部能力都是普通 HTTP 接口;本�
 
 监听类工具(日志/指标/链路 tail、订阅、流读取)必须把监听结果接入 `/log/mutation`,让观测结果汇入日志,形成一条连续的流。
 
-连接凭证存放在 `.corazon/credentials/` 下。需要凭证时向用户索取,由用户提供。缺凭证就如实说明,不要到处翻找。凭证不得进入回复或日志。
+外部系统的连接凭证存放在项目自己的 `.corazon/credentials/`(本地私有数据,不进 git)——这是给 AI 读的。需要凭证时向用户索取,由用户提供。缺凭证就如实说明,不要到处翻找。凭证不得进入回复或日志。
 
 ## 工作规则
 
@@ -77,18 +77,16 @@ Corazon 是运行中的系统。它的内部能力都是普通 HTTP 接口;本�
 - `edges/` — atom 之间的连接。
 - `contracts/` — atom 引用的接口契约;请求/响应结构的内部事实源。
 - `workspace/` — atom 的源码。
-- `runtime/` — 各环境的映射:端点、监控、测试。
-- `runbooks/` — 各环境如何运行、如何接入。
-- `tests/` — 系统级测试用例,由 `runtime/` 引用。
+- `runtime/` — 各环境如何运行、跑哪些测试:一个普通文件树,其布局由 `runtime/README.md` 定义(先读它)。
 - `docs/` — 对外文档。必须说明 `workspace/` 打包产物如何使用,包括相关契约的对外视图 —— 使用方不应需要内部源码才能用产物。
 - `agents/` — 本 AI 能力描述,以及 schema、contract、enum 参考。
 - `devtime/` — 开发时资料(方法论、SOP、迭代记录)。
 - `notes/` — 自由笔记。
-- `.corazon/` — 本地私有数据(数据库、凭证),不进 git。
+- `.corazon/` — 项目的本地私有数据(数据库、`credentials/`),不进 git,绝不提交。
 
 ## 参考
 
-- `./schema.md` — schema 结构(atoms / edges / runtime / contracts / tests / docs / notes / cookbooks)。
+- `./schema.md` — schema 结构(atoms / edges / runtime / contracts / docs / notes)。
 - `./contract.md` — contract 文件书写规范。
 - `./enum.md` — 枚举取值(channel / protocol / runtime_type / role)。
 
@@ -96,6 +94,6 @@ Corazon 是运行中的系统。它的内部能力都是普通 HTTP 接口;本�
 
 明确区分这些场景:
 
-1. **项目初始化** —— 项目还没有 Corazon 结构时:在根目录建 `corazon.yaml`,然后搭目录骨架(`atoms/`、`contracts/`、`edges/`、`workspace/`、`runtime/`、`runbooks/`、`tests/`、`docs/`、`agents/`、`devtime/`)。先定义第一个 atom 和它的契约,再写实现代码;并尽早和用户一起建立 `devtime/README.md` 和开发 SOP。
+1. **项目初始化** —— 项目还没有 Corazon 结构时:在根目录建 `corazon.yaml`,然后搭目录骨架(`atoms/`、`contracts/`、`edges/`、`workspace/`、`runtime/`、`docs/`、`agents/`、`devtime/`)。先定义第一个 atom 和它的契约,再写实现代码;并尽早和用户一起建立 `devtime/README.md`、`runtime/README.md` 和开发 SOP。
 2. **已有开发指南** —— 读 `devtime/README.md` 并遵循它。不要另起炉灶,在已有 SOP 内工作。
 3. **指南缺失或过时** —— 当现实与 `devtime/` 脱节(新增目录、流程变化、新约定),先向用户提出具体调整建议,确认后再更新 `devtime/`。

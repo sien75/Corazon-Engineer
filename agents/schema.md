@@ -14,10 +14,7 @@ Static structure (atom & edge) — define the system structure
 └── Notes           notes/       annotations
 
 Scenario — fill in concrete content
-├── Runtime         runtime/     runtime environment mapping
-│   ├── Cookbook    cookbooks/   launch cookbook (cited by the env's cookbook field)
-│   └── Test        tests/       test case (cites contract)
-│       └── Contract contracts/  interface contract
+├── Runtime         runtime/     how to run + which tests (plain file tree; see runtime/README.md)
 └── Devtime         devtime/     dev-time records
     └── Contract    contracts/   interface contract
 ```
@@ -26,7 +23,7 @@ Scenario — fill in concrete content
 
 ## File Organization
 
-A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` / `cookbooks/` are discovered by directory convention; `contracts/` and `tests/` are content directories. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are ignored everywhere — never parsed as content.
+A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` is a content directory. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are ignored everywhere — never parsed as content.
 
 ```yaml
 # corazon.yaml — root meta only, does NOT enumerate data files
@@ -50,10 +47,12 @@ project/
 ├── edges/                     # *.yaml → edge
 │   ├── user-to-notification.yaml
 │   └── ...
-├── runtime/                   # *.yaml → runtime env (filename = env name)
-│   ├── dev.yaml
-│   ├── staging.yaml
-│   └── prod.yaml
+├── runtime/                   # plain file tree: how to run + which tests (layout defined by runtime/README.md)
+│   ├── README.md              # the runtime tree's own conventions — read first
+│   ├── cookbooks/             # one dir per env (env name = dir name)
+│   │   └── dev/               # BOOK.md (launch/connect/observe) + launch.sh (launcher)
+│   └── tests/                 # system tests per env
+│       └── dev/               # case-xxx/ → desp.yaml (metadata) + TEST.md (the case)
 ├── devtime/                   # *.md → dev-time record (meetings / ADR / changelog)
 ├── contracts/                 # content files (interface contract yaml)
 │   ├── create-user-api.yaml
@@ -61,13 +60,8 @@ project/
 │   ├── postgres-client.yaml
 │   ├── redis-client.yaml
 │   └── ...
-├── tests/                     # content files (test case markdown)
-│   ├── user-registration-flow.yaml
-│   ├── user-service-api.yaml
-│   └── ...
 ├── docs/                      # *.md → reference doc (cites contracts)
 ├── notes/                     # *.md → annotation (marker + thread, anchored to entity)
-├── cookbooks/                 # *.md → env launch cookbook (cited by the env's cookbook field)
 └── workspace/                 # Local code repositories
 ```
 
@@ -147,90 +141,23 @@ edges:
 
 ## Runtime Layer
 
-Maps the schema to a concrete runtime environment. Under `runtime/`, **filename = env name** (`dev.yaml` → env `dev`). Each env has five blocks: `description` (environment description), `cookbook` (how to launch this environment — points to a cookbook markdown file under `cookbooks/`, optional), `endpoints` (how each atom is reached — an **array**; each entry carries its own `id` + `channel` + `protocol`, connection fields depend on the channel), `telemetry` (monitoring observation for logs/metrics/traces — an **array**, one atom may have multiple entries), and `tests` (system-level tests bound to this environment).
+Maps the schema to concrete runtime environments. `runtime/` is a **plain file tree** (like `devtime/`), not a structured YAML schema — its layout and meaning are defined by `runtime/README.md`, which is the contract for the tree. The consumers are the web frontend (which serves files raw, without interpreting structure) and the AI (which reads the README first, then the files it needs, to launch / connect / observe / test an environment). Structured values, when needed, live in small YAML files inside the tree (e.g. `desp.yaml`); the conventions are the project's own, documented in `runtime/README.md`. An env is started by its own `launch.sh` (a real script, not generated prose), which chooses the ports and passes the addresses to the atoms at launch.
 
-```yaml
-runtime:
-  dev:
-    description: Local development environment
-    cookbook: ./cookbooks/dev.run.md
-    endpoints:
-      - id: user-service
-        channel: network
-        protocol: http
-        address: http://localhost:8080
-      - id: user-service
-        channel: network
-        protocol: pgwire
-        address: postgres://localhost:5432
-      - id: notification-service
-        channel: network
-        protocol: http
-        address: http://localhost:9090
-      - id: mcp-server
-        channel: stdio
-        protocol: ndjson
-        in: /tmp/corazon.mcp.in
-        out: /tmp/corazon.mcp.out
-      - id: local-daemon
-        channel: ipc
-        protocol: unix-socket
-        address: /var/run/corazon.sock
-    telemetry:
-      - id: user-service
-        backend: otel
-        address: http://localhost:4317
-    tests:
-      - id: user-registration-flow
-        description: E2E — welcome notification after user registration
-        atoms: [user-service, notification-service]
-        edges: [user-to-notification]
-        case: ./tests/user-registration-flow.yaml
-      - id: user-service-api
-        description: user-service HTTP contract conformance
-        atoms: [user-service]
-        case: ./tests/user-service-api.yaml
+A typical layout (one env per directory):
 
-  staging:
-    description: Staging environment
-    endpoints:
-      - id: user-service
-        channel: network
-        protocol: http
-        address: https://user.staging.corazon.com
-      - id: notification-service
-        channel: network
-        protocol: http
-        address: https://notify.staging.corazon.com
-
-  prod:
-    description: Production environment
-    endpoints:
-      - id: user-service
-        channel: network
-        protocol: http
-        address: https://user.api.corazon.com
-      - id: notification-service
-        channel: network
-        protocol: http
-        address: https://notify.api.corazon.com
+```
+runtime/
+├── README.md          # the runtime tree's own conventions — read first
+├── cookbooks/[env]/   # env name = directory name
+│   ├── BOOK.md        # how to launch / connect / observe this env (prose)
+│   └── launch.sh      # the env's launcher (owns ports, starts the atoms)
+└── tests/[env]/       # system tests bound to this env
+    └── case-xxx/
+        ├── desp.yaml  # test metadata: atoms (required), env (optional)
+        └── TEST.md    # the test case itself
 ```
 
-**endpoints field shape per channel**
-
-| channel | field | meaning |
-|---|---|---|
-| `network` | `address` | the address to dial, e.g. `http://`, `grpc://`, `redis://...` |
-| `stdio` | `in` + `out` | named pipes (how atoms are launched lives in the cookbook file pointed to by `cookbook`) |
-| `ipc` | `address` | a local inter-process resource, e.g. a unix socket path |
-
-An atom may appear in multiple endpoint entries (e.g. one service exposing both an HTTP API and direct access to its PostgreSQL). `protocol` values are enumerated in `./enum.md`.
-
-**cookbook** — launch instructions: how to bring this environment up (start order, per-atom launch commands, dependencies, caveats). Cookbooks are their own content type under `cookbooks/` — plain markdown files with no format constraints; the path (relative to the project root, `./`-prefixed, like a test's `case`) goes in the env's `cookbook` field. `runtime/` holds env definitions only (`*.yaml`); cookbooks do not live there. Cookbooks not tied to a single env (e.g. packaging/deployment like `cookbooks/prod.deploy.md`) simply live under `cookbooks/` unreferenced. Ports/addresses in the cookbook must match the env's `endpoints`: launching the project means realizing this env, not starting services arbitrarily.
-
-**telemetry** — the monitoring (read/listen) side of the runtime: where to observe logs/metrics/traces. Array form; each entry requires `id` + `backend` + `address`, and one atom may have multiple entries. A single otel address carries all three signals — no per-signal split.
-
-**tests** — each runtime env may carry a `tests:` block of system-level tests bound to that environment. A test scopes itself to a subset of atoms/edges (by id) and points its actual definition at a `case` file under `tests/`. Atoms declare interfaces; tests exercise them. `dev` may run the full suite while `prod` runs none or read-only checks.
+Because the tree is prose-first, there is no enforced schema here: ports, endpoints, and telemetry are described in the cookbook and realized by the env's `launch.sh`, and the AI is expected to read the README and follow the project's stated conventions rather than rely on a fixed shape.
 
 ---
 
@@ -272,9 +199,9 @@ errors:
 
 ## Test Files — Test Cases
 
-Describe system-level tests, under `tests/`, referenced by runtime env `tests.case`. Plain markdown files, no format convention.
+System-level tests live inside the runtime tree (see the Runtime layer): `runtime/tests/[env]/case-xxx/`, with `desp.yaml` (metadata) and `TEST.md` (the case). The case file itself is plain markdown with no format convention.
 
-Tests never run against the real project tree. They run in `.corazon/.playground/` — `.corazon/` is the git-ignored private directory at the project root, and `.corazon/.playground/` is a blank or mock corazon project under it, scaffolded by the test setup (e.g. from fixtures like `tests/.playground/`). The backend under test is started with its project root pointed at `.corazon/.playground/`, so add/update/remove mutations only touch the mock.
+Tests never run against the real project tree. They run in `.corazon/.playground/` — `.corazon/` is the git-ignored private directory at the project root, and `.corazon/.playground/` is a blank or mock corazon project under it, scaffolded by the test setup (e.g. from fixtures like `runtime/tests/dev/.playground/`). The backend under test is started with its project root pointed at `.corazon/.playground/`, so add/update/remove mutations only touch the mock.
 
 ## Devtime Files — Dev-Time Records
 
@@ -287,7 +214,3 @@ User-facing reference docs, under `docs/`. Plain markdown files, no format conve
 ## Notes Files — Annotations
 
 Markers and discussions targeting an entity, under `notes/`. Plain markdown files, no format convention.
-
-## Cookbook Files — Env Launch Instructions
-
-How to bring a runtime env up, under `cookbooks/`. Plain markdown files, no format convention; cited by the env's `cookbook` field (see the Runtime layer). Filenames conventionally carry an action suffix: `<env>.run.md` for launching an env, `<target>.deploy.md` for packaging/deployment.

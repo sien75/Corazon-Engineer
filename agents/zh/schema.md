@@ -14,10 +14,7 @@ schema 由 **静态结构** 与 **场景** 组成：
 └── Notes         notes/      批注
 
 场景 —— 填充具体内容
-├── Runtime       runtime/    运行环境映射
-│   ├── Cookbook  cookbooks/  拉起说明（被 env 的 cookbook 字段引用）
-│   └── Test      tests/      测试用例（引用 contract）
-│       └── Contract  contracts/  接口契约
+├── Runtime       runtime/    如何运行 + 跑哪些测试（普通文件树；见 runtime/README.md）
 └── Devtime       devtime/    开发时记录
     └── Contract  contracts/  接口契约
 ```
@@ -26,7 +23,7 @@ schema 由 **静态结构** 与 **场景** 组成：
 
 ## 文件组织
 
-根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` / `cookbooks/` 靠目录约定自动发现；`contracts/` 和 `tests/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目一律忽略——永不解析为内容。
+根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目一律忽略——永不解析为内容。
 
 ```yaml
 # corazon.yaml —— 只放根 meta，不枚举数据文件
@@ -50,10 +47,12 @@ project/
 ├── edges/                     # *.yaml → edge
 │   ├── user-to-notification.yaml
 │   └── ...
-├── runtime/                   # *.yaml → runtime env（文件名即 env 名）
-│   ├── dev.yaml
-│   ├── staging.yaml
-│   └── prod.yaml
+├── runtime/                   # 普通文件树：如何运行 + 跑哪些测试（布局由 runtime/README.md 定义）
+│   ├── README.md              # runtime 树自身的约定 —— 先读
+│   ├── cookbooks/             # 每个 env 一个目录（env 名 = 目录名）
+│   │   └── dev/               # BOOK.md（拉起/连接/观测）+ launch.sh（启动器）
+│   └── tests/                 # 每个 env 的系统测试
+│       └── dev/               # case-xxx/ → desp.yaml（元数据）+ TEST.md（用例）
 ├── devtime/                   # *.md → 开发时记录（会议 / ADR / changelog）
 ├── contracts/                 # 内容文件（接口 contract yaml）
 │   ├── create-user-api.yaml
@@ -61,13 +60,8 @@ project/
 │   ├── postgres-client.yaml
 │   ├── redis-client.yaml
 │   └── ...
-├── tests/                     # 内容文件（测试用例 md）
-│   ├── user-registration-flow.yaml
-│   ├── user-service-api.yaml
-│   └── ...
 ├── docs/                      # *.md → 参考文档（引用 contract）
 ├── notes/                     # *.md → 批注（anchor 指向实体）
-├── cookbooks/                 # *.md → 环境拉起说明（被 runtime env 的 cookbook 字段引用）
 └── workspace/                 # 本地代码仓库
 ```
 
@@ -147,90 +141,23 @@ edges:
 
 ## Runtime 层 — 运行环境映射
 
-把 schema 映射到具体运行环境。位于 `runtime/`，**文件名即 env 名**（`dev.yaml` → env `dev`）。每个 env 有五个块：`description`（环境描述）、`cookbook`（怎么把这个环境跑起来 —— 指向 `cookbooks/` 下的一个 cookbook markdown 文件，可选）、`endpoints`（每个 atom 怎么接入 —— **数组**，每项自带 `id` + `channel` + `protocol`，连接字段随 channel 变化）、`telemetry`（监控观测：logs/metrics/traces，**数组**，同一 atom 可多条）、`tests`（绑定到该环境的系统级测试）。
+把 schema 映射到具体运行环境。`runtime/` 是一个**普通文件树**（同 `devtime/`），不是结构化 YAML schema —— 它的布局与含义由 `runtime/README.md` 定义，README 就是这棵树的契约。消费方是 web 前端（原样返回文件、不解析结构）和 AI（先读 README，再读需要的文件，用于拉起/连接/观测/测试某个环境）。需要结构化值时，放进树内的小 YAML 文件（如 `desp.yaml`）；约定是项目自己的，写进 `runtime/README.md`。每个 env 由自己的 `launch.sh`（真实脚本，不是从散文生成的）启动，端口由它选定并在启动时下发给各 atom。
 
-```yaml
-runtime:
-  dev:
-    description: 本地开发环境
-    cookbook: ./cookbooks/dev.run.md
-    endpoints:
-      - id: user-service
-        channel: network
-        protocol: http
-        address: http://localhost:8080
-      - id: user-service
-        channel: network
-        protocol: pgwire
-        address: postgres://localhost:5432
-      - id: notification-service
-        channel: network
-        protocol: http
-        address: http://localhost:9090
-      - id: mcp-server
-        channel: stdio
-        protocol: ndjson
-        in: /tmp/corazon.mcp.in
-        out: /tmp/corazon.mcp.out
-      - id: local-daemon
-        channel: ipc
-        protocol: unix-socket
-        address: /var/run/corazon.sock
-    telemetry:
-      - id: user-service
-        backend: otel
-        address: http://localhost:4317
-    tests:
-      - id: user-registration-flow
-        description: 端到端 —— 用户注册后发送欢迎通知
-        atoms: [user-service, notification-service]
-        edges: [user-to-notification]
-        case: ./tests/user-registration-flow.yaml
-      - id: user-service-api
-        description: user-service HTTP 契约一致性
-        atoms: [user-service]
-        case: ./tests/user-service-api.yaml
+典型布局（每个 env 一个目录）：
 
-  staging:
-    description: 预发环境
-    endpoints:
-      - id: user-service
-        channel: network
-        protocol: http
-        address: https://user.staging.corazon.com
-      - id: notification-service
-        channel: network
-        protocol: http
-        address: https://notify.staging.corazon.com
-
-  prod:
-    description: 线上环境
-    endpoints:
-      - id: user-service
-        channel: network
-        protocol: http
-        address: https://user.api.corazon.com
-      - id: notification-service
-        channel: network
-        protocol: http
-        address: https://notify.api.corazon.com
+```
+runtime/
+├── README.md          # runtime 树自身的约定 —— 先读
+├── cookbooks/[env]/   # env 名 = 目录名
+│   ├── BOOK.md        # 该 env 怎么拉起/连接/观测（散文）
+│   └── launch.sh      # 该 env 的启动器（选端口、拉起各 atom）
+└── tests/[env]/       # 绑定到该 env 的系统测试
+    └── case-xxx/
+        ├── desp.yaml  # 测试元数据：atoms 必填，env 可省
+        └── TEST.md    # 测试用例本身
 ```
 
-**endpoints 字段形态（按 channel）**
-
-| channel | 字段 | 含义 |
-|---|---|---|
-| `network` | `address` | 拨号目标地址，如 `http://`、`grpc://`、`redis://...` |
-| `stdio` | `in` + `out` | 命名管道（拉起方式见 `cookbook` 指向的 cookbook 文件） |
-| `ipc` | `address` | 本地通信资源，如 unix socket 路径 |
-
-同一 atom 可有多条 endpoint（如一个服务同时提供 HTTP API 和直连其 PostgreSQL）。`protocol` 取值见 `./enum.md`。
-
-**cookbook** —— 拉起说明：怎么把这个环境跑起来（启动顺序、每个 atom 的启动命令、依赖、注意事项）。cookbook 是独立的内容类型，位于 `cookbooks/`，为普通 markdown 文件，不做格式约定；路径写在 env 的 `cookbook` 字段里，相对项目根（`./` 前缀，与 test 的 `case` 一致）。`runtime/` 只放 env 定义（`*.yaml`），cookbook 不放在这里。不属于单个 env 的 cookbook（如打包部署 `cookbooks/prod.deploy.md`）直接放在 `cookbooks/` 下、不被引用即可。cookbook 里的端口/地址必须与该 env 的 `endpoints` 一致：跑起来是在实现这个 env，不是随意起服务。
-
-**telemetry** —— 监控（读/监听）侧：在哪里观测 logs/metrics/traces。数组形态，每项必填 `id` + `backend` + `address`，同一 atom 可挂多条。统一为单个 otel address 承载三种信号，不再按信号拆分。
-
-**tests** —— 每个 runtime env 可挂一个 `tests:` 块，承载绑定到该环境的系统级测试。一个 test 圈定一组 atoms/edges（按 id）并把具体定义指向 `tests/` 下的 `case` 文件。atom 声明接口，test 去验证它们。`dev` 可跑全套，`prod` 可不跑或只跑只读检查。
+由于这棵树以散文为主，这里没有强制的 schema：端口、endpoint、telemetry 都在 cookbook 里描述、由该 env 的 `launch.sh` 落实，AI 应当读 README 并遵循项目声明的约定，而不是依赖固定结构。
 
 ---
 
@@ -272,9 +199,9 @@ errors:
 
 ## Test 文件 — 测试用例
 
-描述系统级测试，位于 `tests/`，被 runtime env 的 `tests.case` 引用。为普通 markdown 文件，不做格式约定。
+系统级测试放在 runtime 树内（见 Runtime 层）：`runtime/tests/[env]/case-xxx/`，含 `desp.yaml`（元数据）和 `TEST.md`（用例）。用例文件本身为普通 markdown，不做格式约定。
 
-测试绝不对真实项目树执行。测试在 `.corazon/.playground/` 中运行——`.corazon/` 是项目根下 git 忽略的私有目录，`.corazon/.playground/` 是其下的空白或 mock corazon 项目，由测试准备步骤搭建（如从 `tests/.playground/` 这类 fixture 生成）。被测后端启动时将项目根指向 `.corazon/.playground/`，增删改只落在 mock 上。
+测试绝不对真实项目树执行。测试在 `.corazon/.playground/` 中运行——`.corazon/` 是项目根下 git 忽略的私有目录，`.corazon/.playground/` 是其下的空白或 mock corazon 项目，由测试准备步骤搭建（如从 `runtime/tests/dev/.playground/` 这类 fixture 生成）。被测后端启动时将项目根指向 `.corazon/.playground/`，增删改只落在 mock 上。
 
 ## Devtime 文件 — 开发时记录
 
@@ -287,7 +214,3 @@ errors:
 ## Notes 文件 — 批注
 
 针对某个实体的标记与讨论，位于 `notes/`。为普通 markdown 文件，不做格式约定。
-
-## Cookbook 文件 — 环境拉起说明
-
-记录怎么把某个 runtime env 跑起来，位于 `cookbooks/`。为普通 markdown 文件，不做格式约定，被 env 的 `cookbook` 字段引用（见 Runtime 层）。文件名约定带动作后缀：`<env>.run.md` 表示拉起环境，`<目标>.deploy.md` 表示打包部署。
