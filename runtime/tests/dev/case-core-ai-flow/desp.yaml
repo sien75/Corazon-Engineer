@@ -1,0 +1,3 @@
+id: core-ai-flow
+description: AI session flow — new / ask / stream / approval / delete
+atoms: [ai]

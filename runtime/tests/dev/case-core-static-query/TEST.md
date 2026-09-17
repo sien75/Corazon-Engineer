@@ -1,14 +1,14 @@
 # Test: core-static-query
 
-Contract conformance for static-query / static-query-detail. Test data comes from the `tests/.playground/` mock project, fully decoupled from the real project.
+Contract conformance for static-query / static-query-detail. Test data comes from the `runtime/tests/dev/.playground/` mock project, fully decoupled from the real project.
 
 Note: the static API speaks YAML (`application/yaml`) — request and response bodies below are YAML.
 
 ## Setup
 
 ```bash
-# Prepare the mock project: tests/.playground is a minimal mock unrelated to the real project; place it at .corazon/.playground/
-rm -rf .corazon/.playground && mkdir -p .corazon && cp -R tests/.playground .corazon/.playground
+# Prepare the mock project: runtime/tests/dev/.playground is a minimal mock unrelated to the real project; place it at .corazon/.playground/
+rm -rf .corazon/.playground && mkdir -p .corazon && cp -R runtime/tests/dev/.playground .corazon/.playground
 # Start the server under test with .corazon/.playground as project root
 cd workspace/static && go build -o corazon . && ./corazon serve-static --root ../../.corazon/.playground --addr :7502 &
 ```
@@ -24,9 +24,9 @@ Expected: 200, body contains:
 
 - `atoms`: all atoms in full (mock `demo-service` / `demo-worker`, with complete interfaces)
 - `edges`: all edges in full (includes `demo-to-worker`)
-- `runtime`: entry list, includes `runtime/dev.yaml`
+- `runtime`: recursive file list of the runtime tree, including `runtime/README.md`, `runtime/cookbooks/dev/BOOK.md`, `runtime/cookbooks/dev/launch.sh`, and `runtime/tests/dev/case-playground-api/desp.yaml` / `TEST.md`
 - `contracts`: entry list, exactly `[contracts/demo-api.yaml]` (dot-prefixed files are ignored)
-- `devtime`: exactly `[devtime/note.md]`; `docs` / `notes` / `cookbooks` are empty arrays
+- `devtime`: exactly `[devtime/note.md]`; `docs` / `notes` are empty arrays
 
 ## 2. static-query filtered by env
 
@@ -35,7 +35,7 @@ curl -s -X POST http://localhost:7502/static/query \
   -H 'Content-Type: application/yaml' --data-binary 'env: dev'
 ```
 
-Expected: 200, `runtime` is exactly `[runtime/dev.yaml]`.
+Expected: 200, `runtime` includes only paths under `runtime/cookbooks/dev/` and `runtime/tests/dev/` (4 files); `runtime/README.md` is not included.
 
 ```bash
 curl -s -X POST http://localhost:7502/static/query \
@@ -48,10 +48,10 @@ Expected: 404, `error.code` is `not_found`.
 
 ```bash
 curl -s -X POST http://localhost:7502/static/query-detail \
-  -H 'Content-Type: application/yaml' --data-binary $'type: runtime\nid: runtime/dev.yaml'
+  -H 'Content-Type: application/yaml' --data-binary $'type: runtime\nid: runtime/cookbooks/dev/BOOK.md'
 ```
 
-Expected: 200, `runtime.description` is `Playground dev environment`, `runtime.endpoints` is an array of 2 entries: the entry with `id: demo-service` has `channel: network`, `protocol: http`, `address: http://localhost:9000`; the entry with `id: demo-worker` has `channel: stdio`, `protocol: ndjson` and `in`/`out` pipes. `runtime.tests` has 1 entry.
+Expected: 200, `runtime` is the raw file text starting with `# dev environment cookbook`.
 
 ## 4. static-query-detail contract content
 

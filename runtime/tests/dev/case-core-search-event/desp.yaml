@@ -1,0 +1,3 @@
+id: core-search-event
+description: search + static-stream SSE subscription
+atoms: [static]

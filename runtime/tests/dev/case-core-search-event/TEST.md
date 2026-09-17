@@ -1,14 +1,14 @@
 # Test: core-search-event
 
-Global search + event SSE subscription. Test data comes from the `tests/.playground/` mock project.
+Global search + event SSE subscription. Test data comes from the `runtime/tests/dev/.playground/` mock project.
 
 Note: the static API speaks YAML (`application/yaml`) — request and response bodies below are YAML. SSE events are YAML docs sent as one `data:` line per YAML line.
 
 ## Setup
 
 ```bash
-# Prepare the mock project: tests/.playground is a minimal mock unrelated to the real project; place it at .corazon/.playground/
-rm -rf .corazon/.playground && mkdir -p .corazon && cp -R tests/.playground .corazon/.playground
+# Prepare the mock project: runtime/tests/dev/.playground is a minimal mock unrelated to the real project; place it at .corazon/.playground/
+rm -rf .corazon/.playground && mkdir -p .corazon && cp -R runtime/tests/dev/.playground .corazon/.playground
 # Start the server under test with .corazon/.playground as project root
 cd workspace/static && go build -o corazon . && ./corazon serve-static --root ../../.corazon/.playground --addr :7502 &
 ```

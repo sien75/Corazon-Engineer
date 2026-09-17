@@ -1,0 +1,3 @@
+id: core-static-query
+description: static-query / static-query-detail contract conformance
+atoms: [static]
