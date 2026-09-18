@@ -1,6 +1,4 @@
 import { randomBytes } from "node:crypto";
-import path from "node:path";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import {
   createAgentSession,
   ModelRuntime,
@@ -12,27 +10,16 @@ import {
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { record } from "./recorder.ts";
-import { createHttpTool, createCliTool } from "./tools.ts";
 import { dbg } from "./debug.ts";
 
 type Model = Awaited<ReturnType<ModelRuntime["getAvailable"]>>[number];
-
-function loadJSON(file: string): string[] {
-  try {
-    const v = JSON.parse(readFileSync(file, "utf8"));
-    return Array.isArray(v) ? v.map(String) : [];
-  } catch {
-    return [];
-  }
-}
 
 // The SSE event shape the frontend consumes. Field names match the historical
 // Go implementation (yaml wire format).
 export interface CorazonEvent {
   seq: number;
-  kind: string; // "markdown" | "approval" | "error"
+  kind: string; // "markdown" | "error"
   markdown?: string;
-  approval?: Record<string, unknown>;
   done?: boolean;
   error?: { code: string; message: string };
 }
@@ -44,8 +31,6 @@ interface Sess {
   agent?: AgentSession; // undefined in stub mode (no API key)
   events: CorazonEvent[];
   listeners: Set<Listener>;
-  pending: Map<string, (granted: boolean) => void>; // approvalId → resolve
-  cliInflight: Map<string, Promise<boolean>>; // program → in-flight approval
   tail: Promise<void>; // serializes prompts within the session
   turnText: string; // accumulated assistant text of the in-flight turn
   turns: number; // turns elapsed in the in-flight prompt (loop cap)
@@ -58,9 +43,6 @@ const MAX_TURNS = 12;
 
 // Default model when --model is not given: DeepSeek Flash.
 const DEFAULT_MODEL = "deepseek/deepseek-flash";
-
-// cli approvals wait this long for the user, then count as denied.
-const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 
 export interface RegistryOptions {
   root: string;
@@ -78,19 +60,8 @@ export class Registry {
   private model?: Model;
   private loader?: DefaultResourceLoader;
   private settings = SettingsManager.inMemory();
-  // Programs the user has approved for the cli tool ("first time pops, then
-  // runs freely"). Persisted per project; survives restarts.
-  private approved: Set<string>;
-  private approvedFile: string;
 
-  constructor(private opts: RegistryOptions) {
-    this.approvedFile = path.join(
-      opts.root,
-      ".corazon",
-      "ai-approved-cli.json",
-    );
-    this.approved = new Set(loadJSON(this.approvedFile));
-  }
+  constructor(private opts: RegistryOptions) {}
 
   // init resolves the model. Any pi-supported provider works; without any
   // authenticated provider it falls back to the dev echo stub.
@@ -135,8 +106,6 @@ export class Registry {
       id: randomBytes(8).toString("hex"),
       events: [],
       listeners: new Set(),
-      pending: new Map(),
-      cliInflight: new Map(),
       tail: Promise.resolve(),
       turnText: "",
       turns: 0,
@@ -150,27 +119,12 @@ export class Registry {
         resourceLoader: this.loader,
         sessionManager: SessionManager.inMemory(this.opts.root),
         settingsManager: this.settings,
-        // Capability surface: network (http) + arbitrary CLI programs (cli).
-        // All pi built-in file/shell tools are disabled.
-        noTools: "builtin",
-        customTools: [createHttpTool(), createCliTool()],
+        // Capability surface: read/grep/find/ls + bash (execution, including
+        // HTTP via curl) + write/edit. External CLIs run through bash.
+        tools: ["read", "grep", "find", "ls", "bash", "write", "edit"],
       });
       sess.agent = session;
       session.agent.shouldStopAfterTurn = () => ++sess.turns >= MAX_TURNS;
-      // Approval gate: http is never gated; cli is gated per program — the
-      // first use pops an approval card, approval is remembered.
-      session.agent.beforeToolCall = async ({ toolCall, args }) => {
-        if (toolCall.name !== "cli") return undefined;
-        const a = args as { program?: string; args?: string[] };
-        const program = String(a?.program ?? "");
-        if (this.approved.has(program)) return undefined;
-        const cmd = `${program} ${(a?.args ?? []).join(" ")}`.trim();
-        const granted = await this.requestApproval(sess, program, cmd);
-        if (!granted) {
-          return { block: true, reason: "operation denied by user" };
-        }
-        return undefined;
-      };
       session.subscribe((ev) => {
         dbg(sess.id, "pi", ev.type, ev.type === "message_update"
           ? (ev as any).assistantMessageEvent?.type
@@ -241,59 +195,6 @@ export class Registry {
     dbg(sess.id, "runTurn done");
     this.append(sess, { kind: "markdown", done: true });
     this.record(sess, "assistant", sess.turnText);
-  }
-
-  // approve grants a pending approval; the waiting cli tool call resumes.
-  approve(sess: Sess, approvalId: string): boolean {
-    const resolve = sess.pending.get(approvalId);
-    if (!resolve) return false;
-    sess.pending.delete(approvalId);
-    resolve(true);
-    return true;
-  }
-
-  // requestApproval emits an approval event and waits for the user's decision.
-  // Parallel cli calls for the same program share one card; granting also
-  // remembers the program so later calls run without a card.
-  private requestApproval(
-    sess: Sess,
-    program: string,
-    cmd: string,
-  ): Promise<boolean> {
-    const inflight = sess.cliInflight.get(program);
-    if (inflight) return inflight;
-    const approvalId = randomBytes(8).toString("hex");
-    const p = new Promise<boolean>((resolve) => {
-      sess.pending.set(approvalId, resolve);
-      setTimeout(() => {
-        if (sess.pending.delete(approvalId)) {
-          dbg(sess.id, "approval timeout", program);
-          resolve(false);
-        }
-      }, APPROVAL_TIMEOUT_MS);
-    }).then((granted) => {
-      sess.cliInflight.delete(program);
-      if (granted) this.rememberApproved(program);
-      return granted;
-    });
-    sess.cliInflight.set(program, p);
-    dbg(sess.id, "approval requested", program);
-    this.append(sess, {
-      kind: "approval",
-      approval: { approvalId, title: `cli: ${cmd}` },
-    });
-    return p;
-  }
-
-  private rememberApproved(program: string): void {
-    if (this.approved.has(program)) return;
-    this.approved.add(program);
-    try {
-      mkdirSync(path.dirname(this.approvedFile), { recursive: true });
-      writeFileSync(this.approvedFile, JSON.stringify([...this.approved]));
-    } catch {
-      // persistence is best-effort; memory still applies for this process
-    }
   }
 
   // subscribe returns the backlog and registers a live listener.

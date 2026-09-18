@@ -17,7 +17,7 @@ response:
     payload: object  # kind-specific detail
       # kind=test:       case, atoms, req, resp, result
       # kind=telemetry:  signal (trace | metric | log), query, result
-      # kind=conversation: seq, msgKind (markdown | approval | ...), content
+      # kind=conversation: seq, msgKind (markdown | ...), content
 
 errors:
   - status: 400

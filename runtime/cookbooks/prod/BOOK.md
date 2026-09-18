@@ -100,7 +100,7 @@ corazon version     # which version is current
 
 - **Upgrade** replaces only `~/.corazon/apps/` (new version dir + `current` flip). Project data is never touched — the project being processed keeps its own `.corazon/` in place. Old version dirs stay until you delete them manually (`rm -rf ~/.corazon/apps/versions/<old>`).
 - **Uninstall**: `corazon uninstall` removes the software and the command; `corazon uninstall --purge` removes all of `~/.corazon/`. Project `.corazon/` directories always stay with their projects — uninstalling never deletes project data.
-- LLM provider key: read from pi's own config (env vars or `~/.pi/agent/auth.json`). Credentials for external systems live in the project's own `.corazon/credentials/`.
+- LLM provider key: read from pi's own config (env vars or `~/.pi/agent/auth.json`). External tools keep their own credentials under their own `~/.xxx` locations.
 - The tarball still works portable-style too: unpack anywhere and `./start.sh` directly, no install.
 
 Ports: `start.sh` chooses them itself — defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free port when a default is taken — and prints the result. There is no config file; the chosen addresses are handed to each service (`--addr` for log/static/ai, positional for web; ai also gets `--log`/`--static`, web gets `--static`/`--ai`/`--log`) and to the frontend via `/config.js`. ai additionally has `--model <provider/model>`.
@@ -119,4 +119,4 @@ A YAML response listing atoms / edges / runtime entries means the stack is up; b
 
 - **Why not Docker**: not needed for one-click — the tarball has zero runtime dependencies and `start.sh` is the single entry point. If you want container isolation anyway, build one all-in-one image: `COPY` the unpacked tarball, `CMD ["./start.sh"]` — `start.sh` already holds the foreground, so the container stays up until stopped.
 - **If `bun build --compile` misbehaves for ai** (the pi SDK is the most dynamic dependency): fall back to installing Bun on the target, ship `workspace/ai/` (src + package.json + bun.lock, then `bun install --production`), and change the ai line in start.sh to `bun run ai/src/main.ts --root "$ROOT"`.
-- **Where the data lives**: everything mutable (the log service's sqlite db, `credentials/` for external systems, plus per-project `run/` pids and `logs/`) goes under `<cwd project>/.corazon/` — the project being processed; back it up with the project.
+- **Where the data lives**: everything mutable (the log service's sqlite db, plus per-project `run/` pids and `logs/`) goes under `<cwd project>/.corazon/` — the project being processed; back it up with the project.

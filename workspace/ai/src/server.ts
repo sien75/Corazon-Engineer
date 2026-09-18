@@ -116,18 +116,6 @@ export function serve(registry: Registry, addr: string): void {
           });
         }
 
-        case "/ai/approval": {
-          const approvalId = String(body.approvalId ?? "");
-          if (!approvalId) {
-            return errRes(400, "bad_request", "approvalId missing");
-          }
-          const sess = registry.get(String(body.id ?? ""));
-          if (!sess || !registry.approve(sess, approvalId)) {
-            return errRes(404, "not_found", "session or approvalId not found");
-          }
-          return yamlRes({ sessionId: sess.id, approvalId, granted: true });
-        }
-
         case "/ai/delete": {
           const id = String(body.id ?? "");
           if (!id) return errRes(400, "bad_request", "bad request");

@@ -6,7 +6,7 @@ Local development environment: builds and runs the static / log Go services, the
 
 - Go 1.22+
 - Bun (ai service) and Node.js (web frontend only)
-- An LLM provider key for the ai service — configured pi's own way: env vars or `~/.pi/agent/auth.json` (`--api-key` also works). Corazon keeps no LLM credentials itself; credentials for external systems live in the project's own `.corazon/credentials/`.
+- An LLM provider key for the ai service — configured pi's own way: env vars or `~/.pi/agent/auth.json` (`--api-key` also works). Corazon keeps no credentials itself; external tools keep their own under their own `~/.xxx` locations.
 
 ## Start / stop
 

@@ -1,4 +1,4 @@
-# Schema 设计理由与加载策略
+# Schema 设计
 
 从 schema 设计文档中拆出的、不属于 agent 使用说明的设计理由与机制说明。规范部分见 `agents/zh/schema.md`。
 
@@ -13,7 +13,3 @@
 ## 测试为何隔离在 `.corazon/.playground/`
 
 测试绝不对真实项目树执行。mock 项目由测试准备步骤搭建（从 `tests/.playground/` 这类 fixture 生成），绝不拷贝真实项目；被测后端把项目根指向它，测试因此与真实 schema 内容完全解耦。`.corazon/.playground/` 可随时删除重建。
-
-## cookbook 命名约定为何不是强制
-
-`runtime/dev.yaml` 与 `cookbooks/dev.run.md` 同名、带动作后缀，只是约定而不是强制；以 env 的 `cookbook` 字段路径为准。

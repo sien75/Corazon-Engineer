@@ -10,11 +10,8 @@ response:
   stream: sse  # body below is the schema of each event
   body:
     seq: number  # message sequence
-    kind: markdown | approval | question | error  # render marker
+    kind: markdown | question | error  # render marker
     markdown?: string  # when kind=markdown
-    approval?:  # when kind=approval: request permission to run a backend operation
-      approvalId: string  # pending operation id, sent to ai-approval
-      title: string  # operation description shown to user
     question?:  # when kind=question: let user choose
       text: string  # question text
       options:

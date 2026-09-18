@@ -307,37 +307,6 @@ canvas.layer {
   color: #e4e4e7;
 }
 
-.ai-approval {
-  border-color: #155e75;
-  background: #0f2430;
-}
-
-.ai-approval-title {
-  margin-bottom: 8px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.ai-approval-btn {
-  background: none;
-  border: 1px solid #7dd3fc;
-  color: #7dd3fc;
-  font: inherit;
-  font-size: 12px;
-  padding: 4px 14px;
-  cursor: pointer;
-}
-
-.ai-approval-btn:hover {
-  background: #7dd3fc;
-  color: #141416;
-}
-
-.ai-approval-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 #ai-input {
   display: flex;
   gap: 8px;

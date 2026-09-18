@@ -14,4 +14,4 @@ edges:
     to_interface: static-mutation
     channel: network
     protocol: http
-    description: ai modifies the schema (add/update/remove) after user approval
+    description: ai modifies the schema (add/update/remove)

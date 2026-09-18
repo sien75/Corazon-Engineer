@@ -507,34 +507,6 @@ function aiAppend(role, text) {
   return div;
 }
 
-function aiApprovalCard(approval) {
-  const div = document.createElement("div");
-  div.className = "ai-msg ai-assistant ai-approval";
-  div.innerHTML = `
-    <div class="ai-approval-title">${escapeHtml(approval?.title || "approval requested")}</div>
-    <button class="ai-approval-btn" type="button">approve</button>`;
-  const btn = div.querySelector(".ai-approval-btn");
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    btn.textContent = "approving…";
-    try {
-      const res = await fetch(`${AI_BASE}/ai/approval`, {
-        method: "POST",
-        headers: { "Content-Type": "application/yaml" },
-        body: yaml.dump({ id: aiSession, approvalId: approval.approvalId }),
-      });
-      const data = yaml.load(await res.text()) || {};
-      if (!res.ok) throw new Error(data.error?.message || res.status);
-      btn.textContent = "approved ✓";
-    } catch (err) {
-      btn.textContent = `failed: ${err.message}`;
-      btn.disabled = false;
-    }
-  });
-  aiMessagesEl.appendChild(div);
-  aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
-}
-
 async function aiNew() {
   const res = await fetch(`${AI_BASE}/ai/new`, {
     method: "POST",
@@ -591,8 +563,6 @@ async function aiStream() {
         aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
       } else if (ev.kind === "error") {
         aiAppend("assistant", `[error] ${ev.error?.message || ""}`);
-      } else if (ev.kind === "approval") {
-        aiApprovalCard(ev.approval);
       }
       if (ev.done) assistant = null;
     }

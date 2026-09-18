@@ -91,7 +91,7 @@ options?:          # array of objects
 Join multiple values/types with `|`:
 
 ```yaml
-kind: markdown | approval | error   # enum: three literal strings
+kind: markdown | question | error   # enum: three literal strings
 content: object | string           # union: either an object or a string
 ```
 

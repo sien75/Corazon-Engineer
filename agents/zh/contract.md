@@ -91,7 +91,7 @@ options?:          # 对象数组
 用 `|` 连接多个取值/类型:
 
 ```yaml
-kind: markdown | approval | error   # 枚举:三个字面量字符串
+kind: markdown | question | error   # 枚举:三个字面量字符串
 content: object | string           # 类型联合:要么对象要么字符串
 ```
 
