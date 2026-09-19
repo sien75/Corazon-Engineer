@@ -1,5 +1,6 @@
 import YAML from "yaml";
-import type { Registry, CorazonEvent } from "./registry.ts";
+import type { Registry, CorazonEvent, IncomingBlock } from "./registry.ts";
+import { readBlob } from "./blobs.ts";
 
 // The ai API speaks YAML on the wire (application/yaml), like static / log.
 // JSON request bodies still parse, since JSON is a subset of YAML.
@@ -57,6 +58,21 @@ export function serve(registry: Registry, addr: string): void {
       if (req.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: CORS });
       }
+      // Content-addressed image bytes; immutable so the browser can cache hard.
+      if (req.method === "GET" && url.pathname.startsWith("/blobs/")) {
+        const blob = readBlob(
+          registry.rootDir,
+          url.pathname.slice("/blobs/".length),
+        );
+        if (!blob) return errRes(404, "not_found", "blob not found");
+        return new Response(blob.bytes, {
+          headers: {
+            ...CORS,
+            "Content-Type": blob.mimeType,
+            "Cache-Control": "public, max-age=31536000, immutable",
+          },
+        });
+      }
       if (req.method !== "POST") {
         return errRes(404, "not_found", "unknown endpoint");
       }
@@ -82,13 +98,27 @@ export function serve(registry: Registry, addr: string): void {
         }
 
         case "/ai/ask": {
-          const prompt = String(body.prompt ?? "");
-          if (!prompt.trim()) {
-            return errRes(400, "bad_request", "prompt missing or empty");
+          const blocks = (Array.isArray(body.blocks) ? body.blocks : [])
+            .map((b: any): IncomingBlock | undefined => {
+              if (b?.type === "text" && typeof b.text === "string") {
+                return { type: "text", text: b.text };
+              }
+              if (
+                b?.type === "image" &&
+                typeof b.data === "string" &&
+                typeof b.mimeType === "string"
+              ) {
+                return { type: "image", data: b.data, mimeType: b.mimeType };
+              }
+              return undefined;
+            })
+            .filter((b: IncomingBlock | undefined): b is IncomingBlock => !!b);
+          if (!blocks.length) {
+            return errRes(400, "bad_request", "blocks required");
           }
           const sess = registry.get(String(body.id ?? ""));
           if (!sess) return errRes(404, "not_found", "session not found");
-          registry.ask(sess, prompt);
+          registry.ask(sess, blocks);
           return yamlRes({ sessionId: sess.id });
         }
 

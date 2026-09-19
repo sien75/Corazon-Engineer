@@ -1,9 +1,21 @@
 import YAML from "yaml";
 
+// A user turn can mix text and images. `blocks` preserves their order; `content`
+// is the flattened text projection kept for preview/search (images are ignored
+// or shown as a placeholder).
+export interface MessageBlock {
+  type: "text" | "image";
+  text?: string;
+  sha256?: string;
+  mimeType?: string;
+  size?: number;
+}
+
 export interface ConversationMessage {
   seq: number;
   msgKind: string;
   content: string;
+  blocks?: MessageBlock[];
 }
 
 // record writes a conversation record to the log service (fire-and-forget;
@@ -14,13 +26,16 @@ export function record(
   seq: number,
   msgKind: string,
   content: string,
+  blocks?: MessageBlock[],
 ): void {
   if (!logBase) return;
+  const payload: Record<string, unknown> = { seq, msgKind, content };
+  if (blocks && blocks.length) payload.blocks = blocks;
   const body = YAML.stringify({
     op: "add",
     kind: "conversation",
     sessionId,
-    payload: { seq, msgKind, content },
+    payload,
   });
   fetch(`${logBase}/log/mutation`, {
     method: "POST",
@@ -47,11 +62,19 @@ export async function fetchMessages(
     if (!res.ok) return [];
     const data = YAML.parse(await res.text());
     const raw = Array.isArray(data?.messages) ? data.messages : [];
-    return raw.map((m: any) => ({
-      seq: Number(m?.seq ?? 0),
-      msgKind: String(m?.msgKind ?? ""),
-      content: String(m?.content ?? ""),
-    }));
+    return raw.map((m: any) => {
+      const msg: ConversationMessage = {
+        seq: Number(m?.seq ?? 0),
+        msgKind: String(m?.msgKind ?? ""),
+        content: String(m?.content ?? ""),
+      };
+      if (Array.isArray(m?.blocks) && m.blocks.length) {
+        msg.blocks = m.blocks.filter(
+          (b: any) => b && (b.type === "text" || b.type === "image"),
+        );
+      }
+      return msg;
+    });
   } catch {
     return [];
   }

@@ -261,7 +261,7 @@ function createGraph(blocks, connections) {
     },
     document.getElementById("graph"),
   );
-  g.setColors(THEME);
+  g.setColors(GRAPH_THEMES[currentTheme()]);
   g.setConstants({ camera: { WHEEL_INPUT_DEVICE: "trackpad" } });
   g.start();
   g.cameraService.set({ scaleMax: 2 });
@@ -304,13 +304,48 @@ function bindCameraClamp(g) {
   });
 }
 
-const THEME = {
-  canvas: { layerBackground: "#141416", belowLayerBackground: "#141416", dots: "#2a2a2e", border: "#141416" },
-  block: { background: "#1c1c20", border: "#3f3f46", text: "#e4e4e7", selectedBorder: "#7dd3fc" },
-  connection: { background: "#a1a1aa", selectedBackground: "#7dd3fc" },
-  connectionLabel: { background: "#1c1c20", text: "#a1a1aa", selectedBackground: "#7dd3fc", selectedText: "#141416" },
-  selection: { background: "rgba(125, 211, 252, 0.1)", border: "#7dd3fc" },
+const THEME_ORDER = ["light", "dark", "solarized"];
+const THEME_KEY = "corazon.theme";
+
+const GRAPH_THEMES = {
+  light: {
+    canvas: { layerBackground: "#ffffff", belowLayerBackground: "#ffffff", dots: "#e3e6ea", border: "#ffffff" },
+    block: { background: "#f6f7f9", border: "#d0d7de", text: "#1f2328", selectedBorder: "#0969da" },
+    connection: { background: "#8c959f", selectedBackground: "#0969da" },
+    connectionLabel: { background: "#f6f7f9", text: "#57606a", selectedBackground: "#0969da", selectedText: "#ffffff" },
+    selection: { background: "rgba(9, 105, 218, 0.1)", border: "#0969da" },
+  },
+  dark: {
+    canvas: { layerBackground: "#141416", belowLayerBackground: "#141416", dots: "#2a2a2e", border: "#141416" },
+    block: { background: "#1c1c20", border: "#3f3f46", text: "#e4e4e7", selectedBorder: "#7dd3fc" },
+    connection: { background: "#a1a1aa", selectedBackground: "#7dd3fc" },
+    connectionLabel: { background: "#1c1c20", text: "#a1a1aa", selectedBackground: "#7dd3fc", selectedText: "#141416" },
+    selection: { background: "rgba(125, 211, 252, 0.1)", border: "#7dd3fc" },
+  },
+  solarized: {
+    canvas: { layerBackground: "#fdf6e3", belowLayerBackground: "#fdf6e3", dots: "#ddd6c1", border: "#fdf6e3" },
+    block: { background: "#eee8d5", border: "#c9c2ab", text: "#073642", selectedBorder: "#268bd2" },
+    connection: { background: "#93a1a1", selectedBackground: "#268bd2" },
+    connectionLabel: { background: "#eee8d5", text: "#586e75", selectedBackground: "#268bd2", selectedText: "#fdf6e3" },
+    selection: { background: "rgba(38, 139, 210, 0.1)", border: "#268bd2" },
+  },
 };
+
+function currentTheme() {
+  const t = document.documentElement.getAttribute("data-theme");
+  return THEME_ORDER.includes(t) ? t : "light";
+}
+
+function applyTheme(name) {
+  if (!THEME_ORDER.includes(name)) name = "light";
+  document.documentElement.setAttribute("data-theme", name);
+  try {
+    localStorage.setItem(THEME_KEY, name);
+  } catch (e) {}
+  if (themeToggleEl) themeToggleEl.title = `theme: ${name}`;
+  if (themeMenuEl) syncThemeMenu();
+  if (graph) graph.setColors(GRAPH_THEMES[name]);
+}
 
 function bindGraphEvents() {
   graph.on("click", (event) => {
@@ -495,6 +530,8 @@ contentEl.addEventListener("click", (event) => {
 
 const aiEl = document.getElementById("ai");
 const aiToggleEl = document.getElementById("ai-toggle");
+const themeToggleEl = document.getElementById("theme-toggle");
+const themeMenuEl = document.getElementById("theme-menu");
 const aiMessagesEl = document.getElementById("ai-messages");
 const aiInputEl = document.getElementById("ai-input-field");
 const aiSendEl = document.getElementById("ai-send");
@@ -503,6 +540,10 @@ const aiCmdEl = document.getElementById("ai-cmd");
 let aiSession = null;
 let aiSeenSeq = 0;
 let aiStreaming = false;
+// Images pasted into the input, in token order: { data, mimeType } or undefined
+// while compression is still in flight; aiImageTasks lets send() await them.
+let aiImages = [];
+let aiImageTasks = [];
 
 // Stick to the bottom only while the user is already at the bottom; if they
 // scrolled up to read history, new messages must not yank them back down.
@@ -622,6 +663,201 @@ function aiAppend(role, text) {
   const stick = aiAtBottom();
   aiMessagesEl.appendChild(div);
   if (role === "user" || stick) aiScrollToBottom(); // own message always reveals
+  return div;
+}
+
+// ---------- image attachments ----------
+
+// Images are downscaled in the browser before upload so the POST body, the blob
+// on disk and the bytes sent to the model all stay small and identical.
+const AI_IMG_MAX_DIM = 1568;
+const AI_IMG_QUALITY = 0.85;
+
+function aiBlobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result).split(",")[1] ?? "");
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+async function aiCompressImage(file) {
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    return undefined;
+  }
+  const scale = Math.min(
+    1,
+    AI_IMG_MAX_DIM / Math.max(bitmap.width, bitmap.height),
+  );
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+  bitmap.close?.();
+  // Screenshots stay lossless PNG; everything else becomes compact JPEG.
+  const type = file.type === "image/png" ? "image/png" : "image/jpeg";
+  const blob = await new Promise((resolve) =>
+    canvas.toBlob(resolve, type, AI_IMG_QUALITY),
+  );
+  if (!blob) return undefined;
+  return { data: await aiBlobToBase64(blob), mimeType: blob.type };
+}
+
+// The literal [image] token is the position marker inside the text. Pasting an
+// image inserts the token at the caret and queues the compressed bytes; on send
+// tokens are paired, in order, with the queued images.
+const AI_IMAGE_TOKEN = "[image]";
+
+function aiInsertImageToken() {
+  const start = aiInputEl.selectionStart ?? aiInputEl.value.length;
+  const end = aiInputEl.selectionEnd ?? start;
+  const v = aiInputEl.value;
+  aiInputEl.value = v.slice(0, start) + AI_IMAGE_TOKEN + v.slice(end);
+  const caret = start + AI_IMAGE_TOKEN.length;
+  aiInputEl.setSelectionRange(caret, caret);
+}
+
+function aiAddPastedImage(file) {
+  const idx = aiImages.length;
+  aiImages.push(undefined); // reserve the slot so order survives async decode
+  aiInsertImageToken();
+  aiImageTasks.push(
+    aiCompressImage(file)
+      .then((img) => {
+        aiImages[idx] = img;
+      })
+      .catch(() => {}),
+  );
+}
+
+function aiClearImages() {
+  aiImages = [];
+  aiImageTasks = [];
+}
+
+// aiBuildSendBlocks splits `text` on [image] tokens and interleaves the queued
+// images. Each text/image block keeps its position; image blocks carry both the
+// upload `data` and a local `url` for immediate rendering.
+function aiBuildSendBlocks(text, images) {
+  const blocks = [];
+  const parts = text.split(AI_IMAGE_TOKEN);
+  let n = 0;
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) {
+      const img = images[n++];
+      if (img) {
+        blocks.push({
+          type: "image",
+          data: img.data,
+          mimeType: img.mimeType,
+          url: `data:${img.mimeType};base64,${img.data}`,
+        });
+      }
+    }
+    if (parts[i]) blocks.push({ type: "text", text: parts[i] });
+  }
+  return blocks;
+}
+
+// --- [image] token is atomic in the textarea: caret can't enter it, and
+// Backspace/Delete removes the whole token (and its queued image).
+
+function aiTokenRanges(v) {
+  const ranges = [];
+  let i = 0;
+  for (;;) {
+    const at = v.indexOf(AI_IMAGE_TOKEN, i);
+    if (at === -1) break;
+    ranges.push([at, at + AI_IMAGE_TOKEN.length]);
+    i = at + AI_IMAGE_TOKEN.length;
+  }
+  return ranges;
+}
+
+// Token strictly containing the caret (s < pos < e).
+function aiTokenInside(v, pos) {
+  for (const [s, e] of aiTokenRanges(v)) {
+    if (pos > s && pos < e) return [s, e];
+  }
+  return null;
+}
+
+function aiTokenEndingAt(v, pos) {
+  const s = pos - AI_IMAGE_TOKEN.length;
+  return s >= 0 && v.slice(s, pos) === AI_IMAGE_TOKEN ? [s, pos] : null;
+}
+
+function aiTokenStartingAt(v, pos) {
+  return v.slice(pos, pos + AI_IMAGE_TOKEN.length) === AI_IMAGE_TOKEN
+    ? [pos, pos + AI_IMAGE_TOKEN.length]
+    : null;
+}
+
+// Grow a selection so it never cuts a token in half; null when already aligned.
+function aiExpandTokenRange(v, start, end) {
+  let changed = false;
+  for (const [s, e] of aiTokenRanges(v)) {
+    if (e <= start || s >= end) continue;
+    if (s < start) {
+      start = s;
+      changed = true;
+    }
+    if (e > end) {
+      end = e;
+      changed = true;
+    }
+  }
+  return changed ? [start, end] : null;
+}
+
+// Drop the queued images whose tokens fall inside [rs, re). Token ordinal ==
+// image index, since both are kept in insertion order.
+function aiRemoveImagesForRange(v, rs, re) {
+  const drops = [];
+  aiTokenRanges(v).forEach(([s, e], i) => {
+    if (s >= rs && e <= re) drops.push(i);
+  });
+  for (let k = drops.length - 1; k >= 0; k--) aiImages.splice(drops[k], 1);
+}
+
+function aiSnapCaretOutOfToken() {
+  if (aiInputEl.selectionStart !== aiInputEl.selectionEnd) return;
+  const v = aiInputEl.value;
+  const inside = aiTokenInside(v, aiInputEl.selectionStart);
+  if (!inside) return;
+  const p = aiInputEl.selectionStart;
+  const [s, e] = inside;
+  const to = p - s < e - p ? s : e;
+  aiInputEl.setSelectionRange(to, to);
+}
+
+// aiAppendUserParts renders a user bubble from ordered parts:
+//   { type: "text", text } | { type: "image", src }
+function aiAppendUserParts(parts) {
+  const div = document.createElement("div");
+  div.className = "ai-msg ai-user";
+  for (const p of parts) {
+    if (p.type === "text") {
+      if (!p.text) continue;
+      const t = document.createElement("div");
+      t.textContent = p.text;
+      div.appendChild(t);
+    } else if (p.type === "image" && p.src) {
+      const el = document.createElement("img");
+      el.className = "ai-user-img";
+      el.src = p.src;
+      el.alt = "image";
+      div.appendChild(el);
+    }
+  }
+  aiMessagesEl.appendChild(div);
+  aiScrollToBottom(); // own message always reveals
   return div;
 }
 
@@ -923,15 +1159,30 @@ async function aiStreamOnce() {
 }
 
 async function aiSend() {
-  const prompt = aiInputEl.value.trim();
-  if (!prompt || !aiSession) return;
+  const text = aiInputEl.value;
+  if (!text.trim() || !aiSession) return;
   aiDrawerHide();
   aiInputEl.value = "";
-  aiAppend("user", prompt);
+  await Promise.all(aiImageTasks); // let any in-flight paste finish decoding
+  const images = aiImages;
+  aiClearImages();
+  const blocks = aiBuildSendBlocks(text, images);
+  // Local bubble: text + real images (the [image] tokens are not shown).
+  const parts = blocks.map((b) =>
+    b.type === "text"
+      ? { type: "text", text: b.text }
+      : { type: "image", src: b.url },
+  );
+  aiAppendUserParts(parts);
+  const wire = blocks.map((b) =>
+    b.type === "text"
+      ? { type: "text", text: b.text }
+      : { type: "image", data: b.data, mimeType: b.mimeType },
+  );
   const res = await fetch(`${AI_BASE}/ai/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
-    body: yaml.dump({ id: aiSession, prompt }),
+    body: yaml.dump({ id: aiSession, blocks: wire }),
   });
   const data = yaml.load(await res.text()) || {};
   if (!res.ok) {
@@ -963,7 +1214,7 @@ async function aiAnswer(answer) {
 // Commands are recommended as the user types after "/", matched by name or
 // description (case-insensitive; name prefix ranks first).
 const AI_COMMANDS = [
-  { name: "/new", description: "create a new session", run: aiCommandNew },
+  { name: "/new", description: "clear and create a new session", run: aiCommandNew },
   {
     name: "/resume",
     description: "list history sessions and resume from one",
@@ -1088,6 +1339,7 @@ function aiSyncCommandDrawer() {
 
 async function aiCommandNew() {
   aiMessagesEl.innerHTML = "";
+  aiClearImages();
   try {
     await aiNew();
   } catch (err) {
@@ -1145,9 +1397,25 @@ async function aiResumeSession(id) {
     const detail = yaml.load(await detailRes.text()) || {};
     aiMessagesEl.innerHTML = "";
     for (const m of detail.messages || []) {
-      if (!m.content) continue;
-      if (m.msgKind === "assistant") aiStaticMarkdown(m.content);
-      else aiAppend("user", m.content);
+      if (m.msgKind === "assistant") {
+        if (m.content) aiStaticMarkdown(m.content);
+        continue;
+      }
+      const blocks =
+        Array.isArray(m.blocks) && m.blocks.length
+          ? m.blocks
+          : m.content
+            ? [{ type: "text", text: m.content }]
+            : [];
+      const parts = [];
+      for (const b of blocks) {
+        if (b.type === "text" && b.text) {
+          parts.push({ type: "text", text: b.text });
+        } else if (b.type === "image" && b.sha256) {
+          parts.push({ type: "image", src: `${AI_BASE}/blobs/${b.sha256}` });
+        }
+      }
+      if (parts.length) aiAppendUserParts(parts);
     }
     // Continue the same session; skip events the server already emitted so a
     // resumed in-memory session does not replay old ones.
@@ -1162,26 +1430,109 @@ async function aiResumeSession(id) {
   }
 }
 
-aiToggleEl.addEventListener("click", async () => {
-  const open = aiEl.hidden;
+function syncThemeMenu() {
+  const cur = currentTheme();
+  for (const btn of themeMenuEl.querySelectorAll("button[data-theme]")) {
+    btn.classList.toggle("active", btn.dataset.theme === cur);
+  }
+}
+
+function themeMenuHide() {
+  themeMenuEl.hidden = true;
+  themeToggleEl.classList.remove("active");
+}
+
+themeToggleEl.title = `theme: ${currentTheme()}`;
+themeToggleEl.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (themeMenuEl.hidden) {
+    syncThemeMenu();
+    themeMenuEl.hidden = false;
+    themeToggleEl.classList.add("active");
+  } else {
+    themeMenuHide();
+  }
+});
+
+themeMenuEl.addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-theme]");
+  if (!btn) return;
+  applyTheme(btn.dataset.theme);
+  themeMenuHide();
+});
+
+window.addEventListener("click", (event) => {
+  if (themeMenuEl.hidden) return;
+  if (!themeMenuEl.contains(event.target) && event.target !== themeToggleEl) {
+    themeMenuHide();
+  }
+});
+
+const AI_OPEN_KEY = "corazon.ai.open";
+
+// Open/close state is persisted so a refresh keeps the panel where it was.
+function aiSetOpen(open) {
   aiEl.hidden = !open;
   aiToggleEl.classList.toggle("active", open);
-  if (open) {
-    if (!aiSession) {
-      try {
-        await aiNew();
-      } catch (err) {
-        aiAppend("assistant", `[error] ${err.message}`);
-      }
-    }
-    aiInputEl.focus();
-  }
+  try {
+    localStorage.setItem(AI_OPEN_KEY, open ? "1" : "0");
+  } catch (e) {}
   graph?.updateSize();
+}
+
+async function aiOpen() {
+  aiSetOpen(true);
+  if (!aiSession) {
+    try {
+      await aiNew();
+    } catch (err) {
+      aiAppend("assistant", `[error] ${err.message}`);
+    }
+  }
+  aiInputEl.focus();
+}
+
+aiToggleEl.addEventListener("click", () => {
+  if (aiEl.hidden) aiOpen();
+  else aiSetOpen(false);
 });
 
 aiSendEl.addEventListener("click", aiSend);
 aiStopEl.addEventListener("click", aiStop);
 aiInputEl.addEventListener("input", aiSyncCommandDrawer);
+
+aiInputEl.addEventListener("paste", (event) => {
+  const files = [...(event.clipboardData?.items || [])]
+    .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+    .map((it) => it.getAsFile())
+    .filter(Boolean);
+  if (!files.length) return;
+  event.preventDefault();
+  for (const file of files) aiAddPastedImage(file);
+});
+
+// Keep the caret out of [image] tokens and keep image tokens whole on edit.
+aiInputEl.addEventListener("keyup", aiSnapCaretOutOfToken);
+aiInputEl.addEventListener("click", aiSnapCaretOutOfToken);
+aiInputEl.addEventListener("select", aiSnapCaretOutOfToken);
+aiInputEl.addEventListener("beforeinput", (event) => {
+  if (!event.inputType || !event.inputType.startsWith("insert")) return;
+  if (aiInputEl.selectionStart !== aiInputEl.selectionEnd) return;
+  if (aiTokenInside(aiInputEl.value, aiInputEl.selectionStart)) {
+    event.preventDefault();
+    aiSnapCaretOutOfToken();
+  }
+});
+aiInputEl.addEventListener("cut", () => {
+  const v = aiInputEl.value;
+  const s = aiInputEl.selectionStart;
+  const e = aiInputEl.selectionEnd;
+  if (s === e) return;
+  const range = aiExpandTokenRange(v, s, e);
+  if (!range) return;
+  aiRemoveImagesForRange(v, range[0], range[1]);
+  aiInputEl.setSelectionRange(range[0], range[1]);
+});
 aiInputEl.addEventListener("keydown", (event) => {
   // While the command drawer is open it owns navigation / selection keys.
   if (aiDrawer && aiDrawer.kind === "command") {
@@ -1207,6 +1558,28 @@ aiInputEl.addEventListener("keydown", (event) => {
         aiInputEl.value = cmd.label;
         aiDrawerHide();
       }
+      return;
+    }
+  }
+  // Atomic [image] tokens: Backspace/Delete removes the whole token.
+  if (event.key === "Backspace" || event.key === "Delete") {
+    const v = aiInputEl.value;
+    const s = aiInputEl.selectionStart;
+    const e = aiInputEl.selectionEnd;
+    let range = null;
+    if (s !== e) {
+      range = aiExpandTokenRange(v, s, e);
+    } else if (event.key === "Backspace") {
+      range = aiTokenEndingAt(v, s) || aiTokenInside(v, s);
+    } else {
+      range = aiTokenStartingAt(v, s) || aiTokenInside(v, s);
+    }
+    if (range) {
+      event.preventDefault();
+      aiRemoveImagesForRange(v, range[0], range[1]);
+      aiInputEl.value = v.slice(0, range[0]) + v.slice(range[1]);
+      aiInputEl.setSelectionRange(range[0], range[0]);
+      aiSyncCommandDrawer();
       return;
     }
   }
@@ -1237,6 +1610,11 @@ aiCmdEl.addEventListener("keydown", (event) => {
 // command list) back to the normal chat flow, then stop the in-flight run.
 window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  if (!themeMenuEl.hidden) {
+    event.preventDefault();
+    themeMenuHide();
+    return;
+  }
   if (aiDrawer) {
     event.preventDefault();
     if (aiDrawer.kind === "session") aiCancelResume();
@@ -1249,6 +1627,10 @@ window.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("popstate", route);
+
+try {
+  if (localStorage.getItem(AI_OPEN_KEY) === "1") aiOpen();
+} catch (e) {}
 
 route();
 refresh();

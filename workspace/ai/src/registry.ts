@@ -11,8 +11,21 @@ import {
   resolveCliModel,
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
-import { record, fetchMessages, type ConversationMessage } from "./recorder.ts";
+import {
+  record,
+  fetchMessages,
+  type ConversationMessage,
+  type MessageBlock,
+} from "./recorder.ts";
+import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
+
+// A user turn as received on /ai/ask: ordered text/image blocks. Images carry
+// base64 + mime and are persisted to the blob store; text is the prompt text
+// (with [image] position tokens).
+export type IncomingBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
 
 type Model = Awaited<ReturnType<ModelRuntime["getAvailable"]>>[number];
 
@@ -64,6 +77,25 @@ const askUserTool = defineTool({
     };
   },
 });
+
+// pi's bundled catalog under-declares some vision models, and its
+// openai-completions adapter silently strips images unless the model's declared
+// `input` includes "image" (pi-ai: openai-completions.js). DeepSeek Flash
+// supports vision (DeepSeek Vision guide). Only that exact provider/model is
+// touched, and a copy is returned so the shared catalog object stays intact.
+function withVisionCapability(model: Model | undefined): Model | undefined {
+  if (!model) return model;
+  const m = model as any;
+  if (
+    m.provider === "deepseek" &&
+    /^deepseek-flash$/.test(m.id) &&
+    Array.isArray(m.input) &&
+    !m.input.includes("image")
+  ) {
+    return { ...m, input: [...m.input, "image"] };
+  }
+  return model;
+}
 
 interface Sess {
   id: string;
@@ -124,6 +156,7 @@ export class Registry {
       this.model =
         available.find((m) => m.provider === "deepseek") ?? available[0];
     }
+    this.model = withVisionCapability(this.model);
     if (!this.model) return; // stub mode
     this.loader = new DefaultResourceLoader({
       cwd: this.opts.root,
@@ -138,6 +171,10 @@ export class Registry {
 
   get stub(): boolean {
     return !this.model;
+  }
+
+  get rootDir(): string {
+    return this.opts.root;
   }
 
   get modelInfo(): string {
@@ -217,16 +254,28 @@ export class Registry {
     return sess;
   }
 
-  // toAgentMessage converts a recorded text message back into a pi AgentMessage
-  // so a resumed session carries the prior conversation as LLM context.
+  // toAgentMessage converts a recorded message back into a pi AgentMessage so a
+  // resumed session carries the prior conversation as LLM context. Old rows have
+  // only text; newer rows carry ordered blocks (text + image refs), and image
+  // bytes are re-materialized from the blob store as base64.
   private toAgentMessage(m: ConversationMessage): any {
-    if (!m.content.trim()) return undefined;
+    const blocks: MessageBlock[] =
+      m.blocks && m.blocks.length
+        ? m.blocks
+        : m.content.trim()
+          ? [{ type: "text", text: m.content }]
+          : [];
     const timestamp = Date.now();
     if (m.msgKind === "assistant") {
+      const text = blocks
+        .filter((b) => b.type === "text" && b.text)
+        .map((b) => b.text)
+        .join("\n");
+      if (!text.trim()) return undefined;
       const model = this.model as any;
       return {
         role: "assistant",
-        content: [{ type: "text", text: m.content }],
+        content: [{ type: "text", text }],
         api: model?.api ?? "openai-completions",
         provider: model?.provider ?? "unknown",
         model: model?.id ?? "unknown",
@@ -242,11 +291,17 @@ export class Registry {
         timestamp,
       };
     }
-    return {
-      role: "user",
-      content: [{ type: "text", text: m.content }],
-      timestamp,
-    };
+    const content: any[] = [];
+    for (const b of blocks) {
+      if (b.type === "text") {
+        if (b.text) content.push({ type: "text", text: b.text });
+      } else if (b.type === "image" && b.sha256) {
+        const img = loadImage(this.opts.root, b.sha256);
+        if (img) content.push({ type: "image", data: img.data, mimeType: img.mimeType });
+      }
+    }
+    if (!content.length) return undefined;
+    return { role: "user", content, timestamp };
   }
 
   get(id: string): Sess | undefined {
@@ -266,10 +321,40 @@ export class Registry {
   // before the next LLM call) and the in-flight run stays the sole owner of the
   // terminal agent_settled event. Otherwise a fresh run is started, serialized
   // on the tail chain so two idle asks cannot race.
-  ask(sess: Sess, prompt: string): void {
-    this.record(sess, "user", prompt);
+  ask(sess: Sess, incoming: IncomingBlock[]): void {
+    // Persist images as blobs; carry only their refs in the recorded blocks.
+    // `content` is the flattened projection: text as-is, each image as [image].
+    const blocks: MessageBlock[] = [];
+    const piImages: any[] = [];
+    let content = "";
+    for (const b of incoming) {
+      if (b.type === "text") {
+        if (!b.text) continue;
+        blocks.push({ type: "text", text: b.text });
+        content += b.text;
+      } else if (b.type === "image" && b.data && b.mimeType) {
+        let ref: { sha256: string; size: number };
+        try {
+          ref = saveImage(this.opts.root, b.data, b.mimeType);
+        } catch (err) {
+          this.appendError(sess, "image_error", String(err));
+          continue;
+        }
+        blocks.push({
+          type: "image",
+          sha256: ref.sha256,
+          mimeType: b.mimeType,
+          size: ref.size,
+        });
+        piImages.push({ type: "image", data: b.data, mimeType: b.mimeType });
+        content += "[image]";
+      }
+    }
+    this.record(sess, "user", content, blocks);
+    // pi always emits a text block before images; avoid an empty one.
+    const promptText = content || "[image]";
     if (!sess.agent) {
-      const reply = `Corazon AI (dev stub) received your prompt:\n\n> ${prompt}`;
+      const reply = `Corazon AI (dev stub) received your prompt:\n\n> ${promptText}`;
       this.append(sess, { type: "agent_start" });
       this.append(sess, {
         type: "message_update",
@@ -284,22 +369,25 @@ export class Registry {
       return;
     }
     const agent = sess.agent;
+    const imageOpts = piImages.length ? { images: piImages } : {};
     if (agent.isStreaming) {
       void agent
-        .prompt(prompt, { streamingBehavior: "steer" })
+        .prompt(promptText, { ...imageOpts, streamingBehavior: "steer" })
         .catch((err) => {
           this.appendError(sess, "ai_error", String(err));
         });
       return;
     }
-    sess.tail = sess.tail.then(() => this.runTurn(sess, agent, prompt));
+    sess.tail = sess.tail.then(() =>
+      this.runTurn(sess, agent, promptText, piImages),
+    );
   }
 
   // answer injects the user's reply to an ask_user question as a normal user
   // text turn. Kept separate from ask() so permission/approval logic for
   // ask_user can live on this path.
   answer(sess: Sess, text: string): void {
-    this.ask(sess, text);
+    this.ask(sess, [{ type: "text", text }]);
   }
 
   // stop aborts the in-flight run. pi emits its terminal agent_settled as part
@@ -314,6 +402,7 @@ export class Registry {
     sess: Sess,
     agent: AgentSession,
     prompt: string,
+    images: any[] = [],
   ): Promise<void> {
     sess.turnText = "";
     sess.turns = 0;
@@ -323,7 +412,7 @@ export class Registry {
       // runTurn only runs when idle (ask() steers instead while streaming), so
       // prompt() starts the run and resolves after it fully settles, including
       // retries and any messages steered in during the run.
-      await agent.prompt(prompt);
+      await agent.prompt(prompt, images.length ? { images } : undefined);
     } catch (err) {
       dbg(sess.id, "runTurn error", String(err));
       this.appendError(sess, "ai_error", String(err));
@@ -360,7 +449,19 @@ export class Registry {
     });
   }
 
-  private record(sess: Sess, msgKind: string, content: string): void {
-    record(this.opts.logBase, sess.id, ++sess.recordSeq, msgKind, content);
+  private record(
+    sess: Sess,
+    msgKind: string,
+    content: string,
+    blocks?: MessageBlock[],
+  ): void {
+    record(
+      this.opts.logBase,
+      sess.id,
+      ++sess.recordSeq,
+      msgKind,
+      content,
+      blocks,
+    );
   }
 }

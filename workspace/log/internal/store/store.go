@@ -316,19 +316,24 @@ func (s *Store) SessionMessages(sessionID string) ([]map[string]interface{}, err
 			return nil, err
 		}
 		var p struct {
-			Seq     int    `yaml:"seq"`
-			MsgKind string `yaml:"msgKind"`
-			Content string `yaml:"content"`
+			Seq     int                      `yaml:"seq"`
+			MsgKind string                   `yaml:"msgKind"`
+			Content string                   `yaml:"content"`
+			Blocks  []map[string]interface{} `yaml:"blocks"`
 		}
 		if err := yaml.Unmarshal([]byte(payloadText), &p); err != nil {
 			continue
 		}
-		messages = append(messages, map[string]interface{}{
+		msg := map[string]interface{}{
 			"seq":       p.Seq,
 			"msgKind":   p.MsgKind,
 			"content":   p.Content,
 			"createdAt": createdAt,
-		})
+		}
+		if len(p.Blocks) > 0 {
+			msg["blocks"] = p.Blocks
+		}
+		messages = append(messages, msg)
 	}
 	return messages, rows.Err()
 }
