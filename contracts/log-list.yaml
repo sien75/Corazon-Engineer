@@ -1,0 +1,27 @@
+id: log-list
+description: List ai conversation sessions; one entry per sessionId, most recently active first
+
+request:
+  body:
+    pageNum?: number  # page number, 1-based, default 1
+
+response:
+  status: 200
+  body:
+    sessions:
+      - sessionId: string  # conversation session id
+        createdAt: string  # first message time, RFC3339
+        lastAt: string  # latest message time, RFC3339
+        count: number  # number of messages in the session
+        preview: string  # first user message content snippet
+    pageNum: number  # echoed page number
+    hasMore: boolean  # whether more pages exist
+    pageSize: 100  # fixed page size, 100 sessions per page
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 500
+    code: internal
+    description: server error

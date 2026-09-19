@@ -15,3 +15,11 @@ edges:
     channel: network
     protocol: http
     description: Web frontend sends a prompt to ai; ai orchestrates the operation (reply streams back)
+  - id: web-to-ai-resume
+    from: web
+    from_interface: ai-resume
+    to: ai
+    to_interface: ai-resume
+    channel: network
+    protocol: http
+    description: Web frontend resumes a history session; ai rebuilds its text context from log

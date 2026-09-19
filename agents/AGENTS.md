@@ -32,6 +32,8 @@ There are no dedicated per-endpoint tools; call Corazon's internal services over
 
 **log service — records**, YAML on the wire:
 
+- `/log/list` — list conversation sessions (one entry per session, newest activity first)
+- `/log/session-detail` — fetch a conversation session's messages (full content)
 - `/log/query` — query records (test / telemetry / conversation)
 - `/log/query-detail` — fetch a single record's detail
 - `/log/search` — full-text search over records

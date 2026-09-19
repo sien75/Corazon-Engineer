@@ -15,3 +15,11 @@ edges:
     channel: network
     protocol: http
     description: ai queries log records to review history / context
+  - id: ai-to-log-session-detail
+    from: ai
+    from_interface: log-session-detail
+    to: log
+    to_interface: log-session-detail
+    channel: network
+    protocol: http
+    description: ai reads a session's conversation messages to rebuild context on resume

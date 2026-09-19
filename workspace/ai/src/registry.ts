@@ -11,7 +11,7 @@ import {
   resolveCliModel,
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
-import { record } from "./recorder.ts";
+import { record, fetchMessages, type ConversationMessage } from "./recorder.ts";
 import { dbg } from "./debug.ts";
 
 type Model = Awaited<ReturnType<ModelRuntime["getAvailable"]>>[number];
@@ -128,7 +128,10 @@ export class Registry {
     this.loader = new DefaultResourceLoader({
       cwd: this.opts.root,
       agentDir: getAgentDir(),
-      systemPromptOverride: () => this.opts.systemPrompt,
+      // Append AGENTS.md instead of overriding the system prompt: pi only emits
+      // its "Available tools" list (which is where custom tools like ask_user
+      // surface) when the system prompt is not fully replaced.
+      appendSystemPromptOverride: (base) => [...base, this.opts.systemPrompt],
     });
     await this.loader.reload();
   }
@@ -142,23 +145,47 @@ export class Registry {
   }
 
   async new(): Promise<Sess> {
+    return this.build(`s_${randomBytes(8).toString("hex")}`);
+  }
+
+  // resume rebuilds a session that is no longer in memory from its log history.
+  // Only user/assistant text is persisted, so tool calls and thinking are not
+  // restored. Returns undefined when the id has no live session and no history.
+  async resume(id: string): Promise<Sess | undefined> {
+    const existing = this.sessions.get(id);
+    if (existing) return existing;
+    const history = await fetchMessages(this.opts.logBase, id);
+    if (!history.length) return undefined;
+    return this.build(id, history);
+  }
+
+  private async build(
+    id: string,
+    history: ConversationMessage[] = [],
+  ): Promise<Sess> {
     const sess: Sess = {
-      id: `s_${randomBytes(8).toString("hex")}`,
+      id,
       events: [],
       listeners: new Set(),
       tail: Promise.resolve(),
       turnText: "",
       turns: 0,
-      recordSeq: 0,
+      // Continue the recorder's per-session sequence after a resume.
+      recordSeq: history.reduce((max, m) => Math.max(max, m.seq), 0),
       sawSettled: false,
     };
     if (this.model) {
+      const sessionManager = SessionManager.inMemory(this.opts.root);
+      for (const m of history) {
+        const msg = this.toAgentMessage(m);
+        if (msg) sessionManager.appendMessage(msg);
+      }
       const { session } = await createAgentSession({
         cwd: this.opts.root,
         model: this.model,
         modelRuntime: this.modelRuntime,
         resourceLoader: this.loader,
-        sessionManager: SessionManager.inMemory(this.opts.root),
+        sessionManager,
         settingsManager: this.settings,
         // Capability surface: read/grep/find/ls + bash (execution, including
         // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
@@ -188,6 +215,38 @@ export class Registry {
     }
     this.sessions.set(sess.id, sess);
     return sess;
+  }
+
+  // toAgentMessage converts a recorded text message back into a pi AgentMessage
+  // so a resumed session carries the prior conversation as LLM context.
+  private toAgentMessage(m: ConversationMessage): any {
+    if (!m.content.trim()) return undefined;
+    const timestamp = Date.now();
+    if (m.msgKind === "assistant") {
+      const model = this.model as any;
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: m.content }],
+        api: model?.api ?? "openai-completions",
+        provider: model?.provider ?? "unknown",
+        model: model?.id ?? "unknown",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp,
+      };
+    }
+    return {
+      role: "user",
+      content: [{ type: "text", text: m.content }],
+      timestamp,
+    };
   }
 
   get(id: string): Sess | undefined {

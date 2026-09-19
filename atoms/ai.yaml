@@ -36,6 +36,13 @@ atoms:
           extend:
             path: /ai/delete
             method: POST
+        - id: ai-resume
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-resume.yaml
+          extend:
+            path: /ai/resume
+            method: POST
 
       consumes:
         - id: static-query
@@ -65,4 +72,11 @@ atoms:
           contract: ./contracts/log-query.yaml
           extend:
             path: /log/query
+            method: POST
+        - id: log-session-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-detail.yaml
+          extend:
+            path: /log/session-detail
             method: POST

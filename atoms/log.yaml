@@ -15,6 +15,20 @@ atoms:
           extend:
             path: /log/query
             method: POST
+        - id: log-session-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-detail.yaml
+          extend:
+            path: /log/session-detail
+            method: POST
+        - id: log-list
+          channel: network
+          protocol: http
+          contract: ./contracts/log-list.yaml
+          extend:
+            path: /log/list
+            method: POST
         - id: log-query-detail
           channel: network
           protocol: http

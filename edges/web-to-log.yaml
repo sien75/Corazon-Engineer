@@ -7,3 +7,19 @@ edges:
     channel: network
     protocol: http
     description: Web frontend queries log records (call / observe / conversation) for the records panel
+  - id: web-to-log-list
+    from: web
+    from_interface: log-list
+    to: log
+    to_interface: log-list
+    channel: network
+    protocol: http
+    description: Web frontend lists conversation sessions for the /resume picker
+  - id: web-to-log-session-detail
+    from: web
+    from_interface: log-session-detail
+    to: log
+    to_interface: log-session-detail
+    channel: network
+    protocol: http
+    description: Web frontend fetches a session's messages to render resumed history

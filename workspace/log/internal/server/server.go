@@ -22,6 +22,8 @@ type Server struct {
 
 func New(st *store.Store) *Server {
 	s := &Server{store: st, mux: http.NewServeMux(), broker: NewBroker()}
+	s.mux.HandleFunc("POST /log/list", s.handleList)
+	s.mux.HandleFunc("POST /log/session-detail", s.handleSessionDetail)
 	s.mux.HandleFunc("POST /log/query", s.handleQuery)
 	s.mux.HandleFunc("POST /log/query-detail", s.handleQueryDetail)
 	s.mux.HandleFunc("POST /log/search", s.handleSearch)
@@ -131,6 +133,28 @@ func (s *Server) handleMutation(w http.ResponseWriter, r *http.Request) {
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"id": rec.ID, "createdAt": rec.CreatedAt})
 }
 
+// ---------- log/list ----------
+
+func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PageNum interface{} `yaml:"pageNum"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	sessions, hasMore, err := s.store.ListSessions(pageNum(req.PageNum))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
+		"sessions": sessions,
+		"pageNum":  pageNum(req.PageNum),
+		"hasMore":  hasMore,
+		"pageSize": store.PageSize,
+	})
+}
+
 // ---------- log/query ----------
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
@@ -160,6 +184,30 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		"pageNum":  pageNum(req.PageNum),
 		"hasMore":  hasMore,
 		"pageSize": store.PageSize,
+	})
+}
+
+// ---------- log/session-detail ----------
+
+func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `yaml:"sessionId"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "sessionId missing")
+		return
+	}
+	messages, err := s.store.SessionMessages(req.SessionID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
+		"sessionId": req.SessionID,
+		"messages":  messages,
 	})
 }
 

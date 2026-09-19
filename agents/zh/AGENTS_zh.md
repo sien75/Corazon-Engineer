@@ -32,6 +32,8 @@ Corazon 是运行中的系统。它的内部能力都是普通 HTTP 接口;本�
 
 **log 服务 —— 记录**,线上格式 YAML:
 
+- `/log/list` — 会话列表(按 sessionId 聚合,最近活跃在前)
+- `/log/session-detail` — 某会话的消息正文
 - `/log/query` — 查记录(test / telemetry / conversation)
 - `/log/query-detail` — 单条记录详情
 - `/log/search` — 记录全文搜索

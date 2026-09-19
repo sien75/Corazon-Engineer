@@ -43,6 +43,27 @@ atoms:
           extend:
             path: /ai/stream
             method: POST
+        - id: ai-resume
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-resume.yaml
+          extend:
+            path: /ai/resume
+            method: POST
+        - id: log-list
+          channel: network
+          protocol: http
+          contract: ./contracts/log-list.yaml
+          extend:
+            path: /log/list
+            method: POST
+        - id: log-session-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-detail.yaml
+          extend:
+            path: /log/session-detail
+            method: POST
         - id: log-query
           channel: network
           protocol: http

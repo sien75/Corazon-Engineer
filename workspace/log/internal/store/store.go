@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -221,6 +222,115 @@ func (s *Store) Get(id string) (Record, error) {
 		return Record{}, err
 	}
 	return r, nil
+}
+
+// ListSessions returns one page (pageSize=100) of ai conversation sessions,
+// most recently active first, with message count and a preview of each
+// session's latest message.
+func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error) {
+	if pageNum < 1 {
+		pageNum = 1
+	}
+	rows, err := s.db.Query(`SELECT
+		r.session_id,
+		COUNT(*) AS msg_count,
+		MIN(r.created_at) AS first_at,
+		MAX(r.created_at) AS last_at,
+		COALESCE(
+			(SELECT r2.payload FROM records r2
+				WHERE r2.kind = 'conversation' AND r2.session_id = r.session_id
+					AND r2.payload LIKE '%msgKind: user%'
+				ORDER BY r2.rowid ASC LIMIT 1),
+			(SELECT r3.payload FROM records r3
+				WHERE r3.kind = 'conversation' AND r3.session_id = r.session_id
+				ORDER BY r3.rowid ASC LIMIT 1)
+		) AS preview_payload
+		FROM records r
+		WHERE r.kind = 'conversation' AND r.session_id IS NOT NULL AND r.session_id <> ''
+		GROUP BY r.session_id
+		ORDER BY last_at DESC, r.session_id DESC
+		LIMIT ? OFFSET ?`,
+		PageSize+1, (pageNum-1)*PageSize)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	sessions := []map[string]interface{}{}
+	for rows.Next() {
+		var sessionID, firstAt, lastAt string
+		var count int
+		var previewPayload sql.NullString
+		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &previewPayload); err != nil {
+			return nil, false, err
+		}
+		preview := ""
+		if previewPayload.Valid {
+			var p struct {
+				Content string `yaml:"content"`
+			}
+			if err := yaml.Unmarshal([]byte(previewPayload.String), &p); err == nil {
+				preview = snippet(p.Content, 120)
+			}
+		}
+		sessions = append(sessions, map[string]interface{}{
+			"sessionId": sessionID,
+			"createdAt": firstAt,
+			"lastAt":    lastAt,
+			"count":     count,
+			"preview":   preview,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(sessions) > PageSize
+	if hasMore {
+		sessions = sessions[:PageSize]
+	}
+	return sessions, hasMore, nil
+}
+
+func snippet(s string, max int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
+// SessionMessages returns a conversation session's messages in insertion order
+// (rowid), each carrying its per-session seq / role / content.
+func (s *Store) SessionMessages(sessionID string) ([]map[string]interface{}, error) {
+	rows, err := s.db.Query(`SELECT created_at, payload FROM records
+		WHERE kind = 'conversation' AND session_id = ?
+		ORDER BY rowid ASC`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	messages := []map[string]interface{}{}
+	for rows.Next() {
+		var createdAt, payloadText string
+		if err := rows.Scan(&createdAt, &payloadText); err != nil {
+			return nil, err
+		}
+		var p struct {
+			Seq     int    `yaml:"seq"`
+			MsgKind string `yaml:"msgKind"`
+			Content string `yaml:"content"`
+		}
+		if err := yaml.Unmarshal([]byte(payloadText), &p); err != nil {
+			continue
+		}
+		messages = append(messages, map[string]interface{}{
+			"seq":       p.Seq,
+			"msgKind":   p.MsgKind,
+			"content":   p.Content,
+			"createdAt": createdAt,
+		})
+	}
+	return messages, rows.Err()
 }
 
 // Search does a full-text-ish LIKE search across id/kind/summary/payload.

@@ -1,0 +1,23 @@
+id: ai-resume
+description: Resume an existing conversation session, rebuilding its text context from log records
+
+request:
+  body:
+    id: string  # session id
+
+response:
+  status: 200
+  body:
+    sessionId: string
+    lastSeq: number  # last pi event seq already emitted for this session; 0 when freshly rebuilt
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 404
+    code: not_found
+    description: session has no live session and no recorded history
+  - status: 500
+    code: internal
+    description: server error

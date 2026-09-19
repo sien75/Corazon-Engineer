@@ -73,6 +73,14 @@ export function serve(registry: Registry, addr: string): void {
           return yamlRes({ sessionId: sess.id });
         }
 
+        case "/ai/resume": {
+          const id = String(body.id ?? "");
+          if (!id) return errRes(400, "bad_request", "id missing");
+          const sess = await registry.resume(id);
+          if (!sess) return errRes(404, "not_found", "session not found");
+          return yamlRes({ sessionId: sess.id, lastSeq: sess.events.length });
+        }
+
         case "/ai/ask": {
           const prompt = String(body.prompt ?? "");
           if (!prompt.trim()) {

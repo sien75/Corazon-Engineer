@@ -1,0 +1,24 @@
+id: log-session-detail
+description: Fetch a conversation session's messages (full content), in chronological order
+
+request:
+  body:
+    sessionId: string  # conversation session id
+
+response:
+  status: 200
+  body:
+    sessionId: string
+    messages:
+      - seq: number  # per-session message sequence
+        msgKind: string  # message role, e.g. user | assistant
+        content: string  # full message text
+        createdAt: string  # record creation time, RFC3339
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 500
+    code: internal
+    description: server error

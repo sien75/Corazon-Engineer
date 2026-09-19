@@ -499,6 +499,7 @@ const aiMessagesEl = document.getElementById("ai-messages");
 const aiInputEl = document.getElementById("ai-input-field");
 const aiSendEl = document.getElementById("ai-send");
 const aiStopEl = document.getElementById("ai-stop");
+const aiCmdEl = document.getElementById("ai-cmd");
 let aiSession = null;
 let aiSeenSeq = 0;
 let aiStreaming = false;
@@ -584,6 +585,14 @@ function aiMarkdown() {
       render();
     },
   };
+}
+
+// aiStaticMarkdown renders a finished markdown message (history replay) in one shot.
+function aiStaticMarkdown(text) {
+  const m = aiMarkdown();
+  m.append(text);
+  m.flush();
+  return m.el;
 }
 
 function aiSetStreaming(v) {
@@ -916,6 +925,7 @@ async function aiStreamOnce() {
 async function aiSend() {
   const prompt = aiInputEl.value.trim();
   if (!prompt || !aiSession) return;
+  aiDrawerHide();
   aiInputEl.value = "";
   aiAppend("user", prompt);
   const res = await fetch(`${AI_BASE}/ai/ask`, {
@@ -948,6 +958,210 @@ async function aiAnswer(answer) {
   await aiStream();
 }
 
+// ---------- command system ----------
+
+// Commands are recommended as the user types after "/", matched by name or
+// description (case-insensitive; name prefix ranks first).
+const AI_COMMANDS = [
+  { name: "/new", description: "create a new session", run: aiCommandNew },
+  {
+    name: "/resume",
+    description: "list history sessions and resume from one",
+    run: aiCommandResume,
+  },
+];
+
+let aiDrawer = null; // { items, index, kind }
+
+function aiMatchCommands(value) {
+  const full = value.toLowerCase();
+  const bare = full.replace(/^\//, "");
+  return AI_COMMANDS.map((cmd) => {
+    const name = cmd.name.toLowerCase();
+    const words = cmd.description.toLowerCase().split(/\s+/);
+    let score = -1;
+    if (name.startsWith(full)) score = 0;
+    else if (name.includes(full)) score = 1;
+    // Description matches on word prefixes so "re" hits "resume", not "create".
+    else if (bare && words.some((w) => w.startsWith(bare))) score = 2;
+    return { cmd, score };
+  })
+    .filter((m) => m.score >= 0)
+    .sort((a, b) => a.score - b.score)
+    .map((m) => m.cmd);
+}
+
+function aiOneLine(s) {
+  return String(s || "").replace(/\s+/g, " ").trim();
+}
+
+function aiDrawerRender(items, kind) {
+  aiDrawer = { items, index: 0, kind };
+  aiCmdEl.innerHTML = "";
+  if (kind === "session") {
+    // The session picker replaces the input, so give it an explicit way back.
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "ai-cmd-back";
+    back.textContent = "← 返回对话";
+    back.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      aiCancelResume();
+    });
+    aiCmdEl.appendChild(back);
+  }
+  items.forEach((item, i) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "ai-cmd-item" + (i === 0 ? " active" : "");
+    const name = document.createElement("span");
+    name.className = "ai-cmd-name";
+    name.textContent = item.label;
+    const desc = document.createElement("span");
+    desc.className = "ai-cmd-desc";
+    desc.textContent = item.description || "";
+    row.appendChild(name);
+    row.appendChild(desc);
+    // mousedown (not click) so selecting does not blur the input first.
+    row.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      aiDrawerSelect(i);
+    });
+    aiCmdEl.appendChild(row);
+  });
+  aiCmdEl.hidden = false;
+  if (kind === "session") aiCmdEl.focus();
+}
+
+function aiDrawerHide() {
+  aiDrawer = null;
+  aiCmdEl.hidden = true;
+  aiCmdEl.innerHTML = "";
+}
+
+// aiCancelResume leaves the session picker and returns to the normal chat flow.
+function aiCancelResume() {
+  aiDrawerHide();
+  aiInputEl.disabled = false;
+  aiInputEl.focus();
+}
+
+function aiDrawerMove(delta) {
+  if (!aiDrawer) return;
+  const n = aiDrawer.items.length;
+  aiDrawer.index = (aiDrawer.index + delta + n) % n;
+  aiCmdEl.querySelectorAll(".ai-cmd-item").forEach((el, i) => {
+    el.classList.toggle("active", i === aiDrawer.index);
+    if (i === aiDrawer.index) el.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function aiDrawerSelect(index) {
+  if (!aiDrawer) return;
+  const item = aiDrawer.items[index];
+  if (!item) return;
+  aiDrawerHide();
+  aiInputEl.value = "";
+  item.run();
+}
+
+// aiSyncCommandDrawer opens/filters the command drawer while the first token
+// looks like a command (starts with "/" and has no whitespace yet).
+function aiSyncCommandDrawer() {
+  if (aiDrawer && aiDrawer.kind === "session") return;
+  const v = aiInputEl.value;
+  if (!v.startsWith("/") || /\s/.test(v)) {
+    aiDrawerHide();
+    return;
+  }
+  const items = aiMatchCommands(v).map((cmd) => ({
+    label: cmd.name,
+    description: cmd.description,
+    run: cmd.run,
+  }));
+  if (!items.length) {
+    aiDrawerHide();
+    return;
+  }
+  aiDrawerRender(items, "command");
+}
+
+async function aiCommandNew() {
+  aiMessagesEl.innerHTML = "";
+  try {
+    await aiNew();
+  } catch (err) {
+    aiAppend("assistant", `[error] ${err.message}`);
+  }
+  aiInputEl.focus();
+}
+
+async function aiCommandResume() {
+  // Input is disabled while the session picker is open; it is re-enabled once a
+  // session is resumed or the picker is dismissed.
+  aiInputEl.disabled = true;
+  try {
+    const res = await fetch(`${LOG_BASE}/log/list`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml.dump({ pageNum: 1 }),
+    });
+    const data = yaml.load(await res.text()) || {};
+    if (!res.ok) throw new Error(data.error?.message || res.status);
+    const sessions = data.sessions || [];
+    if (!sessions.length) {
+      aiAppend("assistant", "没有可恢复的历史会话。");
+      aiCancelResume();
+      return;
+    }
+    aiDrawerRender(
+      sessions.map((s) => ({
+        label: aiOneLine(s.preview).slice(0, 80) || s.sessionId,
+        description: `${s.count} 条 · ${s.lastAt}`,
+        run: () => aiResumeSession(s.sessionId),
+      })),
+      "session",
+    );
+  } catch (err) {
+    aiCancelResume();
+    aiAppend("assistant", `[error] ${err.message}`);
+  }
+}
+
+async function aiResumeSession(id) {
+  try {
+    const res = await fetch(`${AI_BASE}/ai/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml.dump({ id }),
+    });
+    const data = yaml.load(await res.text()) || {};
+    if (!res.ok) throw new Error(data.error?.message || res.status);
+    const detailRes = await fetch(`${LOG_BASE}/log/session-detail`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml.dump({ sessionId: id }),
+    });
+    const detail = yaml.load(await detailRes.text()) || {};
+    aiMessagesEl.innerHTML = "";
+    for (const m of detail.messages || []) {
+      if (!m.content) continue;
+      if (m.msgKind === "assistant") aiStaticMarkdown(m.content);
+      else aiAppend("user", m.content);
+    }
+    // Continue the same session; skip events the server already emitted so a
+    // resumed in-memory session does not replay old ones.
+    aiSession = id;
+    aiSeenSeq = Number(data.lastSeq) || 0;
+    aiScrollToBottom();
+  } catch (err) {
+    aiAppend("assistant", `[error] ${err.message}`);
+  } finally {
+    aiInputEl.disabled = false;
+    aiInputEl.focus();
+  }
+}
+
 aiToggleEl.addEventListener("click", async () => {
   const open = aiEl.hidden;
   aiEl.hidden = !open;
@@ -967,7 +1181,35 @@ aiToggleEl.addEventListener("click", async () => {
 
 aiSendEl.addEventListener("click", aiSend);
 aiStopEl.addEventListener("click", aiStop);
+aiInputEl.addEventListener("input", aiSyncCommandDrawer);
 aiInputEl.addEventListener("keydown", (event) => {
+  // While the command drawer is open it owns navigation / selection keys.
+  if (aiDrawer && aiDrawer.kind === "command") {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      aiDrawerMove(1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      aiDrawerMove(-1);
+      return;
+    }
+    if (event.key === "Enter" && !event.isComposing) {
+      event.preventDefault();
+      aiDrawerSelect(aiDrawer.index);
+      return;
+    }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const cmd = aiDrawer.items[aiDrawer.index];
+      if (cmd) {
+        aiInputEl.value = cmd.label;
+        aiDrawerHide();
+      }
+      return;
+    }
+  }
   if (event.key !== "Enter") return;
   if (event.isComposing || event.keyCode === 229) return; // IME 组词确认,不发送
   if (event.shiftKey) return; // Shift+Enter 换行
@@ -975,9 +1217,33 @@ aiInputEl.addEventListener("keydown", (event) => {
   aiSend();
 });
 
-// Esc stops the in-flight run, same as the stop button.
+// The session picker runs with the input disabled, so keyboard navigation lives
+// on the drawer element itself.
+aiCmdEl.addEventListener("keydown", (event) => {
+  if (!aiDrawer) return;
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    aiDrawerMove(1);
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    aiDrawerMove(-1);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    aiDrawerSelect(aiDrawer.index);
+  }
+});
+
+// Esc unwinds one layer at a time: first leave the drawer (session picker or
+// command list) back to the normal chat flow, then stop the in-flight run.
 window.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || !aiStreaming) return;
+  if (event.key !== "Escape") return;
+  if (aiDrawer) {
+    event.preventDefault();
+    if (aiDrawer.kind === "session") aiCancelResume();
+    else aiDrawerHide();
+    return;
+  }
+  if (!aiStreaming) return;
   event.preventDefault();
   aiStop();
 });
