@@ -1,16 +1,15 @@
 # prod deploy cookbook
 
-Package Corazon as a one-click tarball and deploy it on a fresh machine. No runtime dependencies on the target (no Go / Bun / Node) — the two Go services compile to static binaries, the ai service and the web server compile to self-contained Bun binaries. Docker is optional, not required: one-click comes from the generated `start.sh`, not from a container.
+Package Corazon as a one-click tarball and deploy it on a fresh machine. No runtime dependencies on the target (no Go / Bun / Node) — the three Go programs (`corazon` launcher, log, static) compile to static binaries, the ai service and the web server compile to self-contained Bun binaries. Docker is optional, not required: one-click comes from the `corazon` launcher, not from a container.
 
-What ships — the four binaries (built from `workspace/`) plus the published tool content (`agents/`, `docs/`). The package is the **tool**, not a project:
+What ships — the five binaries (built from `workspace/`) plus the published tool content (`agents/`, `docs/`). The package is the **tool**, not a project:
 
 ```
 corazon-<version>-<os>-<arch>/
-├── bin/          corazon-log  corazon-static  corazon-ai  corazon-web
+├── bin/          corazon  corazon-log  corazon-static  corazon-ai  corazon-web
 ├── web/          index.html  app.js  style.css  vendor/
 ├── agents/       the AI capability description shipped with the tool
 ├── docs/         published documentation
-├── start.sh      one-click start (log → static → ai → web), holds the foreground
 └── install.sh    install / upgrade (see the Install section)
 ```
 
@@ -21,8 +20,11 @@ The installed layout (under `~/.corazon/`) is software only — **upgrades only 
 ├── apps/
 │   ├── versions/corazon-<ver>-<os>-<arch>/   # unpacked software, one dir per version
 │   └── current -> versions/corazon-<ver>-... # flipped on upgrade
-└── bin/corazon    # the `corazon` command: start (default) / status / version / uninstall
+└── bin/corazon -> apps/current/bin/corazon   # the `corazon` command (symlink)
 ```
+
+The `bin/corazon` symlink is the whole command: a native Go launcher that serves
+`start` (default) / `status` / `version` / `uninstall [--purge]`.
 
 **Which project gets served**: `corazon` serves the directory it was invoked from — the current working directory **is** the project being processed, and it may be empty (the agent initializes it). All data lives in that directory's own `.corazon/`; the tool ships no project and keeps no project data. Logs and pids live in that project's `.corazon/logs/` and `.corazon/run/`, so two projects started from different directories never share processes or ports.
 
@@ -43,7 +45,10 @@ OS=$(go env GOOS); ARCH=$(go env GOARCH)   # override for cross-compile, e.g. OS
 OUT=dist/corazon-$VER-$OS-$ARCH
 mkdir -p "$OUT"/{bin,web}
 
-# 1. Go services — CGO off, fully static (log's sqlite driver is pure Go)
+# 1. Go programs — CGO off, fully static (log's sqlite driver is pure Go)
+#    launcher (the `corazon` command) first — one file, built straight from the
+#    runtime tree — then the two services
+CGO_ENABLED=0 go build -o "$OUT/bin/corazon" runtime/cookbooks/prod/launch.go
 (cd workspace/log    && CGO_ENABLED=0 go build -o "$OLDPWD/$OUT/bin/corazon-log" .)
 (cd workspace/static && CGO_ENABLED=0 go build -o "$OLDPWD/$OUT/bin/corazon-static" .)
 
@@ -62,24 +67,26 @@ for d in agents docs; do
   [ -d "$d" ] && cp -R "$d" "$OUT/"
 done
 
-# 5. runtime scripts — copied in as real files, never generated from this BOOK
-cp runtime/cookbooks/prod/launch.sh  "$OUT/start.sh"
+# 5. installer — copied in as a real file, never generated from this BOOK
 cp runtime/cookbooks/prod/install.sh "$OUT/install.sh"
-chmod +x "$OUT/start.sh" "$OUT/install.sh"
+chmod +x "$OUT/install.sh"
 ```
 
-Cross-compile: Go honors `GOOS`/`GOARCH`; Bun honors `--target` (e.g. `bun build --compile --target=bun-linux-x64 ...`). Build both parts for the same target platform.
+Cross-compile: Go honors `GOOS`/`GOARCH`; Bun honors `--target` (e.g. `bun build --compile --target=bun-linux-x64 ...`). Build every part for the same target platform.
 
-## start.sh / the `corazon` command
+## the `corazon` launcher
 
-`launch.sh` → `start.sh` is a real file under `runtime/cookbooks/prod/`, copied into `$OUT/` in the previous step — never regenerated from this booklet:
+`bin/corazon` is built from `runtime/cookbooks/prod/launch.go` (a single-file Go program, compiled at pack time) — a native binary, shipped as the package's entry point:
 
-- `start.sh`: picks free ports (defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free port on conflict), hands each address to the services (ai gets `--log` + `--static`, web gets `--static` / `--ai` / `--log`), starts log → static → ai → web as children, prints the chosen ports, then **holds the foreground**. Ctrl-C tears the whole stack down. There is **no port config file** and no stop script.
-- `install.sh`: install / upgrade (next section).
+- picks free ports (defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free port on conflict), hands each address to the services (ai gets `--log` + `--static`, web gets `--static` / `--ai` / `--log`), starts log → static → ai → web as children, prints the chosen ports, then **holds the foreground**. Ctrl-C tears the whole stack down. There is **no port config file** and no stop script.
+- also serves the `corazon` subcommands: `start` (default) / `status` / `version` / `uninstall [--purge]`.
+- native on purpose: the terminal's foreground process is named `corazon` (a shell script would show as `bash`/`zsh` there), so terminals that title tabs from the process name — VS Code, notably — show `corazon` with no configuration.
+
+`install.sh` is the other shipped script: install / upgrade (next section).
 
 ## install.sh
 
-`install.sh` (copied from `runtime/cookbooks/prod/`) is idempotent: first run = install, every later run = upgrade. It stops any running instance of the currently-installed version, swaps in the new software, and flips `current`. It only touches `~/.corazon/apps/` and `~/.corazon/bin/`, and writes the `corazon` shim (bare `corazon` / `start` / `status` / `version` / `uninstall [--purge]`).
+`install.sh` (copied from `runtime/cookbooks/prod/`) is idempotent: first run = install, every later run = upgrade. It stops any running instance of the currently-installed version, swaps in the new software, and flips `current`. It only touches `~/.corazon/apps/` and `~/.corazon/bin/`, and points the `corazon` command (`~/.corazon/bin/corazon`) at `apps/current/bin/corazon` — so an upgrade is just the `current` flip.
 
 ```bash
 # runtime state (logs/, run/) is created when the package is run — never ship it
@@ -101,13 +108,13 @@ corazon version     # which version is current
 - **Upgrade** replaces only `~/.corazon/apps/` (new version dir + `current` flip). Project data is never touched — the project being processed keeps its own `.corazon/` in place. Old version dirs stay until you delete them manually (`rm -rf ~/.corazon/apps/versions/<old>`).
 - **Uninstall**: `corazon uninstall` removes the software and the command; `corazon uninstall --purge` removes all of `~/.corazon/`. Project `.corazon/` directories always stay with their projects — uninstalling never deletes project data.
 - LLM provider key: read from pi's own config (env vars or `~/.pi/agent/auth.json`). External tools keep their own credentials under their own `~/.xxx` locations.
-- The tarball still works portable-style too: unpack anywhere and `./start.sh` directly, no install.
+- The tarball still works portable-style too: unpack anywhere and `./bin/corazon` directly, no install.
 
-Ports: `start.sh` chooses them itself — defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free port when a default is taken — and prints the result. There is no config file; the chosen addresses are handed to each service (`--addr` for log/static/ai, positional for web; ai also gets `--log`/`--static`, web gets `--static`/`--ai`/`--log`) and to the frontend via `/config.js`. ai additionally has `--model <provider/model>`.
+Ports: the launcher chooses them itself — defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free port when a default is taken — and prints the result. There is no config file; the chosen addresses are handed to each service (`--addr` for log/static/ai, positional for web; ai also gets `--log`/`--static`, web gets `--static`/`--ai`/`--log`) and to the frontend via `/config.js`. ai additionally has `--model <provider/model>`.
 
 ## Verify
 
-`start.sh` prints the chosen addresses. Query static on the printed static port:
+The launcher prints the chosen addresses. Query static on the printed static port:
 
 ```bash
 curl -s -X POST http://localhost:<static port>/static/query -d '{}'
@@ -117,6 +124,6 @@ A YAML response listing atoms / edges / runtime entries means the stack is up; b
 
 ## Notes
 
-- **Why not Docker**: not needed for one-click — the tarball has zero runtime dependencies and `start.sh` is the single entry point. If you want container isolation anyway, build one all-in-one image: `COPY` the unpacked tarball, `CMD ["./start.sh"]` — `start.sh` already holds the foreground, so the container stays up until stopped.
-- **If `bun build --compile` misbehaves for ai** (the pi SDK is the most dynamic dependency): fall back to installing Bun on the target, ship `workspace/ai/` (src + package.json + bun.lock, then `bun install --production`), and change the ai line in start.sh to `bun run ai/src/main.ts --root "$ROOT"`.
+- **Why not Docker**: not needed for one-click — the tarball has zero runtime dependencies and `bin/corazon` is the single entry point. If you want container isolation anyway, build one all-in-one image: `COPY` the unpacked tarball, `CMD ["./bin/corazon"]` — the launcher already holds the foreground, so the container stays up until stopped.
+- **If `bun build --compile` misbehaves for ai** (the pi SDK is the most dynamic dependency): fall back to installing Bun on the target, ship `workspace/ai/` (src + package.json + bun.lock, then `bun install --production`), and change the ai spec in `runtime/cookbooks/prod/launch.go` to `bun run ai/src/main.ts --root <project>` (rebuild `bin/corazon`).
 - **Where the data lives**: everything mutable (the log service's sqlite db, plus per-project `run/` pids and `logs/`) goes under `<cwd project>/.corazon/` — the project being processed; back it up with the project.
