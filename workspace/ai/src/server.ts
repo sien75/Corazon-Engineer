@@ -84,6 +84,28 @@ export function serve(registry: Registry, addr: string): void {
           return yamlRes({ sessionId: sess.id });
         }
 
+        case "/ai/answer": {
+          const answer = String(body.answer ?? "");
+          if (!answer.trim()) {
+            return errRes(400, "bad_request", "answer missing or empty");
+          }
+          const sess = registry.get(String(body.id ?? ""));
+          if (!sess) return errRes(404, "not_found", "session not found");
+          registry.answer(sess, answer);
+          return yamlRes({ sessionId: sess.id });
+        }
+
+        case "/ai/stop": {
+          const sess = registry.get(String(body.id ?? ""));
+          if (!sess) return errRes(404, "not_found", "session not found");
+          try {
+            await registry.stop(sess);
+          } catch (err) {
+            return errRes(500, "ai_error", String(err));
+          }
+          return yamlRes({ sessionId: sess.id });
+        }
+
         case "/ai/stream": {
           const sess = registry.get(String(body.id ?? ""));
           if (!sess) return errRes(404, "not_found", "session not found");
@@ -92,15 +114,22 @@ export function serve(registry: Registry, addr: string): void {
             start(controller) {
               listener = (ev) => {
                 controller.enqueue(encodeSSE(ev));
-                if (ev.done) {
+                // agent_settled is pi's real end-of-run marker; close the SSE
+                // stream on it. agent_end is unreliable (fires on retries).
+                if (ev.type === "agent_settled") {
                   registry.unsubscribe(sess, listener!);
                   controller.close();
                 }
               };
-              // Replay the whole backlog without closing on a done event: a
-              // done in the backlog belongs to an earlier turn.
-              for (const ev of registry.subscribe(sess, listener)) {
-                controller.enqueue(encodeSSE(ev));
+              const backlog = registry.subscribe(sess, listener);
+              for (const ev of backlog) controller.enqueue(encodeSSE(ev));
+              // If the run already finished before we subscribed, its terminal
+              // sits in the backlog: close now instead of waiting for a live
+              // event that will never come.
+              const last = backlog[backlog.length - 1];
+              if (last && last.type === "agent_settled") {
+                registry.unsubscribe(sess, listener);
+                controller.close();
               }
             },
             cancel() {

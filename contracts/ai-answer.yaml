@@ -1,0 +1,23 @@
+id: ai-answer
+description: Answer a pending ask_user question; the answer is injected as a user text turn
+
+request:
+  body:
+    id: string  # session id
+    answer: string  # the chosen value or free-form text
+
+response:
+  status: 200
+  body:
+    sessionId: string  # same session, used to pull stream
+
+errors:
+  - status: 400
+    code: bad_request
+    description: answer missing or empty
+  - status: 404
+    code: not_found
+    description: session not found
+  - status: 500
+    code: internal
+    description: server error

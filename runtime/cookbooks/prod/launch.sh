@@ -14,6 +14,8 @@
 # advances to the next free port. The chosen ports are handed to each service
 # as arguments and printed, so there is no port config file to maintain.
 set -e
+# name the terminal/window/tab "corazon" instead of the shell's process name
+if [ -t 1 ]; then printf '\033]0;corazon\007'; fi
 ROOT="$PWD"
 cd "$(dirname "$0")"
 PKG="$PWD"   # absolute install dir (binaries live in $PKG/bin)

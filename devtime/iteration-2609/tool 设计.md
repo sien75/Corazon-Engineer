@@ -7,11 +7,12 @@
 | 1 | pi 内置 | `read` `grep` `find` `ls` | 全权限保留（只读） |
 | 2 | pi 内置 | `bash` | 全权限保留（执行原语，HTTP 也走它） |
 | 3 | pi 内置 | `write` `edit` | 暂保留全权限，未来考虑限制范围 |
-| 4 | 外部 | Browser / Computer Use / 云厂商 / 云服务 CLI | 先安装并启用，经 `bash` 调用 |
+| 4 | pi 自定义 | `ask_user` | 交互（只提问，无副作用） |
+| 5 | 外部 | Browser / Computer Use / 云厂商 / 云服务 CLI | 先安装并启用，经 `bash` 调用 |
 
 - 不再有自定义 `http` / `cli` 工具：`bash` 已覆盖 HTTP 调用和外部程序执行。
 - 层 3 未来限制时，在 `beforeToolCall` 里对 `path` 做根目录前缀校验即可（不处理软链接）。
-- pi 配置相应改为：允许列表 `["read","grep","find","ls","bash","write","edit"]`，`customTools` 清空。
+- pi 配置相应改为：允许列表 `["read","grep","find","ls","bash","write","edit"]`；`customTools` **只注册一个 `ask_user`**（见下节）。
 
 ## 自定义工具：先安装启用，再调用
 
@@ -48,6 +49,27 @@
 - AI 只负责：检测是否已配置、未配置时暂停并提示用户手动完成、以及后续经 `bash` 调用已鉴权的工具。
 - 凭据由各工具自己存储（如 `~/.aws/credentials`、`~/.aliyun/config.json`、浏览器 profile 等），Corazon 不另设统一凭据目录，AI 也不读取。
 - 典型手动步骤：`aws configure`、`aliyun configure`、数据库连接串/密码、`agent-browser` 的登录态、Ego 首次 onboarding。
+
+## 内置自定义工具：ask_user
+
+定位：Corazon 唯一自己注册的工具（pi `customTools`），让 AI 在运行中向用户提问。除此之外不新增自定义工具。
+
+- 输入：
+  ```ts
+  {
+    text: string;                                   // 问题
+    options?: { label: string; value: string }[];   // 选项；缺省则自由文本
+  }
+  ```
+- 输出（toolResult）：工具**不阻塞**，调用后立即返回并结束本轮 run（`terminate`）。
+- 机制：
+  1. AI 调 `ask_user` → web 收到 `tool_execution_start { toolName: "ask_user", args }` → 渲染选择题。
+  2. 本轮 run 结束（`agent_settled`），问题留在界面上等用户。
+  3. 用户选择 → **单独接口**接收 → 后端把选择**以文本形式作为一条用户消息插入 pi 对话**（等同于用户提问），开启新一轮 run。
+- 接口：新增**独立接口**（不复用 `/ai/ask`）。收到的选择文本直接注入 pi 的对话，后续由 pi 按正常 user turn 处理。
+- 为什么必须单独接口：`ask_user` 后面要承接**权限管控**，需要在这条链路上放独立代码逻辑（校验 / 审批等），不能挂在通用 `ask` 上。
+- 取消：session 被删除时清掉待答问题即可，不悬挂 loop（工具本身不阻塞）。
+- 前端渲染：`toolName === "ask_user"` 时按选择题渲染（见 `pi 事件前端渲染.md`），不当作普通工具卡片。
 
 ## 内置推荐列表（md）
 
@@ -123,9 +145,9 @@
 ## 与现有实现的关系
 
 - 旧的「按程序即时授权」权限系统已整体移除：不再有 `beforeToolCall` 审批、`/ai/approval` 接口、web 审批卡，也不再写项目内 `.corazon/ai-approved-cli.json`。当前所有工具调用直接放行。
-- 落地时改为：`tools: ["read", "grep", "find", "ls", "bash", "write", "edit"]`，去掉自定义 `http` / `cli`。
+- 落地时改为：`tools: ["read", "grep", "find", "ls", "bash", "write", "edit"]`，去掉自定义 `http` / `cli`；`customTools` 增补 `ask_user`。
 - 外部工具一律经 `bash` 执行，不再有 argv 白名单式 `cli`，也不落工具清单/授权文件。
 
 ## 待确认
 
-无。
+- 无。`ask_user` 答案回传已落地为独立接口 `ai-answer`（`contracts/ai-answer.yaml`），接口内把选择作为 user 文本注入 pi；`ai-ask` 不复用。

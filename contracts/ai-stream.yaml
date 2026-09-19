@@ -1,5 +1,5 @@
 id: ai-stream
-description: Stream AI output; frontend renders by kind marker
+description: Stream AI output as native pi events; the frontend renders the subset it needs
 
 request:
   body:
@@ -7,18 +7,33 @@ request:
 
 response:
   status: 200
-  stream: sse  # body below is the schema of each event
+  stream: sse  # each event is a YAML doc; body below is the envelope schema
   body:
-    seq: number  # message sequence
-    kind: markdown | question | error  # render marker
-    markdown?: string  # when kind=markdown
-    question?:  # when kind=question: let user choose
-      text: string  # question text
-      options:
-        - label: string
-          value: string  # sent back to ai-ask as prompt when selected
-    done?: boolean  # last event of the stream
-    error?: { code, message }  # when kind=error
+    seq: number  # monotonically increasing per session
+    type: string  # native pi event type, or "error" for non-pi service errors
+    # All other fields are passed through from the pi event unmodified.
+    #
+    # pi event examples:
+    #   type: message_update            # carries the nested assistant message event
+    #     assistantMessageEvent:
+    #       type: text_delta | thinking_delta | text_start | text_end
+    #             | thinking_start | thinking_end
+    #             | toolcall_start | toolcall_delta | toolcall_end
+    #             | start | done | error
+    #   type: tool_execution_start      # { toolCallId, toolName, args }
+    #   type: tool_execution_update     # { toolCallId, toolName, args, partialResult }
+    #   type: tool_execution_end        # { toolCallId, toolName, result, isError }
+    #   type: agent_start | agent_settled | turn_start | turn_end
+    #         | message_start | message_end | ...
+    #
+    # error event (non-pi), reuses pi's assistant-error shape:
+    #   type: error
+    #   reason: error | aborted
+    #   error: { code, message }
+    reason?: error | aborted  # when type=error
+    error?:  # when type=error
+      code: string
+      message: string
 
 errors:
   - status: 400

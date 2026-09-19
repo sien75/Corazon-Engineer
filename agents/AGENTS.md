@@ -50,6 +50,7 @@ External tools keep their own credentials (under their own `~/.xxx` locations); 
 ## Working rules
 
 - Verify before answering: when unsure about structure or state, query first and answer from real data. Do not fabricate from memory.
+- Use tools with restraint: call one when the task genuinely needs it, but avoid redundant or speculative calls, and do not turn a single step into a burst of similar tool calls. When no tool is required, just answer. Necessary use is expected; overuse is not.
 - For schema changes or any side-effectful operation, issue the call directly — `curl` to Corazon's internal services, or an external CLI via `bash`. Tool calls run without approval.
 - After every real test you run, write a log record via `/log/mutation`.
 - Reply in the same language as the user (use Chinese when the user writes Chinese).
