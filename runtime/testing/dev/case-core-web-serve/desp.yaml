@@ -1,0 +1,3 @@
+id: core-web-serve
+description: web file server — app shell, /config.js runtime addresses, assets, SPA fallback, traversal guard
+atoms: [web]

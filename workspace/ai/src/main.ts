@@ -1,11 +1,12 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { Registry } from "./registry.ts";
 import { serve } from "./server.ts";
 
 // usage: bun run src/main.ts [--addr :7501] [--root <project dir>]
 //        [--log http://localhost:7503] [--static http://localhost:7502]
-//        [--model provider/model-id]
+//        [--agents <AGENTS.md>] [--model provider/model-id]
 
 function parseFlags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -40,19 +41,23 @@ const addr = flags.addr || ":7501";
 const logBase = flags.log || "http://localhost:7503";
 const staticBase = flags.static || "http://localhost:7502";
 
-// TODO: the system prompt belongs to the Corazon tool itself (the agents/
-// shipped with the tool), not to the project being processed; where the tool
-// resolves it from is still to be decided. For now, read it from the project
-// root.
-function loadSystemPrompt(root: string): string {
-  const primary = path.join(root, "agents", "AGENTS.md");
-  try {
-    return readFileSync(primary, "utf8");
-  } catch {
-    console.error(`agents/AGENTS.md not found under project root ${root}`);
+// The system prompt is the tool's own spec — how the agent behaves (verbs). A
+// project's agents/ files describe that project (nouns); they are never read
+// here. Default: the installed tool's copy. Launchers pass --agents explicitly
+// instead, so the packaged case works from wherever the package sits and dev
+// runs from the checkout.
+function resolveAgentsFile(explicit?: string): string {
+  const file = explicit
+    ? path.resolve(explicit)
+    : path.join(homedir(), ".corazon", "apps", "current", "agents", "AGENTS.md");
+  if (!existsSync(file)) {
+    console.error(`corazon ai: agents/AGENTS.md not found at ${file}`);
     process.exit(1);
   }
+  return file;
 }
+
+const agentsFile = resolveAgentsFile(flags.agents);
 // The launcher owns port selection and passes the actual addresses down; append
 // them so the model always calls the services on this run's ports rather than
 // any address hard-coded in the prose.
@@ -62,7 +67,7 @@ const runtimeEndpoints =
   `- static (schema): ${staticBase}\n` +
   `- log (records): ${logBase}\n` +
   `- ai (this service): http://localhost${addr}\n`;
-const systemPrompt = loadSystemPrompt(root) + runtimeEndpoints;
+const systemPrompt = readFileSync(agentsFile, "utf8") + runtimeEndpoints;
 
 const registry = new Registry({
   root,
@@ -80,4 +85,5 @@ if (registry.stub) {
   console.log(`corazon ai: model=${registry.modelInfo}`);
 }
 console.log(`corazon ai: log=${logBase}`);
+console.log(`corazon ai: spec=${agentsFile}`);
 serve(registry, addr);

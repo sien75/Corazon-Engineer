@@ -6,7 +6,7 @@ AI session flow: new → ask → stream → delete.
 
 ```bash
 # ai service is stateless; start it directly (no project root needed)
-cd workspace/ai && bun install && bun run src/main.ts --addr :7501 &
+cd workspace/ai && bun install && bun run src/main.ts --addr :7501 --agents ../../agents/AGENTS.md &
 ```
 
 ## 1. ai-new creates a session

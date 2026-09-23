@@ -86,6 +86,7 @@ func launch() {
 			args: []string{"serve-static", "--root", root, "--addr", addr("static")}},
 		{name: "ai", bin: filepath.Join(binDir, "corazon-ai"),
 			args: []string{"--root", root, "--addr", addr("ai"),
+				"--agents", filepath.Join(pkg, "agents", "AGENTS.md"),
 				"--log", base + addr("log"), "--static", base + addr("static")}},
 		{name: "web", bin: filepath.Join(binDir, "corazon-web"),
 			args: []string{strconv.Itoa(ports["web"]), "--root", filepath.Join(pkg, "web"),
@@ -268,6 +269,17 @@ func portFree(p int) bool {
 		return false
 	}
 	_ = l.Close()
+
+	// The bind test alone is not enough. A listener that set SO_REUSEPORT —
+	// Bun's servers do — still lets a second bind to the same port succeed on
+	// macOS, so this probe would call an occupied port free; the launcher then
+	// prints an address whose traffic goes to the other process. Ask the port
+	// directly as well: if anything answers, it is taken.
+	c, err := net.DialTimeout("tcp", "localhost:"+strconv.Itoa(p), 300*time.Millisecond)
+	if err == nil {
+		_ = c.Close()
+		return false
+	}
 	return true
 }
 

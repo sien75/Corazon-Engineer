@@ -21,17 +21,17 @@ BIN="$D/bin"
 mkdir -p "$BIN"
 
 # --- reclaim our own previous instance ------------------------------------
-# A leftover run still holds our default ports. Stop what belongs to THIS
-# project first (recorded pids, then any stray process started with --root
-# pointing here), so we reuse our own ports; only a foreign occupant should
-# push us to the next port.
+# A leftover run still holds our default ports. Stop what THIS launcher started
+# (recorded pids, then strays started from our own bin dir) — matching just
+# "root $ROOT" would also kill a prod instance of the same project, which uses
+# its own ports (750x) and has every right to keep running.
 for s in web ai static log; do
   if [ -f "$D/$s.pid" ]; then
     kill "$(cat "$D/$s.pid")" 2>/dev/null || true
     rm -f "$D/$s.pid"
   fi
 done
-pkill -f "root $ROOT" 2>/dev/null || true
+pkill -f "$BIN/corazon-" 2>/dev/null || true
 sleep 1
 
 # --- port selection -------------------------------------------------------
@@ -68,6 +68,7 @@ BASE=http://localhost
 # --- build ----------------------------------------------------------------
 ( cd "$ROOT/workspace/log"    && go build -o "$BIN/corazon-log" . )
 ( cd "$ROOT/workspace/static" && go build -o "$BIN/corazon-static" . )
+( cd "$ROOT/workspace/web/server" && go build -o "$BIN/corazon-web" . )
 
 # --- start (order: log → static → ai → web) -------------------------------
 nohup "$BIN/corazon-log" serve-log --root "$ROOT" --addr ":$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
@@ -77,11 +78,12 @@ echo $! >"$D/static.pid"
 # exec so the recorded pid IS the server process (not a wrapper that outlives kill)
 ( cd "$ROOT/workspace/ai" && exec nohup bun src/main.ts \
     --root "$ROOT" --addr ":$PORT_AI" \
+    --agents "$ROOT/agents/AGENTS.md" \
     --log "$BASE:$PORT_LOG" --static "$BASE:$PORT_STATIC" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
-( cd "$ROOT/workspace/web" && exec nohup node serve.js "$PORT_WEB" \
+nohup "$BIN/corazon-web" "$PORT_WEB" \
     --root "$ROOT/workspace/web" \
-    --static "$BASE:$PORT_STATIC" --ai "$BASE:$PORT_AI" --log "$BASE:$PORT_LOG" >"$D/web.log" 2>&1 </dev/null ) &
+    --static "$BASE:$PORT_STATIC" --ai "$BASE:$PORT_AI" --log "$BASE:$PORT_LOG" >"$D/web.log" 2>&1 </dev/null &
 echo $! >"$D/web.pid"
 
 echo "corazon dev up — project: $ROOT"
