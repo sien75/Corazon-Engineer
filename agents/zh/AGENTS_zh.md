@@ -52,7 +52,7 @@ Corazon 是运行中的系统。它的 schema 是普通文件树,其它内部能
 
 `devtime/` 和 `runtime/` 是同一条工作流的划分:先把需求变成系统,再验证并操作它。
 
-- `devtime/`(**不发布**)—— 把需求变成可运行系统:`architecture/`(设计)、`coding/`(代码 + 单元测试)、`deploy/`(构建 / 打包 / 启动 / 部署)。
+- `devtime/`(**不发布**)—— 把需求变成可运行系统:`development/`(需求 / 设计记录,按迭代)、`deploy/`(构建 / 打包 / 启动 / 部署)。
 - `runtime/`(**发布**)—— 验证运行中的系统并与资源交互:`testing/`(从用户视角的 E2E 测试)、`operation/`(连接 / 观测数据库、缓存、日志、服务实例)。
 
 所以:要开发一个 Corazon-like 项目,先读 `devtime/README.md` —— 它说明了开发方式。要测 / 连 / 操作项目的环境,先读 `runtime/README.md` —— 它说明了运行方式。
@@ -67,7 +67,7 @@ Corazon 是运行中的系统。它的 schema 是普通文件树,其它内部能
 - `runtime/` — 运行中的系统:`testing/`(E2E 测试)+ `operation/`(连接 / 观测资源);一个普通文件树;`runtime/README.md` 是它的概述。
 - `docs/` — 对外文档。必须说明 `workspace/` 打包产物如何使用,包括相关契约的对外视图 —— 使用方不应需要内部源码才能用产物。
 - `agents/` — 本 AI 能力描述,以及 schema、contract、enum 参考。
-- `devtime/` — 开发时资料(不发布):`architecture/` + `coding/` + `deploy/`;一个普通文件树;`devtime/README.md` 是它的概述。
+- `devtime/` — 开发时资料(不发布):`development/`(需求 / 设计记录,按迭代)+ `deploy/`(按环境的构建 / 启动);一个普通文件树;`devtime/README.md` 是它的概述。
 - `notes/` — 自由笔记。
 - `.corazon/` — 项目的本地私有数据(数据库、运行数据、日志),不进 git,绝不提交。
 

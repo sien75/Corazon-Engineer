@@ -1,62 +1,40 @@
 # AGENTS.md — Corazon Engineer
 
-This repository is **Corazon Engineer** itself. This file tells an AI agent how to **develop this repository**.
+**Corazon Engineer** is Corazon — an engineering agent above the coding agent. Developing this project with Corazon is dogfooding.
 
-> The AI capability spec that ships with the tool is `agents/AGENTS.md` (Chinese mirror in `agents/zh/`) — a different audience: it describes how to *use* Corazon and how to develop a Corazon-like project.
+> The spec shipped with the tool is `agents/AGENTS.md` (Chinese in `agents/zh/`): how to use Corazon Engineer to develop a Corazon-like project.
 
 ## Development workflow (SOP)
 
-Every task must go through the four phases below, in order. No phase may be skipped.
+Every task falls into one of three types; follow its phases in order, none skipped.
 
-### Phase 1 — Clarify requirements
+General rules:
 
-Always talk to the user first; never write code from assumptions.
+- Clarify first: never code from assumptions — confirm goal, scope, and acceptance criteria (and what is **out of scope**) before acting. Below 80% confidence, keep asking.
+- Keep changes minimal and limited to the current phase; no drive-by refactors.
+- Test each step immediately. If the same failure repeats **3 times in a row**, stop and report the error, what you tried, and the suspected blocker, with alternatives.
 
-- Read the relevant schema / code to build context first, then talk to the user.
-- Keep asking until goal, scope, and acceptance criteria are unambiguous.
-- Confirm what is explicitly **out of scope**.
-- Summarize the confirmed requirements to the user before starting. If confidence is below 80%, keep asking — do not guess.
+### Type 1 — Requirement development
 
-**Done when:** the user confirms the requirements summary.
+**Phase 1 — Design.** Scope: `devtime/development/` and `notes/`. Turn the requirement into design records.
 
-### Phase 2 — Develop & test (iterate)
+**Phase 2 — Contracts, tests, code.** Scope: `contracts/`, `atoms/` `edges/`, `runtime/testing/`, `workspace/` (and `agents/` if the change involves it). Order matters: define the **contracts** first, then the static relations (`atoms/` `edges/`), then the tests (`runtime/testing/`), and only then develop the code (`workspace/`).
 
-Develop in small steps and verify each step immediately. Development and testing are one loop, not two ordered steps.
+**Phase 3 — Build, run, test.** Repack and launch per `devtime/deploy/dev/BOOK.md`, then run the test cases. Pass → continue; fail → return to Phase 2 with the error.
 
-1. Make the smallest meaningful change.
-2. Run / test it immediately (unit test, manual run, or schema query — whichever fits).
-3. On failure, read the error, fix, and retest until it passes.
-4. If the same failure occurs **3 times in a row**, stop immediately. Do not blind-retry a 4th time — report the error, what you already tried, and the suspected blocker, with alternative ideas.
-5. Keep changes minimal: no drive-by refactors, nothing beyond the requirement.
+**Phase 4 — Human review & commit.** Stop and wait for human review. Rejected → return to Phase 2. Approved → `git add` & `git commit` (do **not** push).
 
-**Done when:** the relevant tests / checks pass and the change matches the confirmed requirements.
+### Type 2 — Build & release
 
-### Phase 3 — Human review gate (mandatory)
+**Phase 1 — Follow the book.** Read `devtime/deploy/prod/BOOK.md` and act on its instructions to pack and release. (Currently packing only — just follow the BOOK.)
 
-This is a hard gate. The AI must stop here and wait for explicit human approval.
+### Type 3 — Change how-to files
 
-- Summarize the change (what changed + test result); do not write an essay.
-- Point the user to the content area to inspect the actual change (diff / changed files).
-- Do not enter the deploy phase before explicit approval.
-- If the user asks for changes, go back to Phase 2 with the feedback.
-
-**Done when:** the human explicitly approves (e.g. "LGTM", "okay", "ship it").
-
-### Phase 4 — Deploy
-
-For Corazon, deploying means **pushing code** (commit + push to the repo).
-
-- Only after Phase 3 approval.
-- Use a concise commit message, then push.
-- Report the result (commit hash / what was pushed).
-- If push fails, report the error — no force-push or history rewriting without explicit permission.
-
-**Done when:** the code is pushed and the user has been told.
+**Phase 1 — Edit as instructed.** Modify the files the user points to. If both an English file and its `_zh` mirror exist, update both. `devtime/development/` is always Chinese; elsewhere English takes priority. Scope includes `devtime/deploy/`, `runtime/operation/`, `devtime/README.md`, `runtime/README.md`, `AGENTS.md`, `corazon.yaml`, and similar.
 
 ## Repository layout
 
-- `devtime/` — development-time material (not shipped): `architecture/` (requirements & design, iteration records), `coding/` (code + unit tests), `deploy/` (build / pack / launch / deploy).
-- `runtime/` — running-system material (shipped): `testing/` (E2E tests), `operation/` (connect to / observe resources).
-- `agents/` — the AI capability spec shipped with the tool (`agents/AGENTS.md`, Chinese in `agents/zh/`), plus the schema / contract / enum reference.
+- `devtime/` — development-time, not shipped: `development/` (requirements & design records, per iteration), `deploy/` (build / pack / launch / deploy, per environment).
+- `runtime/` — running-system, shipped: `testing/` (E2E tests), `operation/` (connect to / observe resources).
+- `agents/` — shipped AI capability spec (`agents/AGENTS.md`, Chinese in `agents/zh/`) plus schema / contract / enum reference.
 - `atoms/` `edges/` `contracts/` `docs/` `notes/` `workspace/` — this project's schema and code.
-</content>

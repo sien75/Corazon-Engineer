@@ -14,7 +14,7 @@ What it is — define the system structure
 └── Notes           notes/       internal annotations    — prose
 
 How to do it — development & operation
-├── Devtime         devtime/     how to develop (architecture + coding + deploy) — prose
+├── Devtime         devtime/     how to develop (development + deploy) — prose
 └── Runtime         runtime/     how to test & operate (testing + operation)      — prose
 ```
 
@@ -59,8 +59,7 @@ project/
 ├── notes/                     # *.md → internal annotation (marker + thread, anchored to entity)
 ├── devtime/                   # plain file tree: dev-time material (layout defined by devtime/README.md)
 │   ├── README.md              # the devtime tree's own conventions — read first
-│   ├── architecture/          # requirements / design before coding
-│   ├── coding/                # code changes + unit tests
+│   ├── development/           # requirements / design before coding (per iteration)
 │   └── deploy/                # build / pack / launch / deploy
 └── runtime/                   # plain file tree: testing + operation (layout defined by runtime/README.md)
     ├── README.md              # the runtime tree's own conventions — read first
@@ -192,10 +191,9 @@ Internal markers and discussions targeting an entity, under `notes/`. Plain mark
 
 ## Devtime Files — Dev-Time Material
 
-Everything that turns a requirement into a runnable system, under `devtime/`. A plain file tree (like `runtime/`); its layout is defined by `devtime/README.md`. Three modules:
+Everything that turns a requirement into a runnable system, under `devtime/`. A plain file tree (like `runtime/`); its layout is defined by `devtime/README.md`. Two modules:
 
-- **`architecture/`** — requirements analysis, architecture design, and design work before coding (meetings, ADRs, iteration records).
-- **`coding/`** — writing / changing code and its unit tests.
+- **`development/`** — requirements analysis, architecture design, and design work before coding (meetings, ADRs, iteration records, one dir per iteration number).
 - **`deploy/`** — build, pack, launch, and deploy a project, per environment; ensures the project starts, but does not verify business behavior.
 
 Mostly plain markdown, no format convention; it may also contain script files (e.g. deploy scripts). Read the README and follow the project's stated conventions.

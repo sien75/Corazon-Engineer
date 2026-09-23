@@ -5,7 +5,7 @@
 #   devtime/deploy/dev/launch.sh
 # Stop with devtime/deploy/dev/stop.sh
 #
-# Ports have defaults (7500 web / 7501 ai / 7502 static / 7503 log); if a
+# Ports have defaults (8500 web / 8501 ai / 8502 static / 8503 log); if a
 # default is already in use the launcher advances to the next free port. The
 # chosen ports are handed to each service as arguments and printed at the end,
 # so there is no port config file to keep in sync.
@@ -59,10 +59,10 @@ pick_port() {
     p=$((p + 1))
   done
 }
-PORT_WEB=$(pick_port 7500)
-PORT_AI=$(pick_port 7501 "$PORT_WEB")
-PORT_STATIC=$(pick_port 7502 "$PORT_WEB" "$PORT_AI")
-PORT_LOG=$(pick_port 7503 "$PORT_WEB" "$PORT_AI" "$PORT_STATIC")
+PORT_WEB=$(pick_port 8500)
+PORT_AI=$(pick_port 8501 "$PORT_WEB")
+PORT_STATIC=$(pick_port 8502 "$PORT_WEB" "$PORT_AI")
+PORT_LOG=$(pick_port 8503 "$PORT_WEB" "$PORT_AI" "$PORT_STATIC")
 BASE=http://localhost
 
 # --- build ----------------------------------------------------------------

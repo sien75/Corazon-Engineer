@@ -17,7 +17,7 @@ devtime/deploy/dev/launch.sh    # build + start log → static → ai → web
 devtime/deploy/dev/stop.sh      # stop everything
 ```
 
-`launch.sh` owns port selection: defaults are 7500 web / 7501 ai / 7502 static / 7503 log, and a taken default advances to the next free port. It builds the Go services into `.corazon/dev/bin/`, starts all four, hands each service the chosen addresses (ai gets `--log` / `--static`; web gets `--static` / `--ai` / `--log`), and prints the port table. There is **no port config file**.
+`launch.sh` owns port selection: defaults are 8500 web / 8501 ai / 8502 static / 8503 log, and a taken default advances to the next free port. It builds the Go services into `.corazon/dev/bin/`, starts all four, hands each service the chosen addresses (ai gets `--log` / `--static`; web gets `--static` / `--ai` / `--log`), and prints the port table. There is **no port config file**.
 
 Logs and pids live under `.corazon/dev/`.
 

@@ -52,7 +52,7 @@ A Corazon-like project is an engineering-architecture system. It describes atomi
 
 `devtime/` and `runtime/` divide one workflow: turning a requirement into a system, then verifying and operating it.
 
-- `devtime/` (**not shipped**) — turning a requirement into a runnable system: `architecture/` (design), `coding/` (code + unit tests), `deploy/` (build / pack / launch / deploy).
+- `devtime/` (**not shipped**) — turning a requirement into a runnable system: `development/` (requirements / design records, per iteration), `deploy/` (build / pack / launch / deploy).
 - `runtime/` (**shipped**) — verifying the running system and interacting with its resources: `testing/` (E2E tests from the user's point of view), `operation/` (connect to / observe databases, caches, logs, service instances).
 
 So: to develop a Corazon-like project, read `devtime/README.md` first — it explains how development works. To test, connect to, or operate a project's environments, read `runtime/README.md` — it explains how they run.
@@ -67,7 +67,7 @@ So: to develop a Corazon-like project, read `devtime/README.md` first — it exp
 - `runtime/` — the running system: `testing/` (E2E tests) + `operation/` (connect to / observe resources); a plain file tree; `runtime/README.md` is its overview.
 - `docs/` — external-facing documentation. It must explain how to consume the `workspace/` build artifacts, including the public view of the relevant contracts — a consumer should not need the internal source tree to use the artifacts.
 - `agents/` — this AI capability description, plus the schema, contract, and enum reference.
-- `devtime/` — development-time material (not shipped): `architecture/` + `coding/` + `deploy/`; a plain file tree; `devtime/README.md` is its overview.
+- `devtime/` — development-time material (not shipped): `development/` (requirements / design records, per iteration) + `deploy/` (per-environment build / launch); a plain file tree; `devtime/README.md` is its overview.
 - `notes/` — free-form notes.
 - `.corazon/` — local private data of the project (database, run data, logs). Git-ignored. Never commit it.
 

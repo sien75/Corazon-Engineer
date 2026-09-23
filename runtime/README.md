@@ -27,4 +27,3 @@ Two modules:
 - Structured data lives in yaml: test metadata in `desp.yaml`. Everything else is prose.
 - How an environment is built, launched, and deployed lives in `devtime/deploy/`, not here.
 - Credentials are not configured here. External tools keep their own credentials under their own `~/.xxx` locations.
-</content>
