@@ -1,6 +1,6 @@
 atoms:
   - name: ai
-    description: Corazon ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema via static, writes/reads records via log, connects external systems via the built-in shell (bash)
+    description: Corazon ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash
     path: ./workspace/ai
     runtime_type: bun
     runtime_version: "1.3"
@@ -45,19 +45,12 @@ atoms:
             method: POST
 
       consumes:
-        - id: static-query
+        - id: static-validate
           channel: network
           protocol: http
-          contract: ./contracts/static-query.yaml
+          contract: ./contracts/static-validate.yaml
           extend:
-            path: /static/query
-            method: POST
-        - id: static-mutation
-          channel: network
-          protocol: http
-          contract: ./contracts/static-mutation.yaml
-          extend:
-            path: /static/mutation
+            path: /static/validate
             method: POST
         - id: log-mutation
           channel: network

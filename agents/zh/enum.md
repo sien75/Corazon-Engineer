@@ -1,6 +1,12 @@
 # Schema 枚举定义
 
-## 通信 (interface.channel / interface.protocol)
+## 通信 (channel / protocol)
+
+用于：
+
+- `atom.interfaces.provides[].channel` / `atom.interfaces.provides[].protocol`
+- `atom.interfaces.consumes[].channel` / `atom.interfaces.consumes[].protocol`
+- `edge.channel` / `edge.protocol`
 
 ### 通道 (channel)
 

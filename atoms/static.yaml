@@ -1,6 +1,6 @@
 atoms:
   - name: static
-    description: Corazon static service — parses the corazon schema and exposes schema query/detail/search/mutation/stream APIs
+    description: Corazon static service — watches the schema file tree, serves the read-only schema views (query / query-detail / stream) to the web frontend, and validates atoms / edges / contracts; writes go through the ai shell
     path: ./workspace/static
     runtime_type: go
     runtime_version: "1.22"
@@ -22,19 +22,12 @@ atoms:
           extend:
             path: /static/query-detail
             method: POST
-        - id: static-mutation
+        - id: static-validate
           channel: network
           protocol: http
-          contract: ./contracts/static-mutation.yaml
+          contract: ./contracts/static-validate.yaml
           extend:
-            path: /static/mutation
-            method: POST
-        - id: static-search
-          channel: network
-          protocol: http
-          contract: ./contracts/static-search.yaml
-          extend:
-            path: /static/search
+            path: /static/validate
             method: POST
         - id: static-stream
           channel: network

@@ -1,0 +1,20 @@
+id: log-delete
+description: Delete all conversation records belonging to a session
+
+request:
+  body:
+    sessionId: string  # conversation session id
+
+response:
+  status: 200
+  body:
+    sessionId: string  # echoed session id
+    deleted: number  # number of records removed
+
+errors:
+  - status: 400
+    code: bad_request
+    description: sessionId missing
+  - status: 500
+    code: internal
+    description: server error

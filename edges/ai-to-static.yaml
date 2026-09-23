@@ -1,17 +1,9 @@
 edges:
-  - id: ai-to-static-read
+  - id: ai-to-static-validate
     from: ai
-    from_interface: static-query
+    from_interface: static-validate
     to: static
-    to_interface: static-query
+    to_interface: static-validate
     channel: network
     protocol: http
-    description: ai reads the schema to understand the system structure before operating
-  - id: ai-to-static-mutate
-    from: ai
-    from_interface: static-mutation
-    to: static
-    to_interface: static-mutation
-    channel: network
-    protocol: http
-    description: ai modifies the schema (add/update/remove)
+    description: ai validates the schema tree (atoms / edges / contracts) after editing files directly

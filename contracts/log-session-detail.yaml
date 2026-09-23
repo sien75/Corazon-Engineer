@@ -11,8 +11,9 @@ response:
     sessionId: string
     messages:
       - seq: number  # per-session message sequence
-        msgKind: string  # message role, e.g. user | assistant
-        content: string  # full message text
+        role: string  # user | assistant | toolResult | compaction
+        content: string  # derived plain-text projection
+        raw?: object  # the pi message (or compaction entry) verbatim; images are sha256 refs
         createdAt: string  # record creation time, RFC3339
 
 errors:

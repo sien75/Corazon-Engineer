@@ -31,10 +31,12 @@ async function decode(req: Request): Promise<Record<string, any>> {
 }
 
 // SSE carries multi-line yaml as one "data:" line per yaml line; the client
-// joins them back before parsing (per SSE spec).
+// joins them back before parsing (per SSE spec). The frame's `id` is the event
+// seq, so a reconnecting client can replay only what it missed.
 function encodeSSE(ev: CorazonEvent): Uint8Array {
   const doc = YAML.stringify(ev).replace(/\n+$/, "");
   const payload =
+    `id: ${ev.seq}\n` +
     doc
       .split("\n")
       .map((l) => `data: ${l}`)
@@ -94,7 +96,11 @@ export function serve(registry: Registry, addr: string): void {
           if (!id) return errRes(400, "bad_request", "id missing");
           const sess = await registry.resume(id);
           if (!sess) return errRes(404, "not_found", "session not found");
-          return yamlRes({ sessionId: sess.id, lastSeq: sess.events.length });
+          return yamlRes({
+            sessionId: sess.id,
+            lastSeq: sess.events.length,
+            active: sess.active,
+          });
         }
 
         case "/ai/ask": {
@@ -147,28 +153,40 @@ export function serve(registry: Registry, addr: string): void {
         case "/ai/stream": {
           const sess = registry.get(String(body.id ?? ""));
           if (!sess) return errRes(404, "not_found", "session not found");
+          const since = Number(body.since) || 0;
           let listener: ((ev: CorazonEvent) => void) | undefined;
+          let closed = false;
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {
+              const close = () => {
+                if (closed) return;
+                closed = true;
+                if (listener) registry.unsubscribe(sess, listener);
+                try {
+                  controller.close();
+                } catch {
+                  // stream already closed
+                }
+              };
               listener = (ev) => {
                 controller.enqueue(encodeSSE(ev));
                 // agent_settled is pi's real end-of-run marker; close the SSE
                 // stream on it. agent_end is unreliable (fires on retries).
-                if (ev.type === "agent_settled") {
-                  registry.unsubscribe(sess, listener!);
-                  controller.close();
-                }
+                if (ev.type === "agent_settled") close();
               };
-              const backlog = registry.subscribe(sess, listener);
+              // Replay only events the client has not rendered yet; since=0
+              // (or omitted) replays the full backlog.
+              const backlog = registry
+                .subscribe(sess, listener)
+                .filter((ev) => ev.seq > since);
               for (const ev of backlog) controller.enqueue(encodeSSE(ev));
-              // If the run already finished before we subscribed, its terminal
-              // sits in the backlog: close now instead of waiting for a live
-              // event that will never come.
-              const last = backlog[backlog.length - 1];
-              if (last && last.type === "agent_settled") {
-                registry.unsubscribe(sess, listener);
-                controller.close();
-              }
+              // Caught up and idle: nothing live will arrive until a new ask
+              // starts a run (which opens its own stream). Close now instead of
+              // holding the connection open.
+              const lastSent = backlog.length
+                ? backlog[backlog.length - 1].seq
+                : since;
+              if (!sess.active && sess.events.length <= lastSent) close();
             },
             cancel() {
               if (listener) registry.unsubscribe(sess, listener);

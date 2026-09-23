@@ -1,0 +1,3 @@
+id: core-static-stream
+description: static-stream schema file-change events (watcher) + kinds/env filters
+atoms: [static]

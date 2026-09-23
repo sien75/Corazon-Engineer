@@ -2,8 +2,7 @@ id: static-query
 description: Return full schema data for rendering the architecture graph and atom/edge details
 
 request:
-  body:
-    env?: string  # runtime env name; when set, runtime only includes that env
+  body: {}
 
 response:
   status: 200
@@ -41,7 +40,7 @@ response:
         protocol: string  # per channel, see agents/enum.md
         description: string
 
-    runtime: [string]  # plain file tree under runtime/, recursive relative paths, e.g. "runtime/cookbooks/dev/BOOK.md", "runtime/tests/dev/case-x/TEST.md"; when env is set, only that env's cookbooks/[env]/ and tests/[env]/ subtrees
+    runtime: [string]  # plain file tree under runtime/, recursive relative paths, e.g. "runtime/testing/dev/case-x/TEST.md"
     contracts: [string]  # entries under contracts/, relative paths e.g. "contracts/ai-ask.yaml"
     devtime: [string]  # entries under devtime/, relative paths
     docs: [string]  # entries under docs/, relative paths

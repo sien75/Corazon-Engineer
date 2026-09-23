@@ -121,23 +121,6 @@ func ListEntries(root, dir string) []string {
 	return out
 }
 
-// RuntimeEnvs returns the env names available under runtime/cookbooks/
-// (each subdirectory is one env).
-func RuntimeEnvs(root string) []string {
-	envs := []string{}
-	entries, err := os.ReadDir(filepath.Join(root, "runtime", "cookbooks"))
-	if err != nil {
-		return envs
-	}
-	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			envs = append(envs, e.Name())
-		}
-	}
-	sort.Strings(envs)
-	return envs
-}
-
 // LoadContractFile parses a contract yaml file into a generic map.
 func LoadContractFile(root, id string) (map[string]interface{}, error) {
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(id)))
@@ -238,4 +221,160 @@ func validateChannelProtocol(body map[string]interface{}, prefix string, fail fu
 	} else if !contains(Protocols[ch], proto) {
 		fail(key, "protocol "+proto+" is not compatible with channel "+ch)
 	}
+}
+
+// TreeError is one validation failure found while validating the schema tree.
+type TreeError struct {
+	File    string `yaml:"file"`            // relative path, e.g. "atoms/ai.yaml"
+	Type    string `yaml:"type"`            // atom | edge | contract
+	Field   string `yaml:"field,omitempty"` // offending field path, e.g. "interfaces.provides[0].contract"
+	Message string `yaml:"message"`         // failure reason
+}
+
+// ValidateTree validates every contract, atom and edge under root: yaml parse
+// errors, per-type structural rules, and cross-file references (each atom
+// interface's contract must exist; each edge's endpoints must resolve to a
+// known atom interface).
+func ValidateTree(root string) []TreeError {
+	errs := []TreeError{}
+	fail := func(file, typ, field, msg string) {
+		errs = append(errs, TreeError{File: file, Type: typ, Field: field, Message: msg})
+	}
+
+	// --- contracts ---
+	contractFiles := map[string]bool{} // existing contract file, relative path
+	contractIDs := map[string]string{} // contract id -> file
+	for _, rel := range ListEntries(root, "contracts") {
+		if !strings.HasSuffix(rel, ".yaml") {
+			continue
+		}
+		contractFiles[rel] = true
+		doc, err := readYAMLMap(root, rel)
+		if err != nil {
+			fail(rel, "contract", "", "yaml parse error: "+err.Error())
+			continue
+		}
+		for _, e := range Validate("contract", doc) {
+			fail(rel, "contract", e.Field, e.Message)
+		}
+		if id := str(doc, "id"); id != "" {
+			if prev, dup := contractIDs[id]; dup {
+				fail(rel, "contract", "id", "duplicate id "+id+" (also in "+prev+")")
+			} else {
+				contractIDs[id] = rel
+			}
+		}
+	}
+
+	// --- atoms ---
+	atomNames := map[string]string{}                     // atom name -> file
+	atomIface := map[string]map[string]map[string]bool{} // atom -> provides/consumes -> interface id set
+	for _, rel := range ListEntries(root, "atoms") {
+		if !strings.HasSuffix(rel, ".yaml") {
+			continue
+		}
+		doc, err := readYAMLMap(root, rel)
+		if err != nil {
+			fail(rel, "atom", "", "yaml parse error: "+err.Error())
+			continue
+		}
+		list, _ := doc["atoms"].([]interface{})
+		for i, raw := range list {
+			body, _ := raw.(map[string]interface{})
+			if body == nil {
+				fail(rel, "atom", fmt.Sprintf("atoms[%d]", i), "not an object")
+				continue
+			}
+			for _, e := range Validate("atom", body) {
+				fail(rel, "atom", e.Field, e.Message)
+			}
+			name := str(body, "name")
+			if name != "" {
+				if prev, dup := atomNames[name]; dup {
+					fail(rel, "atom", "name", "duplicate atom "+name+" (also in "+prev+")")
+				} else {
+					atomNames[name] = rel
+				}
+				atomIface[name] = map[string]map[string]bool{"provides": {}, "consumes": {}}
+			}
+			ifaces, _ := body["interfaces"].(map[string]interface{})
+			for _, dir := range []string{"provides", "consumes"} {
+				items, _ := ifaces[dir].([]interface{})
+				for j, rawIf := range items {
+					iface, _ := rawIf.(map[string]interface{})
+					if iface == nil {
+						continue
+					}
+					if id := str(iface, "id"); id != "" && name != "" {
+						atomIface[name][dir][id] = true
+					}
+					if c := str(iface, "contract"); c != "" {
+						if ref := strings.TrimPrefix(c, "./"); !contractFiles[ref] {
+							fail(rel, "atom", fmt.Sprintf("interfaces.%s[%d].contract", dir, j), "contract file not found: "+c)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// --- edges ---
+	edgeIDs := map[string]bool{}
+	for _, rel := range ListEntries(root, "edges") {
+		if !strings.HasSuffix(rel, ".yaml") {
+			continue
+		}
+		doc, err := readYAMLMap(root, rel)
+		if err != nil {
+			fail(rel, "edge", "", "yaml parse error: "+err.Error())
+			continue
+		}
+		list, _ := doc["edges"].([]interface{})
+		for i, raw := range list {
+			body, _ := raw.(map[string]interface{})
+			if body == nil {
+				fail(rel, "edge", fmt.Sprintf("edges[%d]", i), "not an object")
+				continue
+			}
+			for _, e := range Validate("edge", body) {
+				fail(rel, "edge", e.Field, e.Message)
+			}
+			if id := str(body, "id"); id != "" {
+				if edgeIDs[id] {
+					fail(rel, "edge", "id", "duplicate id "+id)
+				}
+				edgeIDs[id] = true
+			}
+			from, to := str(body, "from"), str(body, "to")
+			fi, ti := str(body, "from_interface"), str(body, "to_interface")
+			if from != "" {
+				if _, ok := atomNames[from]; !ok {
+					fail(rel, "edge", "from", "atom not found: "+from)
+				} else if fi != "" && !atomIface[from]["consumes"][fi] {
+					fail(rel, "edge", "from_interface", "atom "+from+" has no consumes interface "+fi)
+				}
+			}
+			if to != "" {
+				if _, ok := atomNames[to]; !ok {
+					fail(rel, "edge", "to", "atom not found: "+to)
+				} else if ti != "" && !atomIface[to]["provides"][ti] {
+					fail(rel, "edge", "to_interface", "atom "+to+" has no provides interface "+ti)
+				}
+			}
+		}
+	}
+
+	return errs
+}
+
+func readYAMLMap(root, rel string) (map[string]interface{}, error) {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return nil, err
+	}
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
 }

@@ -8,7 +8,7 @@ This file describes how an AI agent should **use** Corazon and how to **develop*
 
 # Part 1 — Using Corazon
 
-Corazon is the running system. Its internal capabilities are plain HTTP interfaces; the tool surface, endpoints, and ports in this part belong to Corazon itself and are **not** requirements on a Corazon-like project.
+Corazon is the running system. Its schema is a plain file tree and its other internal capabilities are reached through the shell / HTTP; the tool surface, endpoints, and ports in this part belong to Corazon itself and are **not** requirements on a Corazon-like project.
 
 ## Tools
 
@@ -18,34 +18,13 @@ You have the standard pi built-in tools:
 - `bash` — run shell commands. This is also how you reach the network (e.g. `curl`) and how you run external CLI programs.
 - `write` `edit` — create or modify files.
 
-There are no dedicated per-endpoint tools; call Corazon's internal services over HTTP from `bash` (e.g. `curl`).
-
-## Internal HTTP APIs (POST; actual addresses are in the Runtime endpoints section appended at the end of this prompt)
-
-**static service — schema**, YAML on the wire (`application/yaml`):
-
-- `/static/query` — fetch the full architecture (atoms / edges / runtime entries + all directory listings)
-- `/static/query-detail` — fetch a single file's content (runtime / contract / devtime / docs / notes)
-- `/static/search` — global search over any schema content
-- `/static/mutation` — add / update / remove schema entries (side effects)
-- `/static/stream` — SSE subscription for schema-change events (long-lived; do NOT run a bare blocking curl)
-
-**log service — records**, YAML on the wire:
-
-- `/log/list` — list conversation sessions (one entry per session, newest activity first)
-- `/log/session-detail` — fetch a conversation session's messages (full content)
-- `/log/query` — query records (test / telemetry / conversation)
-- `/log/query-detail` — fetch a single record's detail
-- `/log/search` — full-text search over records
-- `/log/mutation` — write a record (side effects). After every test you trigger, record it here; listening/telemetry results also land here as a stream (see External systems & tools). (Conversation records are written by the ai service itself — never log those.)
-
-Request / response shapes are defined by contract files under `contracts/` (e.g. `contracts/static-query.yaml`). Before calling an unfamiliar endpoint, read its contract live via `/static/query-detail` with `type=contract`.
+Any other internal capability is reached from `bash` (e.g. `curl`). Each service's usage — endpoints, request / response shapes, examples — is documented under the installed tool's `docs/` (default `~/.corazon/apps/current/docs/`, e.g. `static.md`, `log.md`); read the corresponding file before calling a service. The internal calls you will need most are `validate` (static, after schema changes) and the record write (log, after tests) — both are covered there. The actual service addresses are in the Runtime endpoints section appended at the end of this prompt.
 
 ## External systems & tools
 
 Do not expect a fixed tool list. When a task needs a tool — a database needs a SQL client, a Go project needs the Go toolchain, a Redis needs a Redis client — find an appropriate CLI tool yourself, install it if missing, and run it via `bash`. A recommended list with install/detect steps lives in `agents/tools.md`.
 
-Listening-type tools (log/metric/trace tailers, subscribers, stream readers) must have their observations recorded via `/log/mutation`, so listening results feed into the log as one connected stream.
+Listening-type tools (log/metric/trace tailers, subscribers, stream readers) must have their observations recorded as a `telemetry` log record (see `~/.corazon/apps/current/docs/log.md`), so listening results feed into the log as one connected stream.
 
 External tools keep their own credentials (under their own `~/.xxx` locations); there is no project-level credential store. Logging in / authenticating a tool is the user's job — ask the user to do it. If a tool is not authenticated, say so honestly instead of probing around. Never echo credentials into responses or logs.
 
@@ -53,14 +32,15 @@ External tools keep their own credentials (under their own `~/.xxx` locations); 
 
 - Verify before answering: when unsure about structure or state, query first and answer from real data. Do not fabricate from memory.
 - Use tools with restraint: call one when the task genuinely needs it, but avoid redundant or speculative calls, and do not turn a single step into a burst of similar tool calls. When no tool is required, just answer. Necessary use is expected; overuse is not.
-- For schema changes or any side-effectful operation, issue the call directly — `curl` to Corazon's internal services, or an external CLI via `bash`. Tool calls run without approval.
-- After every real test you run, write a log record via `/log/mutation`.
+- For schema changes, edit the files directly. For other side-effectful operations, issue the call from `bash` — `curl` to an internal service, or an external CLI.
+- After changing the schema, call the static service's `validate` to check the whole tree (atoms / edges / contracts) — usage in `~/.corazon/apps/current/docs/static.md`.
+- After every real test you run, call the log service's record write with `kind: test`; record listening / observation results with `kind: telemetry`. (`conversation` records are written by the ai service itself — never log them.) Usage in `~/.corazon/apps/current/docs/log.md`.
 - Reply in the same language as the user (use Chinese when the user writes Chinese).
 - If a capability is not wired up yet, say so honestly instead of pretending you executed it.
 
 ## Tool safety
 
-- `/static/mutation` and `/log/mutation` have side effects — use them deliberately, never speculatively.
+- Schema-file edits, log writes and other side-effectful calls have real effects — use them deliberately, never speculatively.
 - Do not probe unknown endpoints or run unclear operations; if the effect of a call is unclear, refuse and explain instead of guessing.
 - Never echo credentials into responses or logs.
 
@@ -70,7 +50,12 @@ External tools keep their own credentials (under their own `~/.xxx` locations); 
 
 A Corazon-like project is an engineering-architecture system. It describes atomic projects (atoms), their connections (edges), interface contracts (contracts), and environment mappings (runtime) through schema files, keeps implementation code in `workspace/`, and validates the whole system through system-level tests. A Corazon-like project chooses its own runtime layout; it does not inherit Corazon's services or ports.
 
-To develop a Corazon-like project, read `devtime/README.md` first — it explains how development works.
+`devtime/` and `runtime/` divide one workflow: turning a requirement into a system, then verifying and operating it.
+
+- `devtime/` (**not shipped**) — turning a requirement into a runnable system: `architecture/` (design), `coding/` (code + unit tests), `deploy/` (build / pack / launch / deploy).
+- `runtime/` (**shipped**) — verifying the running system and interacting with its resources: `testing/` (E2E tests from the user's point of view), `operation/` (connect to / observe databases, caches, logs, service instances).
+
+So: to develop a Corazon-like project, read `devtime/README.md` first — it explains how development works. To test, connect to, or operate a project's environments, read `runtime/README.md` — it explains how they run.
 
 ## Directory conventions
 
@@ -78,11 +63,11 @@ To develop a Corazon-like project, read `devtime/README.md` first — it explain
 - `atoms/` — one YAML per atom: what it is, what it provides, what it consumes.
 - `edges/` — connections between atoms.
 - `contracts/` — interface contracts referenced by atoms; the internal source of truth for request/response shapes.
-- `workspace/` — source code of the atoms.
-- `runtime/` — how to run each environment and which tests apply: a plain file tree whose layout is defined by `runtime/README.md` (read it first).
+- `workspace/` — source code of the atoms (the local checkouts). It need not live inside this repository: an atom's `repo` / `path` link the upstream and the checkout location.
+- `runtime/` — the running system: `testing/` (E2E tests) + `operation/` (connect to / observe resources); a plain file tree; `runtime/README.md` is its overview.
 - `docs/` — external-facing documentation. It must explain how to consume the `workspace/` build artifacts, including the public view of the relevant contracts — a consumer should not need the internal source tree to use the artifacts.
 - `agents/` — this AI capability description, plus the schema, contract, and enum reference.
-- `devtime/` — development-time material (methodology, SOPs, iteration records).
+- `devtime/` — development-time material (not shipped): `architecture/` + `coding/` + `deploy/`; a plain file tree; `devtime/README.md` is its overview.
 - `notes/` — free-form notes.
 - `.corazon/` — local private data of the project (database, run data, logs). Git-ignored. Never commit it.
 

@@ -1,0 +1,19 @@
+id: static-validate
+description: Validate the whole schema tree (atoms / edges / contracts) and report every field-level error
+
+request: {}
+
+response:
+  status: 200
+  body:
+    ok: boolean  # true when no errors
+    errors:
+      - file: string  # relative path, e.g. "atoms/ai.yaml"
+        type: atom | edge | contract  # object type that failed
+        field?: string  # offending field path, e.g. "interfaces.provides[0].contract"
+        message: string  # failure reason
+
+errors:
+  - status: 500
+    code: internal
+    description: server internal error

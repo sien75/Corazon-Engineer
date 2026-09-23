@@ -4,10 +4,13 @@ description: Stream AI output as native pi events; the frontend renders the subs
 request:
   body:
     id: string  # session id
+    since?: number  # replay only events with seq > since; 0/omitted replays the full backlog
 
 response:
   status: 200
   stream: sse  # each event is a YAML doc; body below is the envelope schema
+  # Each SSE frame also carries `id: <seq>`; a reconnecting client passes the
+  # last seq it rendered as `since` to receive only what it missed.
   body:
     seq: number  # monotonically increasing per session
     type: string  # native pi event type, or "error" for non-pi service errors

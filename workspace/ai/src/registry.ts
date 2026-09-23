@@ -13,9 +13,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   record,
-  fetchMessages,
-  type ConversationMessage,
-  type MessageBlock,
+  fetchRecords,
+  externalizeImages,
+  inlineImages,
+  projectText,
+  type StoredRecord,
 } from "./recorder.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
@@ -107,6 +109,7 @@ interface Sess {
   turns: number; // turns elapsed in the in-flight prompt (loop cap)
   recordSeq: number;
   sawSettled: boolean; // whether pi emitted agent_settled for the current run
+  active: boolean; // a run is scheduled or in flight (used by resume/stream)
 }
 
 // pi's agent loop has no built-in round cap; stop a runaway turn loop
@@ -185,20 +188,19 @@ export class Registry {
     return this.build(`s_${randomBytes(8).toString("hex")}`);
   }
 
-  // resume rebuilds a session that is no longer in memory from its log history.
-  // Only user/assistant text is persisted, so tool calls and thinking are not
-  // restored. Returns undefined when the id has no live session and no history.
+  // resume rebuilds a session that is no longer in memory from its log records.
+  // Returns undefined when the id has no live session and no recorded history.
   async resume(id: string): Promise<Sess | undefined> {
     const existing = this.sessions.get(id);
     if (existing) return existing;
-    const history = await fetchMessages(this.opts.logBase, id);
+    const history = await fetchRecords(this.opts.logBase, id);
     if (!history.length) return undefined;
     return this.build(id, history);
   }
 
   private async build(
     id: string,
-    history: ConversationMessage[] = [],
+    history: StoredRecord[] = [],
   ): Promise<Sess> {
     const sess: Sess = {
       id,
@@ -210,10 +212,14 @@ export class Registry {
       // Continue the recorder's per-session sequence after a resume.
       recordSeq: history.reduce((max, m) => Math.max(max, m.seq), 0),
       sawSettled: false,
+      active: false,
     };
     if (this.model) {
       const sessionManager = SessionManager.inMemory(this.opts.root);
-      for (const m of history) {
+      // Rebuild context compaction-aware: the latest compaction summary plus the
+      // records after it. Summarized history is not re-sent to the provider.
+      const context = history.slice(lastCompactionIndex(history));
+      for (const m of context) {
         const msg = this.toAgentMessage(m);
         if (msg) sessionManager.appendMessage(msg);
       }
@@ -245,7 +251,16 @@ export class Registry {
         ) {
           sess.turnText += ev.assistantMessageEvent.delta;
         }
-        if (ev.type === "agent_settled") sess.sawSettled = true;
+        if (ev.type === "agent_settled") {
+          sess.sawSettled = true;
+          sess.active = false;
+        }
+        // Persist assistant / tool-result messages and compaction entries as
+        // they complete. User messages are recorded by ask().
+        if (ev.type === "message_end") this.recordMessage(sess, ev.message);
+        if (ev.type === "compaction_end" && ev.result) {
+          this.recordCompaction(sess, ev.result);
+        }
         // Passthrough: forward the native pi event unmodified.
         this.append(sess, ev);
       });
@@ -254,19 +269,30 @@ export class Registry {
     return sess;
   }
 
-  // toAgentMessage converts a recorded message back into a pi AgentMessage so a
-  // resumed session carries the prior conversation as LLM context. Old rows have
-  // only text; newer rows carry ordered blocks (text + image refs), and image
-  // bytes are re-materialized from the blob store as base64.
-  private toAgentMessage(m: ConversationMessage): any {
-    const blocks: MessageBlock[] =
+  // toAgentMessage converts a stored record back into a pi AgentMessage so a
+  // resumed session carries the prior conversation as LLM context. New rows
+  // carry the raw pi message (images externalized as refs, re-inlined here);
+  // legacy rows carry only text/image blocks and are reconstructed.
+  private toAgentMessage(m: StoredRecord): any {
+    if (m.raw) {
+      if (m.role === "compaction") {
+        return {
+          role: "compactionSummary",
+          summary: String(m.raw.summary ?? ""),
+          tokensBefore: Number(m.raw.tokensBefore ?? 0),
+          timestamp: Number(m.raw.timestamp ?? Date.now()),
+        };
+      }
+      return inlineImages(m.raw, (sha) => loadImage(this.opts.root, sha));
+    }
+    const blocks: any[] =
       m.blocks && m.blocks.length
         ? m.blocks
         : m.content.trim()
           ? [{ type: "text", text: m.content }]
           : [];
     const timestamp = Date.now();
-    if (m.msgKind === "assistant") {
+    if (m.role === "assistant") {
       const text = blocks
         .filter((b) => b.type === "text" && b.text)
         .map((b) => b.text)
@@ -322,16 +348,16 @@ export class Registry {
   // terminal agent_settled event. Otherwise a fresh run is started, serialized
   // on the tail chain so two idle asks cannot race.
   ask(sess: Sess, incoming: IncomingBlock[]): void {
-    // Persist images as blobs; carry only their refs in the recorded blocks.
-    // `content` is the flattened projection: text as-is, each image as [image].
-    const blocks: MessageBlock[] = [];
+    // `content` is pi-shaped user content (text blocks; images as sha refs);
+    // `piImages` re-inlines the base64 bytes for the prompt call.
+    const content: any[] = [];
     const piImages: any[] = [];
-    let content = "";
+    let text = "";
     for (const b of incoming) {
       if (b.type === "text") {
         if (!b.text) continue;
-        blocks.push({ type: "text", text: b.text });
-        content += b.text;
+        content.push({ type: "text", text: b.text });
+        text += b.text;
       } else if (b.type === "image" && b.data && b.mimeType) {
         let ref: { sha256: string; size: number };
         try {
@@ -340,19 +366,26 @@ export class Registry {
           this.appendError(sess, "image_error", String(err));
           continue;
         }
-        blocks.push({
+        content.push({
           type: "image",
           sha256: ref.sha256,
           mimeType: b.mimeType,
           size: ref.size,
         });
         piImages.push({ type: "image", data: b.data, mimeType: b.mimeType });
-        content += "[image]";
+        text += "[image]";
       }
     }
-    this.record(sess, "user", content, blocks);
+    const projection = content
+      .map((b) => (b.type === "image" ? "[image]" : b.text))
+      .join("");
+    this.recordRaw(sess, "user", projection, {
+      role: "user",
+      content,
+      timestamp: Date.now(),
+    });
     // pi always emits a text block before images; avoid an empty one.
-    const promptText = content || "[image]";
+    const promptText = text || "[image]";
     if (!sess.agent) {
       const reply = `Corazon AI (dev stub) received your prompt:\n\n> ${promptText}`;
       this.append(sess, { type: "agent_start" });
@@ -365,12 +398,17 @@ export class Registry {
         },
       });
       this.append(sess, { type: "agent_settled" });
-      this.record(sess, "assistant", reply);
+      this.recordRaw(sess, "assistant", reply, {
+        role: "assistant",
+        content: [{ type: "text", text: reply }],
+        timestamp: Date.now(),
+      });
       return;
     }
     const agent = sess.agent;
     const imageOpts = piImages.length ? { images: piImages } : {};
     if (agent.isStreaming) {
+      sess.active = true;
       void agent
         .prompt(promptText, { ...imageOpts, streamingBehavior: "steer" })
         .catch((err) => {
@@ -378,6 +416,9 @@ export class Registry {
         });
       return;
     }
+    // Mark active before scheduling so a client that subscribes immediately
+    // after /ai/ask sees the run as in flight (the microtask may not have run).
+    sess.active = true;
     sess.tail = sess.tail.then(() =>
       this.runTurn(sess, agent, promptText, piImages),
     );
@@ -420,7 +461,7 @@ export class Registry {
       // pi emits agent_settled itself on a normal run; synthesize one if the
       // run never started (e.g. preflight threw) so the SSE stream still closes.
       if (!sess.sawSettled) this.append(sess, { type: "agent_settled" });
-      this.record(sess, "assistant", sess.turnText);
+      sess.active = false;
     }
   }
 
@@ -449,19 +490,59 @@ export class Registry {
     });
   }
 
-  private record(
+  // recordMessage persists an assistant / toolResult pi message from a
+  // message_end event (user messages are recorded by ask()).
+  private recordMessage(sess: Sess, message: any): void {
+    const role = String(message?.role ?? "");
+    if (role !== "assistant" && role !== "toolResult") return;
+    const stored = externalizeImages(message, (data, mime) =>
+      saveImage(this.opts.root, data, mime),
+    );
+    this.recordRaw(sess, role, projectText(role, stored), stored);
+  }
+
+  // recordCompaction persists a compaction entry so a resumed session honors the
+  // summary and does not re-send the summarized history to the provider.
+  private recordCompaction(sess: Sess, result: any): void {
+    this.recordRaw(
+      sess,
+      "compaction",
+      "",
+      {
+        role: "compaction",
+        summary: String(result?.summary ?? ""),
+        firstKeptEntryId: result?.firstKeptEntryId,
+        tokensBefore: result?.tokensBefore,
+        usage: result?.usage,
+        details: result?.details,
+        timestamp: Date.now(),
+      },
+    );
+  }
+
+  private recordRaw(
     sess: Sess,
-    msgKind: string,
+    role: string,
     content: string,
-    blocks?: MessageBlock[],
+    raw: unknown,
   ): void {
     record(
       this.opts.logBase,
       sess.id,
       ++sess.recordSeq,
-      msgKind,
+      role,
       content,
-      blocks,
+      raw,
     );
   }
+}
+
+// lastCompactionIndex returns the index of the latest compaction record, or 0
+// when there is none, so context rebuild starts right after the summary.
+function lastCompactionIndex(records: StoredRecord[]): number {
+  let idx = 0;
+  for (let i = 0; i < records.length; i++) {
+    if (records[i].role === "compaction") idx = i;
+  }
+  return idx;
 }

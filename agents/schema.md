@@ -2,28 +2,29 @@
 
 ## Overall Structure
 
-The schema consists of **static structure** and **scenario**:
+The schema consists of **what it is** and **how to do it**:
 
 ```
-Static structure (atom & edge) — define the system structure
-├── Atom layer      atoms/       atomic project
-│   └── Contract    contracts/   interface contract
-├── Edge layer      edges/       connection definition
-├── Docs            docs/        reference docs (cites contract)
-│   └── Contract    contracts/   interface contract
-└── Notes           notes/       annotations
+What it is — define the system structure
+├── Atom layer      atoms/       atomic project        — yaml
+├── Edge layer      edges/       connection definition  — yaml
+├── Contract        contracts/   interface contract     — yaml
+├── Workspace       workspace/   atom code (checkout)   — code
+├── Docs            docs/        external-facing docs   — prose
+└── Notes           notes/       internal annotations    — prose
 
-Scenario — fill in concrete content
-├── Runtime         runtime/     how to run + which tests (plain file tree; see runtime/README.md)
-└── Devtime         devtime/     dev-time records
-    └── Contract    contracts/   interface contract
+How to do it — development & operation
+├── Devtime         devtime/     how to develop (architecture + coding + deploy) — prose
+└── Runtime         runtime/     how to test & operate (testing + operation)      — prose
 ```
+
+`workspace/` holds the atoms' implementation code. An atom links its upstream repo via `repo` and its local checkout via `path`; the code may be checked out under `workspace/` (the default) or anywhere `path` points — it does not have to live inside this repository.
 
 ---
 
 ## File Organization
 
-A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` is a content directory. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are ignored everywhere — never parsed as content.
+A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` is a content directory. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are **special entries**: they do not participate in the directory's sibling structure (they are not content entities).
 
 ```yaml
 # corazon.yaml — root meta only, does NOT enumerate data files
@@ -47,22 +48,24 @@ project/
 ├── edges/                     # *.yaml → edge
 │   ├── user-to-notification.yaml
 │   └── ...
-├── runtime/                   # plain file tree: how to run + which tests (layout defined by runtime/README.md)
-│   ├── README.md              # the runtime tree's own conventions — read first
-│   ├── cookbooks/             # one dir per env (env name = dir name)
-│   │   └── dev/               # BOOK.md (launch/connect/observe) + launch.sh (launcher)
-│   └── tests/                 # system tests per env
-│       └── dev/               # case-xxx/ → desp.yaml (metadata) + TEST.md (the case)
-├── devtime/                   # *.md → dev-time record (meetings / ADR / changelog)
 ├── contracts/                 # content files (interface contract yaml)
 │   ├── create-user-api.yaml
 │   ├── user-created-event.yaml
 │   ├── postgres-client.yaml
 │   ├── redis-client.yaml
 │   └── ...
-├── docs/                      # *.md → reference doc (cites contracts)
-├── notes/                     # *.md → annotation (marker + thread, anchored to entity)
-└── workspace/                 # Local code repositories
+├── workspace/                 # local code repositories (checkouts)
+├── docs/                      # *.md → external-facing doc
+├── notes/                     # *.md → internal annotation (marker + thread, anchored to entity)
+├── devtime/                   # plain file tree: dev-time material (layout defined by devtime/README.md)
+│   ├── README.md              # the devtime tree's own conventions — read first
+│   ├── architecture/          # requirements / design before coding
+│   ├── coding/                # code changes + unit tests
+│   └── deploy/                # build / pack / launch / deploy
+└── runtime/                   # plain file tree: testing + operation (layout defined by runtime/README.md)
+    ├── README.md              # the runtime tree's own conventions — read first
+    ├── testing/               # E2E tests
+    └── operation/             # connect to / observe resources (db, cache, logs, services)
 ```
 
 ---
@@ -139,28 +142,6 @@ edges:
 
 ---
 
-## Runtime Layer
-
-Maps the schema to concrete runtime environments. `runtime/` is a **plain file tree** (like `devtime/`), not a structured YAML schema — its layout and meaning are defined by `runtime/README.md`, which is the contract for the tree. The consumers are the web frontend (which serves files raw, without interpreting structure) and the AI (which reads the README first, then the files it needs, to launch / connect / observe / test an environment). Structured values, when needed, live in small YAML files inside the tree (e.g. `desp.yaml`); the conventions are the project's own, documented in `runtime/README.md`. An env is started by its own `launch.sh` (a real script, not generated prose), which chooses the ports and passes the addresses to the atoms at launch.
-
-A typical layout (one env per directory):
-
-```
-runtime/
-├── README.md          # the runtime tree's own conventions — read first
-├── cookbooks/[env]/   # env name = directory name
-│   ├── BOOK.md        # how to launch / connect / observe this env (prose)
-│   └── launch.sh      # the env's launcher (owns ports, starts the atoms)
-└── tests/[env]/       # system tests bound to this env
-    └── case-xxx/
-        ├── desp.yaml  # test metadata: atoms (required), env (optional)
-        └── TEST.md    # the test case itself
-```
-
-Because the tree is prose-first, there is no enforced schema here: ports, endpoints, and telemetry are described in the cookbook and realized by the env's `launch.sh`, and the AI is expected to read the README and follow the project's stated conventions rather than rely on a fixed shape.
-
----
-
 ## Contract Files — Interface Contracts
 
 Describe an interface's input/output/errors, under `contracts/`. Referenced by atom `interfaces` and tests. Format:
@@ -197,20 +178,37 @@ errors:
 
 ---
 
-## Test Files — Test Cases
+## Docs Files — External-Facing Docs
 
-System-level tests live inside the runtime tree (see the Runtime layer): `runtime/tests/[env]/case-xxx/`, with `desp.yaml` (metadata) and `TEST.md` (the case). The case file itself is plain markdown with no format convention.
+External-facing docs, under `docs/`. Plain markdown files, no format convention.
 
-Tests never run against the real project tree. They run in `.corazon/.playground/` — `.corazon/` is the git-ignored private directory at the project root, and `.corazon/.playground/` is a blank or mock corazon project under it, scaffolded by the test setup (e.g. from fixtures like `runtime/tests/dev/.playground/`). The backend under test is started with its project root pointed at `.corazon/.playground/`, so add/update/remove mutations only touch the mock.
+---
 
-## Devtime Files — Dev-Time Records
+## Notes Files — Internal Annotations
 
-Record meetings, ADRs, changelogs, etc., under `devtime/`. Plain markdown files, no format convention.
+Internal markers and discussions targeting an entity, under `notes/`. Plain markdown files, no format convention.
 
-## Docs Files — Reference Docs
+---
 
-User-facing reference docs, under `docs/`. Plain markdown files, no format convention.
+## Devtime Files — Dev-Time Material
 
-## Notes Files — Annotations
+Everything that turns a requirement into a runnable system, under `devtime/`. A plain file tree (like `runtime/`); its layout is defined by `devtime/README.md`. Three modules:
 
-Markers and discussions targeting an entity, under `notes/`. Plain markdown files, no format convention.
+- **`architecture/`** — requirements analysis, architecture design, and design work before coding (meetings, ADRs, iteration records).
+- **`coding/`** — writing / changing code and its unit tests.
+- **`deploy/`** — build, pack, launch, and deploy a project, per environment; ensures the project starts, but does not verify business behavior.
+
+Mostly plain markdown, no format convention; it may also contain script files (e.g. deploy scripts). Read the README and follow the project's stated conventions.
+
+---
+
+## Runtime Layer
+
+The running system and its resources, under `runtime/`. A plain file tree (like `devtime/`); its layout is defined by `runtime/README.md`. Two modules:
+
+- **`testing/`** — E2E tests from the real user's point of view, exercising the business system through its UI / API.
+- **`operation/`** — connecting to and observing resources (databases, caches, logs, service instances), including telemetry: live monitoring, historical log queries, and active operations.
+
+System-level tests live under `testing/`, with `desp.yaml` (metadata) and `TEST.md` (the case); they must not run against the real project tree.
+
+Mostly plain markdown, no format convention; it may also contain script files. Read the README and follow the project's stated conventions.

@@ -239,7 +239,7 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 		COALESCE(
 			(SELECT r2.payload FROM records r2
 				WHERE r2.kind = 'conversation' AND r2.session_id = r.session_id
-					AND r2.payload LIKE '%msgKind: user%'
+					AND (r2.payload LIKE '%msgKind: user%' OR r2.payload LIKE '%role: user%')
 				ORDER BY r2.rowid ASC LIMIT 1),
 			(SELECT r3.payload FROM records r3
 				WHERE r3.kind = 'conversation' AND r3.session_id = r.session_id
@@ -317,18 +317,27 @@ func (s *Store) SessionMessages(sessionID string) ([]map[string]interface{}, err
 		}
 		var p struct {
 			Seq     int                      `yaml:"seq"`
+			Role    string                   `yaml:"role"`
 			MsgKind string                   `yaml:"msgKind"`
 			Content string                   `yaml:"content"`
+			Raw     interface{}              `yaml:"raw"`
 			Blocks  []map[string]interface{} `yaml:"blocks"`
 		}
 		if err := yaml.Unmarshal([]byte(payloadText), &p); err != nil {
 			continue
 		}
+		role := p.Role
+		if role == "" {
+			role = p.MsgKind // legacy rows carry msgKind
+		}
 		msg := map[string]interface{}{
 			"seq":       p.Seq,
-			"msgKind":   p.MsgKind,
+			"role":      role,
 			"content":   p.Content,
 			"createdAt": createdAt,
+		}
+		if p.Raw != nil {
+			msg["raw"] = p.Raw
 		}
 		if len(p.Blocks) > 0 {
 			msg["blocks"] = p.Blocks
@@ -336,6 +345,17 @@ func (s *Store) SessionMessages(sessionID string) ([]map[string]interface{}, err
 		messages = append(messages, msg)
 	}
 	return messages, rows.Err()
+}
+
+// DeleteSession removes every conversation record belonging to a session and
+// returns the number of deleted rows.
+func (s *Store) DeleteSession(sessionID string) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM records
+		WHERE kind = 'conversation' AND session_id = ?`, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // Search does a full-text-ish LIKE search across id/kind/summary/payload.

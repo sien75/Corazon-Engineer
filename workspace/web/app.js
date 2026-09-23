@@ -182,7 +182,7 @@ function subscribeSchemaStream() {
   fetch(`${STATIC_BASE}/static/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
-    body: yaml.dump({ env: "dev", kinds: "schema" }),
+    body: yaml.dump({ kinds: "schema" }),
   })
     .then(async (res) => {
       if (!res.ok || !res.body) return;
@@ -540,6 +540,18 @@ const aiCmdEl = document.getElementById("ai-cmd");
 let aiSession = null;
 let aiSeenSeq = 0;
 let aiStreaming = false;
+// The session + abort controller of the active SSE stream, and a generation
+// token so a stream that is superseded (e.g. the user switches sessions) stops
+// rendering and cannot clobber the new session's seq tracking.
+let aiStreamCtl = null; // { id, ctrl } | null
+let aiStreamGen = 0;
+// The last session id is persisted so a page reload can resume it instead of
+// starting a fresh conversation.
+const AI_SESSION_KEY = "corazon.ai.session";
+// A dropped SSE connection reconnects with capped exponential backoff; the
+// server replays only the events after the last seq this client rendered.
+const AI_STREAM_MAX_RETRIES = 6;
+const AI_STREAM_MAX_BACKOFF = 10000;
 // Images pasted into the input, in token order: { data, mimeType } or undefined
 // while compression is still in flight; aiImageTasks lets send() await them.
 let aiImages = [];
@@ -861,7 +873,22 @@ function aiAppendUserParts(parts) {
   return div;
 }
 
+function aiRememberSession(id) {
+  try {
+    localStorage.setItem(AI_SESSION_KEY, id);
+  } catch (e) {}
+}
+
+function aiStoredSession() {
+  try {
+    return localStorage.getItem(AI_SESSION_KEY) || "";
+  } catch (e) {
+    return "";
+  }
+}
+
 async function aiNew() {
+  aiCancelStream();
   const res = await fetch(`${AI_BASE}/ai/new`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
@@ -871,6 +898,7 @@ async function aiNew() {
   if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
   aiSession = data.sessionId;
   aiSeenSeq = 0;
+  aiRememberSession(aiSession);
 }
 
 // aiCollapse builds a block that is collapsed by default: a clickable header
@@ -997,36 +1025,46 @@ function aiAskUser(args, onPick) {
   if (stick) aiScrollToBottom();
 }
 
-// aiStream subscribes to the session's SSE. A mid-run ask is steered into the
-// run already covered by the live stream, so when one is active we must not
-// open a second subscription (that would race over aiSeenSeq and re-render).
+// aiStream subscribes to the session's SSE and keeps it alive across connection
+// drops: on failure it reconnects with `since = aiSeenSeq` so the server replays
+// only the events this client missed. The render state (assistant / thinking /
+// tool blocks) lives here, not in the connection, so replayed deltas append to
+// the same bubbles instead of opening new ones.
+//
+// A mid-run ask is steered into the run already covered by the live stream, so
+// for the same session we must not open a second subscription (that would race
+// over aiSeenSeq and re-render). Switching sessions aborts the old stream via
+// aiCancelStream so it cannot keep writing into the now-current view.
 async function aiStream() {
-  if (aiStreaming) return;
+  const id = aiSession;
+  if (!id) return;
+  // Already attached to this session (a mid-run ask is steered server-side):
+  // do not open a second subscription, which would race over aiSeenSeq.
+  if (aiStreamCtl && aiStreamCtl.id === id) return;
+  // A stream for another session is still running (the user switched sessions):
+  // drop it before attaching to this one, otherwise it would keep rendering into
+  // the now-current view and its seq would clobber this session's aiSeenSeq.
+  if (aiStreamCtl) aiCancelStream();
+  const gen = aiStreamGen;
+  const ctrl = new AbortController();
+  aiStreamCtl = { id, ctrl };
   aiSetStreaming(true);
-  try {
-    await aiStreamOnce();
-  } finally {
-    aiSetStreaming(false);
-  }
-}
-
-async function aiStreamOnce() {
-  const res = await fetch(`${AI_BASE}/ai/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/yaml" },
-    body: yaml.dump({ id: aiSession }),
-  });
-  if (!res.ok || !res.body) {
-    const data = yaml.load(await res.text().catch(() => "")) || {};
-    aiAppend("assistant", `[error] ${data.error?.message || res.status}`);
-    return;
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
   let assistant = null; // current assistant markdown bubble: { el, append, flush }
   let thinking = null; // current thinking block: { block, body }
   const tools = new Map(); // toolCallId -> { block, body }
+
+  const settleAll = () => {
+    if (assistant) {
+      assistant.flush();
+      assistant = null;
+    }
+    if (thinking) {
+      aiSettle(thinking.block, "done");
+      thinking = null;
+    }
+    for (const t of tools.values()) aiSettle(t.block, "done");
+    tools.clear();
+  };
 
   const handle = (ev) => {
     // Native pi event: message_update carries the assistant message sub-events.
@@ -1110,16 +1148,7 @@ async function aiStreamOnce() {
     }
     if (ev.type === "agent_settled") {
       // End of a run: next text opens a fresh bubble. Settle anything still loading.
-      if (assistant) {
-        assistant.flush();
-        assistant = null;
-      }
-      if (thinking) {
-        aiSettle(thinking.block, "done");
-        thinking = null;
-      }
-      for (const t of tools.values()) aiSettle(t.block, "done");
-      tools.clear();
+      settleAll();
       return;
     }
     if (ev.type === "error") {
@@ -1129,6 +1158,86 @@ async function aiStreamOnce() {
     }
   };
 
+  let attempt = 0;
+  try {
+    for (;;) {
+      if (aiStreamGen !== gen) break; // superseded
+      let sawSettled = false;
+      const onEvent = (ev) => {
+        if (aiStreamGen !== gen) return; // superseded mid-read
+        if (typeof ev.seq === "number") {
+          if (ev.seq <= aiSeenSeq) return; // already rendered from an earlier stream
+          aiSeenSeq = ev.seq;
+        }
+        if (ev.type === "agent_settled") sawSettled = true;
+        handle(ev);
+      };
+      try {
+        await aiStreamOnce(id, onEvent, ctrl.signal);
+        if (aiStreamGen !== gen) break;
+        // Normal close: either the run settled, or we are caught up and idle.
+        if (!sawSettled) settleAll();
+        break;
+      } catch (err) {
+        if (aiStreamGen !== gen) break; // superseded or aborted
+        if (err && err.name === "AbortError") break;
+        if (err && err.fatal) {
+          aiAppend("assistant", `[error] ${err.message}`);
+          break;
+        }
+        // Network drop: reattach and let the server replay what we missed.
+        attempt++;
+        if (attempt > AI_STREAM_MAX_RETRIES) {
+          aiAppend("assistant", "[error] 连接中断，重连失败");
+          break;
+        }
+        await aiSleep(Math.min(500 * 2 ** (attempt - 1), AI_STREAM_MAX_BACKOFF));
+      }
+    }
+  } finally {
+    // Only the current generation owns the shared streaming state; a superseded
+    // stream must not clear the new session's stop button.
+    if (aiStreamGen === gen) {
+      aiStreamCtl = null;
+      aiSetStreaming(false);
+    }
+  }
+}
+
+function aiSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// aiCancelStream stops the active SSE stream (if any) and invalidates it so its
+// loop stops rendering. Used when switching sessions or starting a new one.
+function aiCancelStream() {
+  aiStreamGen++;
+  if (aiStreamCtl) {
+    aiStreamCtl.ctrl.abort();
+    aiStreamCtl = null;
+  }
+  aiSetStreaming(false);
+}
+
+// aiStreamOnce opens one SSE connection and drives `onEvent` until the server
+// closes it. A transport/HTTP failure throws so aiStream can reconnect; a
+// non-retryable server response carries `fatal`.
+async function aiStreamOnce(id, onEvent, signal) {
+  const res = await fetch(`${AI_BASE}/ai/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump({ id, since: aiSeenSeq }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    const data = yaml.load(await res.text().catch(() => "")) || {};
+    const err = new Error(data.error?.message || `HTTP ${res.status}`);
+    err.fatal = true; // the server answered; retrying the same request will not help
+    throw err;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -1149,11 +1258,7 @@ async function aiStreamOnce() {
         continue;
       }
       if (!ev || typeof ev !== "object") continue;
-      if (typeof ev.seq === "number") {
-        if (ev.seq <= aiSeenSeq) continue; // already rendered from an earlier stream
-        aiSeenSeq = ev.seq;
-      }
-      handle(ev);
+      onEvent(ev);
     }
   }
 }
@@ -1223,6 +1328,7 @@ const AI_COMMANDS = [
 ];
 
 let aiDrawer = null; // { items, index, kind }
+let aiConfirm = null; // { sessionId, label } while the delete dialog is open
 
 function aiMatchCommands(value) {
   const full = value.toLowerCase();
@@ -1262,17 +1368,48 @@ function aiDrawerRender(items, kind) {
     aiCmdEl.appendChild(back);
   }
   items.forEach((item, i) => {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "ai-cmd-item" + (i === 0 ? " active" : "");
+    // A div (not a button) so session rows can host their own delete button.
+    const row = document.createElement("div");
+    row.className =
+      "ai-cmd-item" +
+      (kind === "session" ? " session" : "") +
+      (i === 0 ? " active" : "");
+    row.setAttribute("role", "button");
+    row.tabIndex = -1;
     const name = document.createElement("span");
     name.className = "ai-cmd-name";
     name.textContent = item.label;
-    const desc = document.createElement("span");
-    desc.className = "ai-cmd-desc";
-    desc.textContent = item.description || "";
     row.appendChild(name);
-    row.appendChild(desc);
+    if (kind === "session") {
+      // title / message count / last activity / delete, left to right.
+      const count = document.createElement("span");
+      count.className = "ai-cmd-count";
+      count.textContent = item.count != null ? `${item.count} 条` : "";
+      const time = document.createElement("span");
+      time.className = "ai-cmd-time";
+      time.textContent = item.time || "";
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "ai-cmd-del";
+      del.textContent = "删除";
+      del.title = "删除此会话";
+      // Stop the row's resume handler from firing.
+      del.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        aiConfirmDelete(item);
+      });
+      count.hidden = !count.textContent;
+      time.hidden = !time.textContent;
+      row.appendChild(count);
+      row.appendChild(time);
+      row.appendChild(del);
+    } else {
+      const desc = document.createElement("span");
+      desc.className = "ai-cmd-desc";
+      desc.textContent = item.description || "";
+      row.appendChild(desc);
+    }
     // mousedown (not click) so selecting does not blur the input first.
     row.addEventListener("mousedown", (e) => {
       e.preventDefault();
@@ -1280,6 +1417,18 @@ function aiDrawerRender(items, kind) {
     });
     aiCmdEl.appendChild(row);
   });
+  if (kind === "session") {
+    // Key hints sit in one row below the list; the picker owns the keyboard.
+    const hint = document.createElement("div");
+    hint.className = "ai-cmd-hint";
+    const l1 = document.createElement("span");
+    l1.textContent = "enter - switch to this session";
+    const l2 = document.createElement("span");
+    l2.textContent = "d - delete this session";
+    hint.appendChild(l1);
+    hint.appendChild(l2);
+    aiCmdEl.appendChild(hint);
+  }
   aiCmdEl.hidden = false;
   if (kind === "session") aiCmdEl.focus();
 }
@@ -1295,6 +1444,115 @@ function aiCancelResume() {
   aiDrawerHide();
   aiInputEl.disabled = false;
   aiInputEl.focus();
+}
+
+// aiConfirmDelete opens a modal over the session picker asking whether to
+// delete the highlighted session. Esc (handled globally) cancels it.
+function aiConfirmDelete(item) {
+  if (aiConfirm || !item || !item.sessionId) return;
+  aiConfirm = { sessionId: item.sessionId, label: item.label };
+  const overlay = document.createElement("div");
+  overlay.className = "ai-confirm";
+  overlay.tabIndex = -1;
+  const box = document.createElement("div");
+  box.className = "ai-confirm-box";
+  const msg = document.createElement("p");
+  msg.className = "ai-confirm-msg";
+  msg.textContent = `删除会话「${item.label}」？此操作不可撤销。`;
+  const actions = document.createElement("div");
+  actions.className = "ai-confirm-actions";
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "ai-confirm-delete";
+  del.textContent = "删除";
+  del.addEventListener("click", () => aiConfirmAccept());
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "ai-confirm-cancel";
+  cancel.textContent = "取消 (Esc)";
+  cancel.addEventListener("click", () => aiConfirmClose());
+  actions.appendChild(del);
+  actions.appendChild(cancel);
+  box.appendChild(msg);
+  box.appendChild(actions);
+  overlay.appendChild(box);
+  // Clicking outside the box cancels; clicks inside must not.
+  overlay.addEventListener("mousedown", (e) => {
+    if (e.target === overlay) {
+      e.preventDefault();
+      aiConfirmClose();
+    }
+  });
+  // Enter confirms; Esc is handled by the global listener (it unwinds this
+  // modal one layer before touching the drawer).
+  overlay.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) {
+      e.preventDefault();
+      aiConfirmAccept();
+    }
+  });
+  document.body.appendChild(overlay);
+  del.focus();
+}
+
+function aiConfirmClose() {
+  if (!aiConfirm) return;
+  aiConfirm = null;
+  const el = document.querySelector(".ai-confirm");
+  if (el) el.remove();
+  if (aiDrawer) aiCmdEl.focus();
+}
+
+// aiConfirmAccept purges the session from both the live ai registry and the log
+// history, then updates the picker.
+async function aiConfirmAccept() {
+  if (!aiConfirm) return;
+  const sessionId = aiConfirm.sessionId;
+  aiConfirmClose();
+  try {
+    // Free the in-memory session if it is live; 404 just means it was idle.
+    await fetch(`${AI_BASE}/ai/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml.dump({ id: sessionId }),
+    });
+    const res = await fetch(`${LOG_BASE}/log/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml.dump({ sessionId }),
+    });
+    const data = yaml.load(await res.text()) || {};
+    if (!res.ok) throw new Error(data.error?.message || res.status);
+    if (aiSession === sessionId) {
+      // The open conversation is gone; start a fresh one and leave the picker.
+      aiMessagesEl.innerHTML = "";
+      aiClearImages();
+      await aiNew();
+      aiCancelResume();
+      return;
+    }
+    aiDrawerRemove(sessionId);
+  } catch (err) {
+    aiAppend("assistant", `[error] ${err.message}`);
+  }
+}
+
+// aiDrawerRemove drops a deleted session from the picker, or leaves it when
+// none remain.
+function aiDrawerRemove(sessionId) {
+  if (!aiDrawer || aiDrawer.kind !== "session") return;
+  const items = aiDrawer.items.filter((it) => it.sessionId !== sessionId);
+  if (!items.length) {
+    aiAppend("assistant", "没有可恢复的历史会话。");
+    aiCancelResume();
+    return;
+  }
+  const index = Math.min(aiDrawer.index, items.length - 1);
+  aiDrawerRender(items, "session");
+  aiDrawer.index = index;
+  aiCmdEl.querySelectorAll(".ai-cmd-item").forEach((el, i) => {
+    el.classList.toggle("active", i === index);
+  });
 }
 
 function aiDrawerMove(delta) {
@@ -1370,6 +1628,9 @@ async function aiCommandResume() {
       sessions.map((s) => ({
         label: aiOneLine(s.preview).slice(0, 80) || s.sessionId,
         description: `${s.count} 条 · ${s.lastAt}`,
+        count: s.count,
+        time: s.lastAt,
+        sessionId: s.sessionId,
         run: () => aiResumeSession(s.sessionId),
       })),
       "session",
@@ -1380,48 +1641,135 @@ async function aiCommandResume() {
   }
 }
 
-async function aiResumeSession(id) {
-  try {
-    const res = await fetch(`${AI_BASE}/ai/resume`, {
-      method: "POST",
-      headers: { "Content-Type": "application/yaml" },
-      body: yaml.dump({ id }),
-    });
-    const data = yaml.load(await res.text()) || {};
-    if (!res.ok) throw new Error(data.error?.message || res.status);
-    const detailRes = await fetch(`${LOG_BASE}/log/session-detail`, {
-      method: "POST",
-      headers: { "Content-Type": "application/yaml" },
-      body: yaml.dump({ sessionId: id }),
-    });
-    const detail = yaml.load(await detailRes.text()) || {};
-    aiMessagesEl.innerHTML = "";
-    for (const m of detail.messages || []) {
-      if (m.msgKind === "assistant") {
-        if (m.content) aiStaticMarkdown(m.content);
-        continue;
+// aiLoadSession resumes an existing session: rebuild the server-side context
+// from log, replay the recorded messages, then reattach to the live stream when
+// a run is still in flight. Throws on failure so callers can choose a fallback.
+// aiImageSrc turns a stored image block into a displayable src: a content-
+// addressed blob URL for refs, or an inline data URL for raw base64.
+function aiImageSrc(b) {
+  if (b && b.sha256) return `${AI_BASE}/blobs/${b.sha256}`;
+  if (b && b.data) return `data:${b.mimeType || "image/png"};base64,${b.data}`;
+  return "";
+}
+
+// aiRenderRaw replays one stored pi message. `tools` carries tool bubbles across
+// messages so a toolResult can fill the block opened by its toolCall.
+function aiRenderRaw(raw, tools) {
+  if (!raw || !raw.role) return;
+  if (raw.role === "user") {
+    const content =
+      typeof raw.content === "string"
+        ? [{ type: "text", text: raw.content }]
+        : raw.content || [];
+    const parts = [];
+    for (const b of content) {
+      if (b.type === "text" && b.text) parts.push({ type: "text", text: b.text });
+      else if (b.type === "image") {
+        const src = aiImageSrc(b);
+        if (src) parts.push({ type: "image", src });
       }
-      const blocks =
-        Array.isArray(m.blocks) && m.blocks.length
-          ? m.blocks
-          : m.content
-            ? [{ type: "text", text: m.content }]
-            : [];
-      const parts = [];
-      for (const b of blocks) {
-        if (b.type === "text" && b.text) {
-          parts.push({ type: "text", text: b.text });
-        } else if (b.type === "image" && b.sha256) {
-          parts.push({ type: "image", src: `${AI_BASE}/blobs/${b.sha256}` });
-        }
-      }
-      if (parts.length) aiAppendUserParts(parts);
     }
-    // Continue the same session; skip events the server already emitted so a
-    // resumed in-memory session does not replay old ones.
-    aiSession = id;
-    aiSeenSeq = Number(data.lastSeq) || 0;
-    aiScrollToBottom();
+    if (parts.length) aiAppendUserParts(parts);
+    return;
+  }
+  if (raw.role === "assistant") {
+    for (const b of raw.content || []) {
+      if (b.type === "text" && b.text) aiStaticMarkdown(b.text);
+      else if (b.type === "thinking" && b.thinking) {
+        const t = aiThinking();
+        t.body.textContent = b.thinking;
+        aiSettle(t.block, "done");
+      } else if (b.type === "toolCall") {
+        tools.set(b.id, aiTool(b.name, b.arguments));
+      }
+    }
+    return;
+  }
+  if (raw.role === "toolResult") {
+    const t = tools.get(raw.toolCallId);
+    if (!t) return;
+    const out = (Array.isArray(raw.content) ? raw.content : [])
+      .filter((b) => b.type === "text" && b.text)
+      .map((b) => b.text)
+      .join("\n");
+    if (out) t.body.textContent += `\n${out}`;
+    aiSettle(t.block, raw.isError ? "error" : "done");
+    tools.delete(raw.toolCallId);
+    return;
+  }
+  if (raw.role === "compaction") {
+    const div = document.createElement("div");
+    div.className = "ai-msg ai-compaction";
+    div.textContent = "上下文已压缩";
+    aiMessagesEl.appendChild(div);
+  }
+}
+
+// aiRenderLegacy replays a pre-raw record (msgKind/blocks/content).
+function aiRenderLegacy(m) {
+  if (m.role === "assistant" || m.msgKind === "assistant") {
+    if (m.content) aiStaticMarkdown(m.content);
+    return;
+  }
+  const blocks =
+    Array.isArray(m.blocks) && m.blocks.length
+      ? m.blocks
+      : m.content
+        ? [{ type: "text", text: m.content }]
+        : [];
+  const parts = [];
+  for (const b of blocks) {
+    if (b.type === "text" && b.text) parts.push({ type: "text", text: b.text });
+    else if (b.type === "image") {
+      const src = aiImageSrc(b);
+      if (src) parts.push({ type: "image", src });
+    }
+  }
+  if (parts.length) aiAppendUserParts(parts);
+}
+
+// aiRenderHistory replays a session's stored records into the message area.
+function aiRenderHistory(messages) {
+  aiMessagesEl.innerHTML = "";
+  const tools = new Map(); // toolCallId -> { block, body }
+  for (const m of messages) {
+    if (m.raw) aiRenderRaw(m.raw, tools);
+    else aiRenderLegacy(m);
+  }
+}
+
+async function aiLoadSession(id) {
+  // Switching sessions must stop the previous session's live stream first.
+  aiCancelStream();
+  const res = await fetch(`${AI_BASE}/ai/resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump({ id }),
+  });
+  const data = yaml.load(await res.text()) || {};
+  if (!res.ok) throw new Error(data.error?.message || res.status);
+  const detailRes = await fetch(`${LOG_BASE}/log/session-detail`, {
+    method: "POST",
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump({ sessionId: id }),
+  });
+  const detail = yaml.load(await detailRes.text()) || {};
+  aiRenderHistory(detail.messages || []);
+  // Continue the same session; skip the events already emitted so a resumed
+  // in-memory session does not replay old ones.
+  aiSession = id;
+  aiSeenSeq = Number(data.lastSeq) || 0;
+  aiRememberSession(id);
+  aiScrollToBottom();
+  // The run may still be executing server-side (our stream was cut); reattach so
+  // the events emitted while we were away are replayed from lastSeq.
+  if (data.active) await aiStream();
+}
+
+async function aiResumeSession(id) {
+  aiInputEl.disabled = true;
+  try {
+    await aiLoadSession(id);
   } catch (err) {
     aiAppend("assistant", `[error] ${err.message}`);
   } finally {
@@ -1483,10 +1831,24 @@ function aiSetOpen(open) {
 async function aiOpen() {
   aiSetOpen(true);
   if (!aiSession) {
-    try {
-      await aiNew();
-    } catch (err) {
-      aiAppend("assistant", `[error] ${err.message}`);
+    // A reload should pick up where the user left off: resume the remembered
+    // session (replaying its history) instead of starting a new one.
+    const last = aiStoredSession();
+    let resumed = false;
+    if (last) {
+      try {
+        await aiLoadSession(last);
+        resumed = true;
+      } catch (err) {
+        // stale id or history gone — fall back to a fresh session below
+      }
+    }
+    if (!resumed) {
+      try {
+        await aiNew();
+      } catch (err) {
+        aiAppend("assistant", `[error] ${err.message}`);
+      }
     }
   }
   aiInputEl.focus();
@@ -1591,9 +1953,20 @@ aiInputEl.addEventListener("keydown", (event) => {
 });
 
 // The session picker runs with the input disabled, so keyboard navigation lives
-// on the drawer element itself.
+// on the drawer element itself. IME composition is tracked separately because
+// on macOS the keydown that begins pinyin composition can arrive with
+// isComposing false, which must not be mistaken for a "delete" keystroke.
+let aiComposing = false;
+aiCmdEl.addEventListener("compositionstart", () => {
+  aiComposing = true;
+});
+aiCmdEl.addEventListener("compositionend", () => {
+  aiComposing = false;
+});
+
 aiCmdEl.addEventListener("keydown", (event) => {
   if (!aiDrawer) return;
+  if (aiConfirm) return;
   if (event.key === "ArrowDown") {
     event.preventDefault();
     aiDrawerMove(1);
@@ -1603,6 +1976,16 @@ aiCmdEl.addEventListener("keydown", (event) => {
   } else if (event.key === "Enter") {
     event.preventDefault();
     aiDrawerSelect(aiDrawer.index);
+  } else if (
+    (event.key === "d" || event.key === "D") &&
+    aiDrawer.kind === "session"
+  ) {
+    // Only a genuinely typed "d" deletes; ignore IME composition keystrokes so
+    // typing pinyin (or committing a candidate with Enter) never triggers it.
+    if (aiComposing || event.isComposing || event.keyCode === 229) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    event.preventDefault();
+    aiConfirmDelete(aiDrawer.items[aiDrawer.index]);
   }
 });
 
@@ -1610,6 +1993,11 @@ aiCmdEl.addEventListener("keydown", (event) => {
 // command list) back to the normal chat flow, then stop the in-flight run.
 window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  if (aiConfirm) {
+    event.preventDefault();
+    aiConfirmClose();
+    return;
+  }
   if (!themeMenuEl.hidden) {
     event.preventDefault();
     themeMenuHide();

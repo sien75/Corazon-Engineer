@@ -1,24 +1,30 @@
 # runtime
 
-How to run this project in each environment, and which tests apply. This file is the contract for the `runtime/` tree — read it before doing anything here.
+> This English file is authoritative; the Chinese mirror is `README_zh.md`.
+
+Verifies the running system and interacts with its resources. This file is the contract for the `runtime/` tree — read it before doing anything here. A plain file tree; the layout below is its contract.
 
 ## Layout
 
 ```
 runtime/
 ├── README.md          # this file
-├── cookbooks/[env]/   # one dir per environment; env name = dir name
-│   ├── BOOK.md        # how to launch / connect / observe this env (prose)
-│   └── *.sh           # the env's real entry files (e.g. launch.sh, install.sh)
-└── tests/[env]/       # system tests bound to this env (env name must match cookbooks/)
-    └── case-xxx/
-        ├── desp.yaml  # test metadata: atoms (required), env (optional)
-        └── TEST.md    # the test case itself
+├── testing/[env]/     # E2E tests; env name = dir name
+│   └── case-xxx/
+│       ├── desp.yaml  # test metadata: atoms (required), env (optional)
+│       └── TEST.md    # the case itself
+└── operation/         # how to connect to / observe resources (db, cache, logs, services)
 ```
+
+Two modules:
+
+- **`testing/`** — E2E tests from the real user's point of view, exercising the business system through its UI / API.
+- **`operation/`** — connecting to and observing resources (databases, caches, logs, service instances), including telemetry: live monitoring, historical log queries, and active operations.
 
 ## Conventions
 
-- Env name = directory name under `cookbooks/`; `tests/[env]` must use the same name; `corazon.yaml`'s `default_runtime` must exist.
+- Env name = directory name under `testing/`; `corazon.yaml`'s `default_runtime` must exist.
 - Structured data lives in yaml: test metadata in `desp.yaml`. Everything else is prose.
-- An env is launched by its own real entry point, never generated from BOOK.md: `dev/` uses `launch.sh`, `prod/` ships `install.sh` that points the `corazon` command at the compiled launcher (`runtime/cookbooks/prod/launch.go`). The launcher owns port selection — defaults plus advance-on-conflict — and passes the chosen addresses to each atom; there is no port config file. It prints the addresses it chose, so they are discovered at run time rather than declared. How it is torn down is the env's own business: `dev/` ships a `stop.sh`, `prod/` holds the foreground and exits on Ctrl-C.
-- Credentials are not configured here. The ai service's LLM provider key comes from pi's own config (env vars or `~/.pi/agent/auth.json`). External tools keep their own credentials under their own `~/.xxx` locations.
+- How an environment is built, launched, and deployed lives in `devtime/deploy/`, not here.
+- Credentials are not configured here. External tools keep their own credentials under their own `~/.xxx` locations.
+</content>

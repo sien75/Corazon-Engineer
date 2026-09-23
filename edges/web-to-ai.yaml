@@ -23,3 +23,11 @@ edges:
     channel: network
     protocol: http
     description: Web frontend resumes a history session; ai rebuilds its text context from log
+  - id: web-to-ai-delete
+    from: web
+    from_interface: ai-delete
+    to: ai
+    to_interface: ai-delete
+    channel: network
+    protocol: http
+    description: Web frontend deletes a session, releasing the live in-memory agent

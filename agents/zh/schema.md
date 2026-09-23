@@ -2,28 +2,29 @@
 
 ## 总体结构
 
-schema 由 **静态结构** 与 **场景** 组成：
+schema 由「**是什么**」与「**怎么做**」组成：
 
 ```
-静态结构 (atom & edge) —— 定义系统结构
-├── Atom 层       atoms/      原子项目
-│   └── Contract  contracts/  接口契约
-├── Edge 层       edges/      连接定义
-├── Docs          docs/       参考文档（引用 contract）
-│   └── Contract  contracts/  接口契约
-└── Notes         notes/      批注
+是什么 —— 定义系统结构
+├── Atom 层       atoms/      原子项目   —— yaml
+├── Edge 层       edges/      连接定义   —— yaml
+├── Contract      contracts/  接口契约   —— yaml
+├── Workspace     workspace/  原子代码   —— 代码
+├── Docs          docs/       对外文档   —— 散文
+└── Notes         notes/      内部批注   —— 散文
 
-场景 —— 填充具体内容
-├── Runtime       runtime/    如何运行 + 跑哪些测试（普通文件树；见 runtime/README.md）
-└── Devtime       devtime/    开发时记录
-    └── Contract  contracts/  接口契约
+怎么做 —— 开发与运行
+├── Devtime       devtime/    怎么开发（architecture + coding + deploy）—— 散文
+└── Runtime       runtime/    怎么测试与操作（testing + operation）      —— 散文
 ```
+
+`workspace/` 放各 atom 的实现代码。atom 通过 `repo` 关联上游仓库、通过 `path` 关联本地检出;代码可以放在 `workspace/`(默认),也可以放在 `path` 指向的任意位置 —— **不一定要在这个仓库里**。
 
 ---
 
 ## 文件组织
 
-根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目一律忽略——永不解析为内容。
+根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目都是**特殊条目**——它们不参与该目录的并列结构（不作为内容实体）。
 
 ```yaml
 # corazon.yaml —— 只放根 meta，不枚举数据文件
@@ -47,22 +48,24 @@ project/
 ├── edges/                     # *.yaml → edge
 │   ├── user-to-notification.yaml
 │   └── ...
-├── runtime/                   # 普通文件树：如何运行 + 跑哪些测试（布局由 runtime/README.md 定义）
-│   ├── README.md              # runtime 树自身的约定 —— 先读
-│   ├── cookbooks/             # 每个 env 一个目录（env 名 = 目录名）
-│   │   └── dev/               # BOOK.md（拉起/连接/观测）+ launch.sh（启动器）
-│   └── tests/                 # 每个 env 的系统测试
-│       └── dev/               # case-xxx/ → desp.yaml（元数据）+ TEST.md（用例）
-├── devtime/                   # *.md → 开发时记录（会议 / ADR / changelog）
 ├── contracts/                 # 内容文件（接口 contract yaml）
 │   ├── create-user-api.yaml
 │   ├── user-created-event.yaml
 │   ├── postgres-client.yaml
 │   ├── redis-client.yaml
 │   └── ...
-├── docs/                      # *.md → 参考文档（引用 contract）
-├── notes/                     # *.md → 批注（anchor 指向实体）
-└── workspace/                 # 本地代码仓库
+├── workspace/                 # 本地代码仓库（检出）
+├── docs/                      # *.md → 对外文档
+├── notes/                     # *.md → 内部批注（标记 + thread，锚定实体）
+├── devtime/                   # 普通文件树：开发时资料（布局由 devtime/README.md 定义）
+│   ├── README.md              # devtime 树自身的约定 —— 先读
+│   ├── architecture/          # 编码前的需求分析与架构设计
+│   ├── coding/                # 代码改动 + 单元测试
+│   └── deploy/                # 构建 / 打包 / 启动 / 部署
+└── runtime/                   # 普通文件树：testing + operation（布局由 runtime/README.md 定义）
+    ├── README.md              # runtime 树自身的约定 —— 先读
+    ├── testing/               # E2E 测试
+    └── operation/             # 连接 / 观测资源（数据库、缓存、日志、服务）
 ```
 
 ---
@@ -139,28 +142,6 @@ edges:
 
 ---
 
-## Runtime 层 — 运行环境映射
-
-把 schema 映射到具体运行环境。`runtime/` 是一个**普通文件树**（同 `devtime/`），不是结构化 YAML schema —— 它的布局与含义由 `runtime/README.md` 定义，README 就是这棵树的契约。消费方是 web 前端（原样返回文件、不解析结构）和 AI（先读 README，再读需要的文件，用于拉起/连接/观测/测试某个环境）。需要结构化值时，放进树内的小 YAML 文件（如 `desp.yaml`）；约定是项目自己的，写进 `runtime/README.md`。每个 env 由自己的 `launch.sh`（真实脚本，不是从散文生成的）启动，端口由它选定并在启动时下发给各 atom。
-
-典型布局（每个 env 一个目录）：
-
-```
-runtime/
-├── README.md          # runtime 树自身的约定 —— 先读
-├── cookbooks/[env]/   # env 名 = 目录名
-│   ├── BOOK.md        # 该 env 怎么拉起/连接/观测（散文）
-│   └── launch.sh      # 该 env 的启动器（选端口、拉起各 atom）
-└── tests/[env]/       # 绑定到该 env 的系统测试
-    └── case-xxx/
-        ├── desp.yaml  # 测试元数据：atoms 必填，env 可省
-        └── TEST.md    # 测试用例本身
-```
-
-由于这棵树以散文为主，这里没有强制的 schema：端口、endpoint、telemetry 都在 cookbook 里描述、由该 env 的 `launch.sh` 落实，AI 应当读 README 并遵循项目声明的约定，而不是依赖固定结构。
-
----
-
 ## Contract 文件 — 接口契约
 
 描述接口的输入输出与错误，位于 `contracts/`。被 atom 的 `interfaces` 和 test 引用。格式：
@@ -197,20 +178,37 @@ errors:
 
 ---
 
-## Test 文件 — 测试用例
+## Docs 文件 — 对外文档
 
-系统级测试放在 runtime 树内（见 Runtime 层）：`runtime/tests/[env]/case-xxx/`，含 `desp.yaml`（元数据）和 `TEST.md`（用例）。用例文件本身为普通 markdown，不做格式约定。
+对外文档，位于 `docs/`。为普通 markdown 文件，不做格式约定。
 
-测试绝不对真实项目树执行。测试在 `.corazon/.playground/` 中运行——`.corazon/` 是项目根下 git 忽略的私有目录，`.corazon/.playground/` 是其下的空白或 mock corazon 项目，由测试准备步骤搭建（如从 `runtime/tests/dev/.playground/` 这类 fixture 生成）。被测后端启动时将项目根指向 `.corazon/.playground/`，增删改只落在 mock 上。
+---
 
-## Devtime 文件 — 开发时记录
+## Notes 文件 — 内部批注
 
-记录开发过程中的会议、ADR、changelog 等，位于 `devtime/`。为普通 markdown 文件，不做格式约定。
+针对某个实体的内部标记与讨论，位于 `notes/`。为普通 markdown 文件，不做格式约定。
 
-## Docs 文件 — 参考文档
+---
 
-面向使用者的参考文档，位于 `docs/`。为普通 markdown 文件，不做格式约定。
+## Devtime 文件 — 开发时资料
 
-## Notes 文件 — 批注
+把需求变成可运行系统的一切，位于 `devtime/`。为普通文件树（同 `runtime/`），布局由 `devtime/README.md` 定义。三个模块：
 
-针对某个实体的标记与讨论，位于 `notes/`。为普通 markdown 文件，不做格式约定。
+- **`architecture/`** —— 需求分析、架构设计及编码前的设计工作（会议、ADR、迭代记录）。
+- **`coding/`** —— 编写 / 修改代码及单元测试。
+- **`deploy/`** —— 每个环境的构建、打包、启动与部署；负责确保项目成功启动，不负责验证业务功能。
+
+以普通 markdown 为主，不做格式约定；也可能包含脚本文件（如 deploy 脚本）。应当读 README 并遵循项目声明的约定。
+
+---
+
+## Runtime 层 — 运行系统与资源交互
+
+运行中的系统及其资源，位于 `runtime/`。为普通文件树（同 `devtime/`），布局由 `runtime/README.md` 定义。两个模块：
+
+- **`testing/`** —— 从真实用户视角的 E2E 测试，通过 UI / API 操作业务系统验证功能。
+- **`operation/`** —— 连接并观测资源（数据库、缓存、日志、服务实例），含 telemetry：实时监控、历史日志查询，以及对底层资源的主动操作。
+
+系统级测试放在 `testing/` 下，含 `desp.yaml`（元数据）和 `TEST.md`（用例）；不得对真实项目树执行。
+
+以普通 markdown 为主，不做格式约定；也可能包含脚本文件。应当读 README 并遵循项目声明的约定。

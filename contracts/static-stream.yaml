@@ -1,9 +1,8 @@
 id: static-stream
-description: Long-lived connection pushing events; schema mutation events now (mirrors static-mutation), execution events (call / test / devtime) reserved.
+description: Long-lived connection pushing schema-change events; the service watches the schema file tree and emits an event whenever a content file is added, updated or removed. Execution events (call / test / devtime) reserved.
 
 request:
   body:
-    env: string  # runtime env name
     kinds?: string  # event kinds to subscribe (comma-separated); empty = all
     edges?: string  # edge ids to subscribe; only for kind=runtime (reserved); empty = all
 
@@ -12,16 +11,15 @@ response:
   stream: sse  # body below is the schema of each event
   body:
     seq: number  # event sequence
-    env: string
     ts: string  # date-time
     kind: schema | runtime | test | devtime  # schema implemented; others reserved
 
     payload:
-      # kind=schema: content snapshot, shape matches the type below (see static-mutation)
+      # kind=schema: content snapshot of the changed file, shape matches the type below
       op: add | update | remove
       type: atom | edge | runtime | devtime | contract | docs | notes
-      id: string  # object path, e.g. "contracts/ai-ask.yaml"; backend-generated on add
-      file: string  # written file; coincides with id for leaf files
+      id: string  # changed file path, e.g. "contracts/ai-ask.yaml"
+      file: string  # changed file; coincides with id
 
       atom?:  # when type=atom
         name: string
@@ -76,9 +74,6 @@ errors:
   - status: 400
     code: bad_request
     description: bad request
-  - status: 404
-    code: not_found
-    description: env not found
   - status: 500
     code: internal
     description: server error

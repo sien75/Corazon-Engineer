@@ -1,6 +1,12 @@
 # Schema Enum Reference
 
-## Communication (interface.channel / interface.protocol)
+## Communication (channel / protocol)
+
+Used by:
+
+- `atom.interfaces.provides[].channel` / `atom.interfaces.provides[].protocol`
+- `atom.interfaces.consumes[].channel` / `atom.interfaces.consumes[].protocol`
+- `edge.channel` / `edge.protocol`
 
 ### channel
 

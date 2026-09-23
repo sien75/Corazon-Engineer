@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,13 +25,13 @@ func New(root string) *Server {
 	s := &Server{root: root, mux: http.NewServeMux(), broker: NewBroker()}
 	s.mux.HandleFunc("POST /static/query", s.handleSchemaQuery)
 	s.mux.HandleFunc("POST /static/query-detail", s.handleSchemaQueryDetail)
-	s.mux.HandleFunc("POST /static/mutation", s.handleSchemaMutation)
-	s.mux.HandleFunc("POST /static/search", s.handleSearch)
+	s.mux.HandleFunc("POST /static/validate", s.handleValidate)
 	s.mux.HandleFunc("POST /static/stream", s.handleEvent)
 	return s
 }
 
 func (s *Server) Listen(addr string) error {
+	go s.watch()
 	return http.ListenAndServe(addr, cors(s.mux))
 }
 
@@ -103,12 +102,6 @@ func (s *Server) safePath(id string) (string, error) {
 // ---------- static-query ----------
 
 func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Env string `yaml:"env"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
 	atoms, err := schema.LoadAtoms(s.root)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
@@ -119,28 +112,10 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	var runtimeEntries []string
-	all := schema.ListEntries(s.root, "runtime")
-	if req.Env != "" {
-		if !containsStr(schema.RuntimeEnvs(s.root), req.Env) {
-			writeErr(w, http.StatusNotFound, "not_found", "runtime env not found: "+req.Env)
-			return
-		}
-		// runtime content is a plain file tree; env filter keeps only that env's
-		// cookbooks/[env]/ and tests/[env]/ subtrees.
-		for _, p := range all {
-			if strings.HasPrefix(p, "runtime/cookbooks/"+req.Env+"/") ||
-				strings.HasPrefix(p, "runtime/tests/"+req.Env+"/") {
-				runtimeEntries = append(runtimeEntries, p)
-			}
-		}
-	} else {
-		runtimeEntries = all
-	}
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
 		"atoms":     atoms,
 		"edges":     edges,
-		"runtime":   runtimeEntries,
+		"runtime":   schema.ListEntries(s.root, "runtime"),
 		"contracts": schema.ListEntries(s.root, "contracts"),
 		"devtime":   schema.ListEntries(s.root, "devtime"),
 		"docs":      schema.ListEntries(s.root, "docs"),
@@ -191,226 +166,135 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 	writeYAMLResp(w, http.StatusOK, resp)
 }
 
-// ---------- static-mutation ----------
+// ---------- static-validate ----------
 
-func (s *Server) handleSchemaMutation(w http.ResponseWriter, r *http.Request) {
-	var req map[string]interface{}
-	if !decode(w, r, &req) {
-		return
-	}
-	op, _ := req["op"].(string)
-	objType, _ := req["type"].(string)
-	id, _ := req["id"].(string)
-	if !containsStr([]string{"add", "update", "remove"}, op) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid op: "+op)
-		return
-	}
-	if !containsStr(schema.ObjectTypes, objType) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid type: "+objType)
-		return
-	}
-	body, _ := req[objType].(map[string]interface{})
-	rawStr, isRaw := req[objType].(string)
-	// raw-content types take a string body
-	rawType := objType == "runtime" || objType == "devtime" || objType == "docs" || objType == "notes"
-
-	if op != "remove" {
-		if isRaw != rawType {
-			writeErr(w, http.StatusBadRequest, "bad_request", "field "+objType+" has wrong shape for its type")
-			return
-		}
-		if !isRaw && body == nil {
-			writeErr(w, http.StatusBadRequest, "bad_request", "missing field: "+objType)
-			return
-		}
-		if !isRaw {
-			if errs := schema.Validate(objType, body); len(errs) > 0 {
-				writeYAMLResp(w, http.StatusUnprocessableEntity, map[string]interface{}{
-					"error": map[string]interface{}{
-						"code":    "validation_failed",
-						"message": "content does not conform to the type's format conventions; file NOT written",
-					},
-					"errors": errs,
-				})
-				return
-			}
-		}
-	}
-
-	if id == "" && op == "add" {
-		id = generateID(objType, body)
-	}
-	if id == "" || !strings.HasPrefix(id, schema.TypeDirs[objType]+"/") {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid id: "+id)
-		return
-	}
-	path, err := s.safePath(id)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	_, statErr := os.Stat(path)
-	exists := statErr == nil
-
-	switch op {
-	case "add":
-		if exists {
-			writeErr(w, http.StatusBadRequest, "bad_request", "object already exists: "+id)
-			return
-		}
-		if err := s.writeObject(objType, path, id, body, rawStr); err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-			return
-		}
-	case "update":
-		if !exists {
-			writeErr(w, http.StatusNotFound, "not_found", "object not found: "+id)
-			return
-		}
-		if err := s.writeObject(objType, path, id, body, rawStr); err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-			return
-		}
-	case "remove":
-		if !exists {
-			writeErr(w, http.StatusNotFound, "not_found", "object not found: "+id)
-			return
-		}
-		if err := os.Remove(path); err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-			return
-		}
-	}
-
-	s.broker.Publish(SchemaEvent{
-		Kind:    "schema",
-		Op:      op,
-		Type:    objType,
-		ID:      id,
-		File:    id,
-		Content: req[objType],
-	})
+// handleValidate validates the whole schema tree (atoms / edges / contracts)
+// and returns every field-level error. Read-only; no side effects.
+func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
+	errs := schema.ValidateTree(s.root)
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
-		"op": op, "type": objType, "id": id, "file": id,
+		"ok":     len(errs) == 0,
+		"errors": errs,
 	})
 }
 
-func generateID(objType string, body map[string]interface{}) string {
-	dir := schema.TypeDirs[objType]
-	name := "unnamed"
-	if body != nil {
-		if n, ok := body["name"].(string); ok && n != "" {
-			name = n
-		} else if n, ok := body["id"].(string); ok && n != "" {
-			name = n
-		}
-	}
-	ext := ".yaml"
-	if objType == "runtime" || objType == "devtime" || objType == "docs" || objType == "notes" {
-		ext = ".md"
-	}
-	return dir + "/" + name + ext
+// ---------- file watcher (feeds static-stream) ----------
+
+type fileStamp struct {
+	size int64
+	mod  int64
 }
 
-func (s *Server) writeObject(objType, path, id string, body map[string]interface{}, raw string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	switch objType {
-	case "atom":
-		return writeYAML(path, map[string]interface{}{"atoms": []interface{}{body}})
-	case "edge":
-		return writeYAML(path, map[string]interface{}{"edges": []interface{}{body}})
-	case "contract":
-		return writeYAML(path, body)
-	default: // runtime, devtime, docs, notes — raw content
-		return os.WriteFile(path, []byte(raw), 0o644)
-	}
-}
-
-func writeYAML(path string, v interface{}) error {
-	data, err := yaml.Marshal(v)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o644)
-}
-
-// ---------- search ----------
-
-var searchDirs = map[string]string{
-	"atoms": "atom", "edges": "edge", "runtime": "runtime", "contracts": "contract",
-	"devtime": "devtime", "docs": "docs", "notes": "notes",
-}
-
-func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Q string `yaml:"q"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	if strings.TrimSpace(req.Q) == "" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "q missing or empty")
-		return
-	}
-	q := strings.ToLower(req.Q)
-	type result struct {
-		Type    string `yaml:"type"`
-		File    string `yaml:"file"`
-		Lines   [2]int `yaml:"lines"`
-		Snippet string `yaml:"snippet"`
-	}
-	results := []result{}
-	dirs := make([]string, 0, len(searchDirs))
-	for d := range searchDirs {
-		dirs = append(dirs, d)
-	}
-	sort.Strings(dirs)
-	for _, dir := range dirs {
-		for _, rel := range schema.ListEntries(s.root, dir) {
-			if len(results) >= 50 {
-				break
+// watch polls the schema tree and publishes a schema event whenever a content
+// file is added, changed or removed. Polling (rather than an inotify/kqueue
+// library) keeps the service dependency-free and is robust to editors that swap
+// files via rename and to files created inside new subdirectories.
+func (s *Server) watch() {
+	const interval = 1 * time.Second
+	prev := s.snapshot()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		cur := s.snapshot()
+		for rel, stamp := range cur {
+			old, existed := prev[rel]
+			if !existed {
+				s.publishSchema("add", rel)
+			} else if old != stamp {
+				s.publishSchema("update", rel)
 			}
-			data, err := os.ReadFile(filepath.Join(s.root, filepath.FromSlash(rel)))
+		}
+		for rel := range prev {
+			if _, ok := cur[rel]; !ok {
+				s.publishSchema("remove", rel)
+			}
+		}
+		prev = cur
+	}
+}
+
+// snapshot maps every content file (relative path) to its size + mod time.
+func (s *Server) snapshot() map[string]fileStamp {
+	out := map[string]fileStamp{}
+	for _, dir := range schema.TypeDirs {
+		for _, rel := range schema.ListEntries(s.root, dir) {
+			info, err := os.Stat(filepath.Join(s.root, filepath.FromSlash(rel)))
 			if err != nil {
 				continue
 			}
-			for i, line := range strings.Split(string(data), "\n") {
-				if strings.Contains(strings.ToLower(line), q) {
-					results = append(results, result{
-						Type:    searchDirs[dir],
-						File:    rel,
-						Lines:   [2]int{i + 1, i + 1},
-						Snippet: strings.TrimSpace(line),
-					})
-					if len(results) >= 50 {
-						break
-					}
-				}
-			}
+			out[rel] = fileStamp{size: info.Size(), mod: info.ModTime().UnixNano()}
 		}
 	}
-	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"q": req.Q, "results": results})
+	return out
+}
+
+// publishSchema emits one schema event for a changed content file.
+func (s *Server) publishSchema(op, rel string) {
+	typ := contentType(rel)
+	if typ == "" {
+		return
+	}
+	s.broker.Publish(SchemaEvent{
+		Kind:    "schema",
+		Op:      op,
+		Type:    typ,
+		ID:      rel,
+		File:    rel,
+		Content: s.eventContent(typ, rel),
+	})
+}
+
+// contentType maps a relative path's leading directory to its object type.
+func contentType(rel string) string {
+	dir := rel
+	if i := strings.IndexByte(rel, '/'); i >= 0 {
+		dir = rel[:i]
+	}
+	for typ, d := range schema.TypeDirs {
+		if d == dir {
+			return typ
+		}
+	}
+	return ""
+}
+
+// eventContent loads a changed file in the shape the stream contract declares:
+// atoms / edges / contracts as parsed objects, prose types as raw text. A
+// removed file yields nil.
+func (s *Server) eventContent(typ, rel string) interface{} {
+	data, err := os.ReadFile(filepath.Join(s.root, filepath.FromSlash(rel)))
+	if err != nil {
+		return nil
+	}
+	switch typ {
+	case "atom", "edge":
+		var doc map[string]interface{}
+		if yaml.Unmarshal(data, &doc) != nil {
+			return nil
+		}
+		if list, ok := doc[typ+"s"].([]interface{}); ok && len(list) > 0 {
+			return list[0]
+		}
+		return nil
+	case "contract":
+		var doc map[string]interface{}
+		if yaml.Unmarshal(data, &doc) != nil {
+			return nil
+		}
+		return doc
+	default:
+		return string(data)
+	}
 }
 
 // ---------- event (SSE) ----------
 
 func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Env   string `yaml:"env"`
 		Kinds string `yaml:"kinds"`
 		Edges string `yaml:"edges"`
 	}
 	if !decode(w, r, &req) {
-		return
-	}
-	if req.Env == "" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "env missing")
-		return
-	}
-	if !containsStr(schema.RuntimeEnvs(s.root), req.Env) {
-		writeErr(w, http.StatusNotFound, "not_found", "env not found: "+req.Env)
 		return
 	}
 	kinds := map[string]bool{}
@@ -448,9 +332,8 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 			}
 			seq++
 			payload := map[string]interface{}{
-				"seq":  seq,
-				"env":  req.Env,
-				"ts":   time.Now().UTC().Format(time.RFC3339),
+				"seq": seq,
+				"ts":  time.Now().UTC().Format(time.RFC3339),
 				"kind": ev.Kind,
 				"payload": map[string]interface{}{
 					"op":    ev.Op,

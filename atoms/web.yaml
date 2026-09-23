@@ -22,6 +22,13 @@ atoms:
           extend:
             path: /static/query-detail
             method: POST
+        - id: static-stream
+          channel: network
+          protocol: http
+          contract: ./contracts/static-stream.yaml
+          extend:
+            path: /static/stream
+            method: POST
         - id: ai-new
           channel: network
           protocol: http
@@ -56,6 +63,20 @@ atoms:
           contract: ./contracts/log-list.yaml
           extend:
             path: /log/list
+            method: POST
+        - id: log-delete
+          channel: network
+          protocol: http
+          contract: ./contracts/log-delete.yaml
+          extend:
+            path: /log/delete
+            method: POST
+        - id: ai-delete
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-delete.yaml
+          extend:
+            path: /ai/delete
             method: POST
         - id: log-session-detail
           channel: network

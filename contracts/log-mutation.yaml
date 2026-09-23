@@ -11,7 +11,12 @@ request:
     payload: object  # kind-specific content
       # kind=test:       case, atoms, req, resp, result — triggered by a runtime test
       # kind=telemetry:  signal (trace | metric | log), query, result — listening per runtime telemetry
-      # kind=conversation: seq, msgKind, content
+      # kind=conversation: seq, role, content, raw
+      #   role: user | assistant | toolResult | compaction
+      #   content: derived plain-text projection (session list preview / search)
+      #   raw: the pi message (or compaction entry) verbatim; the source of truth.
+      #        Image bytes are stored as content-addressed refs
+      #        { type: image, sha256, mimeType, size } and re-inlined on read.
 
 response:
   status: 200

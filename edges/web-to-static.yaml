@@ -15,3 +15,11 @@ edges:
     channel: network
     protocol: http
     description: Web frontend fetches section content (runtime/contracts/devtime/docs/notes) for the top menu views
+  - id: web-to-static-stream
+    from: web
+    from_interface: static-stream
+    to: static
+    to_interface: static-stream
+    channel: network
+    protocol: http
+    description: Web frontend subscribes to schema file-change events and reloads the graph / views live

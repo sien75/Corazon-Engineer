@@ -23,3 +23,11 @@ edges:
     channel: network
     protocol: http
     description: Web frontend fetches a session's messages to render resumed history
+  - id: web-to-log-delete
+    from: web
+    from_interface: log-delete
+    to: log
+    to_interface: log-delete
+    channel: network
+    protocol: http
+    description: Web frontend purges a session's conversation records when deleting it

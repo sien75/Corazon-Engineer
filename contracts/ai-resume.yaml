@@ -10,6 +10,7 @@ response:
   body:
     sessionId: string
     lastSeq: number  # last pi event seq already emitted for this session; 0 when freshly rebuilt
+    active: boolean  # whether a run is in flight; a resuming client should reattach to /ai/stream when true
 
 errors:
   - status: 400
