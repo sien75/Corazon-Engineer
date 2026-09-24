@@ -1,7 +1,7 @@
 #!/bin/sh
 # stop the dev stack started by launch.sh
 ROOT="$PWD"
-D="$ROOT/.corazon/dev"
+D="$ROOT/.engineer/dev"
 if [ ! -d "$D" ]; then
   echo "nothing to stop (no $D)"
   exit 0

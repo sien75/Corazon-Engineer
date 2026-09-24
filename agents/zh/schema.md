@@ -24,11 +24,11 @@ schema 由「**是什么**」与「**怎么做**」组成：
 
 ## 文件组织
 
-根 `corazon.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目都是**特殊条目**——它们不参与该目录的并列结构（不作为内容实体）。
+根 `engineer.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目都是**特殊条目**——它们不参与该目录的并列结构（不作为内容实体）。
 
 ```yaml
-# corazon.yaml —— 只放根 meta，不枚举数据文件
-project: Corazon
+# engineer.yaml —— 只放根 meta，不枚举数据文件
+project: Corazon Engineer
 version: 1.0
 default_runtime: dev
 # 可选：偏离约定时才写
@@ -40,7 +40,7 @@ exclude:
 
 ```
 project/
-├── corazon.yaml               # 仅根 meta（project、version、default_runtime、include/exclude）
+├── engineer.yaml               # 仅根 meta（project、version、default_runtime、include/exclude）
 ├── atoms/                     # *.yaml → atom
 │   ├── user-service.yaml
 │   ├── notification-service.yaml

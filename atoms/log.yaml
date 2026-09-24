@@ -1,6 +1,6 @@
 atoms:
   - name: log
-    description: Corazon log service — owns sqlite records (call / observe / conversation); exposes log query/detail/search/mutation/stream APIs
+    description: Corazon Engineer log service — owns sqlite records (call / observe / conversation); exposes log query/detail/search/mutation/stream APIs
     path: ./workspace/log
     runtime_type: go
     runtime_version: "1.22"

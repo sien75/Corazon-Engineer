@@ -23,7 +23,7 @@ runtime/
 
 ## 约定
 
-- env 名 = `testing/` 下的目录名;`corazon.yaml` 的 `default_runtime` 必须存在。
+- env 名 = `testing/` 下的目录名;`engineer.yaml` 的 `default_runtime` 必须存在。
 - 结构化数据放 yaml:测试元数据在 `desp.yaml`。其余都是散文。
 - 环境的构建、启动与部署配方放在 `devtime/deploy/`,不在这里。
 - 凭证不在这里配置。外部工具各自的凭证放在各自的 `~/.xxx` 位置。

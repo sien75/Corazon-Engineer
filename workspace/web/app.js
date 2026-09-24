@@ -6,7 +6,7 @@ import hljs from "./vendor/highlight.js";
 
 // Runtime addresses are injected by the launcher and served as /config.js
 // (see serve.js). Fall back to the default ports when opened without it.
-const RUNTIME = window.CORAZON ?? {
+const RUNTIME = window.ENGINEER ?? {
   static: "http://localhost:7502",
   ai: "http://localhost:7501",
   log: "http://localhost:7503",
@@ -244,7 +244,7 @@ async function refresh() {
 function createGraph(blocks, connections) {
   const g = new Graph(
     {
-      configurationName: "corazon",
+      configurationName: "engineer",
       blocks,
       connections,
       settings: {
@@ -305,7 +305,7 @@ function bindCameraClamp(g) {
 }
 
 const THEME_ORDER = ["light", "dark", "solarized"];
-const THEME_KEY = "corazon.theme";
+const THEME_KEY = "engineer.theme";
 
 const GRAPH_THEMES = {
   light: {
@@ -547,7 +547,7 @@ let aiStreamCtl = null; // { id, ctrl } | null
 let aiStreamGen = 0;
 // The last session id is persisted so a page reload can resume it instead of
 // starting a fresh conversation.
-const AI_SESSION_KEY = "corazon.ai.session";
+const AI_SESSION_KEY = "engineer.ai.session";
 // A dropped SSE connection reconnects with capped exponential backoff; the
 // server replays only the events after the last seq this client rendered.
 const AI_STREAM_MAX_RETRIES = 6;
@@ -1816,7 +1816,7 @@ window.addEventListener("click", (event) => {
   }
 });
 
-const AI_OPEN_KEY = "corazon.ai.open";
+const AI_OPEN_KEY = "engineer.ai.open";
 
 // Open/close state is persisted so a refresh keeps the panel where it was.
 function aiSetOpen(open) {

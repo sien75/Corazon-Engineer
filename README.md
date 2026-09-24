@@ -24,9 +24,9 @@ esac
 V=$(curl -fsSL https://api.github.com/repos/sien75/Corazon-Engineer/releases/latest \
     | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
 
-curl -fL -o corazon-$V-$P.tar.gz \
-  https://github.com/sien75/Corazon-Engineer/releases/download/$V/corazon-$V-$P.tar.gz
-tar xzf corazon-$V-$P.tar.gz && ./corazon-$V-$P/install.sh
+curl -fL -o engineer-$V-$P.tar.gz \
+  https://github.com/sien75/Corazon-Engineer/releases/download/$V/engineer-$V-$P.tar.gz
+tar xzf engineer-$V-$P.tar.gz && ./engineer-$V-$P/install.sh
 ```
 
 Corazon Engineer's ai service depends on pi; the AI Provider Key is configured the pi way (env vars or `~/.pi/agent/auth.json`).
@@ -34,17 +34,17 @@ Corazon Engineer's ai service depends on pi; the AI Provider Key is configured t
 ### Use
 
 ```bash
-corazon             # start all services in the foreground (Ctrl-C stops them), and print the web address
-corazon status      # per-service state for the current directory
+engineer             # start all services in the foreground (Ctrl-C stops them), and print the web address
+engineer status      # per-service state for the current directory
 ```
 
 Open the web address it prints and talk to the agent.
-The current working directory **is** the project — it may be empty, and the agent will initialize it; all data stays in that directory's `.corazon/`.
+The current working directory **is** the project — it may be empty, and the agent will initialize it; all data stays in that directory's `.engineer/`.
 
 ### Uninstall
 
 ```bash
-corazon uninstall           # uninstall the software
+engineer uninstall           # uninstall the software
 ```
 
 ## Background

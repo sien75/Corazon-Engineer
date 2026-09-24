@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-// Images live as raw bytes under <root>/.corazon/uploads, named by content hash
+// Images live as raw bytes under <root>/.engineer/uploads, named by content hash
 // so identical uploads dedupe to one file. Only the hash + mime + size travel
 // through the log; base64 is materialized on demand when feeding pi.
 
@@ -22,7 +22,7 @@ const MIME: Record<string, string> = {
 };
 
 export function uploadsDir(root: string): string {
-  return path.join(root, ".corazon", "uploads");
+  return path.join(root, ".engineer", "uploads");
 }
 
 function extFor(mimeType: string): string {

@@ -1,20 +1,20 @@
 #!/bin/sh
-# corazon install / upgrade — replaces software only.
+# engineer install / upgrade — replaces software only.
 set -e
-CORAZON_HOME="${CORAZON_HOME:-$HOME/.corazon}"
+ENGINEER_HOME="${ENGINEER_HOME:-$HOME/.engineer}"
 SRC="$(cd "$(dirname "$0")" && pwd)"
-NAME="$(basename "$SRC")"          # corazon-<ver>-<os>-<arch>
-APPS="$CORAZON_HOME/apps"
+NAME="$(basename "$SRC")"          # engineer-<ver>-<os>-<arch>
+APPS="$ENGINEER_HOME/apps"
 
 # 1. tool dirs
-mkdir -p "$APPS/versions" "$CORAZON_HOME/bin"
+mkdir -p "$APPS/versions" "$ENGINEER_HOME/bin"
 
 # 2. stop any instance of the currently-installed version (all projects).
 #    Resolve `current` first: the launcher runs its services from the real
 #    apps/versions/<ver>/ dir, not through the symlink.
 if [ -L "$APPS/current" ]; then
   CUR_REAL="$(cd "$APPS/current" 2>/dev/null && pwd -P || true)"
-  [ -n "$CUR_REAL" ] && pkill -f "$CUR_REAL/bin/corazon-" 2>/dev/null || true
+  [ -n "$CUR_REAL" ] && pkill -f "$CUR_REAL/bin/engineer-" 2>/dev/null || true
 fi
 
 # 3. install this version (re-install of the same version replaces its own dir)
@@ -24,11 +24,11 @@ cp -R "$SRC" "$APPS/versions/$NAME"
 # 4. flip current — the upgrade switch
 ln -sfn "$APPS/versions/$NAME" "$APPS/current"
 
-# 5. the corazon command — a symlink to the current version's launcher.
+# 5. the engineer command — a symlink to the current version's launcher.
 #    The launcher is a native binary on purpose: the terminal's foreground
-#    process is then named "corazon", so terminals that title tabs from the
-#    process name (VS Code, notably) show "corazon" with no configuration.
-ln -sfn "$APPS/current/bin/corazon" "$CORAZON_HOME/bin/corazon"
+#    process is then named "engineer", so terminals that title tabs from the
+#    process name (VS Code, notably) show "engineer" with no configuration.
+ln -sfn "$APPS/current/bin/engineer" "$ENGINEER_HOME/bin/engineer"
 
 # 6. prune old versions — keep the current one plus the most recent others,
 #    so at most KEEP versions stay installed. Never remove the version `current`
@@ -44,12 +44,12 @@ for v in $(cd "$APPS/versions" && ls -1t); do
   rm -rf "$APPS/versions/$v"
 done
 
-# 7. put corazon on PATH when possible, otherwise tell the user how
+# 7. put engineer on PATH when possible, otherwise tell the user how
 if [ -w /usr/local/bin ]; then
-  ln -sfn "$CORAZON_HOME/bin/corazon" /usr/local/bin/corazon
+  ln -sfn "$ENGINEER_HOME/bin/engineer" /usr/local/bin/engineer
 else
-  echo "add to your shell profile:  export PATH=\"$CORAZON_HOME/bin:\$PATH\""
+  echo "add to your shell profile:  export PATH=\"$ENGINEER_HOME/bin:\$PATH\""
 fi
 
-echo "corazon installed: $NAME"
-echo "run: corazon   (Ctrl-C to stop)"
+echo "engineer installed: $NAME"
+echo "run: engineer   (Ctrl-C to stop)"

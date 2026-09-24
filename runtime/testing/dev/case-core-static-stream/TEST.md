@@ -7,10 +7,10 @@ Note: the static API speaks YAML (`application/yaml`) — request and response b
 ## Setup
 
 ```bash
-# Prepare the mock project: runtime/testing/.playground is a minimal mock unrelated to the real project; place it at .corazon/.playground/
-rm -rf .corazon/.playground && mkdir -p .corazon && cp -R runtime/testing/.playground .corazon/.playground
-# Start the server under test with .corazon/.playground as project root
-cd workspace/static && go build -o corazon . && ./corazon serve-static --root ../../.corazon/.playground --addr :7502 &
+# Prepare the mock project: runtime/testing/.playground is a minimal mock unrelated to the real project; place it at .engineer/.playground/
+rm -rf .engineer/.playground && mkdir -p .engineer && cp -R runtime/testing/.playground .engineer/.playground
+# Start the server under test with .engineer/.playground as project root
+cd workspace/static && go build -o engineer . && ./engineer serve-static --root ../../.engineer/.playground --addr :7502 &
 ```
 
 ## 1. add / update / remove events from file changes
@@ -25,12 +25,12 @@ curl -N -X POST http://localhost:7502/static/stream \
 Terminal B (change files directly — writes go through the shell, not an API):
 
 ```bash
-mkdir -p .corazon/.playground/notes
-printf '# event test\n' > .corazon/.playground/notes/stream-test.md
+mkdir -p .engineer/.playground/notes
+printf '# event test\n' > .engineer/.playground/notes/stream-test.md
 sleep 2
-printf '# event test updated\n' > .corazon/.playground/notes/stream-test.md
+printf '# event test updated\n' > .engineer/.playground/notes/stream-test.md
 sleep 2
-rm .corazon/.playground/notes/stream-test.md
+rm .engineer/.playground/notes/stream-test.md
 ```
 
 Expected: terminal A receives, in order, an `add` then an `update` then a `remove` event — consecutive `data:` lines forming one YAML doc each, containing `seq`, `ts`, `kind: schema`, `payload.type: notes`, `payload.id: notes/stream-test.md`, and (on add/update) `payload.notes` holding the raw file content.
@@ -40,7 +40,7 @@ Expected: terminal A receives, in order, an `add` then an `update` then a `remov
 Terminal B:
 
 ```bash
-printf '\n# touched\n' >> .corazon/.playground/atoms/demo-worker.yaml
+printf '\n# touched\n' >> .engineer/.playground/atoms/demo-worker.yaml
 sleep 2
 ```
 

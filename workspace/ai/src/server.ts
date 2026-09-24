@@ -1,5 +1,5 @@
 import YAML from "yaml";
-import type { Registry, CorazonEvent, IncomingBlock } from "./registry.ts";
+import type { Registry, EngineerEvent, IncomingBlock } from "./registry.ts";
 import { readBlob } from "./blobs.ts";
 
 // The ai API speaks YAML on the wire (application/yaml), like static / log.
@@ -33,7 +33,7 @@ async function decode(req: Request): Promise<Record<string, any>> {
 // SSE carries multi-line yaml as one "data:" line per yaml line; the client
 // joins them back before parsing (per SSE spec). The frame's `id` is the event
 // seq, so a reconnecting client can replay only what it missed.
-function encodeSSE(ev: CorazonEvent): Uint8Array {
+function encodeSSE(ev: EngineerEvent): Uint8Array {
   const doc = YAML.stringify(ev).replace(/\n+$/, "");
   const payload =
     `id: ${ev.seq}\n` +
@@ -154,7 +154,7 @@ export function serve(registry: Registry, addr: string): void {
           const sess = registry.get(String(body.id ?? ""));
           if (!sess) return errRes(404, "not_found", "session not found");
           const since = Number(body.since) || 0;
-          let listener: ((ev: CorazonEvent) => void) | undefined;
+          let listener: ((ev: EngineerEvent) => void) | undefined;
           let closed = false;
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {
@@ -216,5 +216,5 @@ export function serve(registry: Registry, addr: string): void {
     },
   });
 
-  console.log(`corazon ai: serving on ${addr}`);
+  console.log(`engineer ai: serving on ${addr}`);
 }

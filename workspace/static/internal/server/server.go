@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"corazon/static/internal/schema"
+	"engineer/static/internal/schema"
 
 	"gopkg.in/yaml.v3"
 )

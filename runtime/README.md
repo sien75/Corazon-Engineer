@@ -23,7 +23,7 @@ Two modules:
 
 ## Conventions
 
-- Env name = directory name under `testing/`; `corazon.yaml`'s `default_runtime` must exist.
+- Env name = directory name under `testing/`; `engineer.yaml`'s `default_runtime` must exist.
 - Structured data lives in yaml: test metadata in `desp.yaml`. Everything else is prose.
 - How an environment is built, launched, and deployed lives in `devtime/deploy/`, not here.
 - Credentials are not configured here. External tools keep their own credentials under their own `~/.xxx` locations.

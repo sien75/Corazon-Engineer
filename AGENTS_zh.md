@@ -2,7 +2,7 @@
 
 > 本文件是中文镜像,以英文版 `AGENTS.md` 为准。
 
-**Corazon Engineer** 是 Corazon —— 一个位于 Coding Agent 之上的 Engineering Agent。用 Corazon 开发本项目,即为 dogfooding。
+**Corazon Engineer** 是一个位于 Coding Agent 之上的 Engineering Agent。用 Corazon Engineer 开发本项目,即为 dogfooding。
 
 > 随工具发布的规范是 `agents/AGENTS.md`(中文在 `agents/zh/`):如何使用 Corazon Engineer 开发 Corazon-like 项目。
 
@@ -33,7 +33,7 @@
 
 ### 第三类:更改 How-to 文件
 
-**阶段一:按指示修改。** 按用户指定的文件修改。若英文与 `_zh` 版本都存在,则两个都要改。`devtime/development/` 固定用中文;其他地方英文优先。范围包括 `devtime/deploy/`、`runtime/operation/`、`devtime/README.md`、`runtime/README.md`、`AGENTS.md`、`corazon.yaml` 等。
+**阶段一:按指示修改。** 按用户指定的文件修改。若英文与 `_zh` 版本都存在,则两个都要改。`devtime/development/` 固定用中文;其他地方英文优先。范围包括 `devtime/deploy/`、`runtime/operation/`、`devtime/README.md`、`runtime/README.md`、`AGENTS.md`、`engineer.yaml` 等。
 
 ## 仓库结构
 

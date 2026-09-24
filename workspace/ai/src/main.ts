@@ -22,12 +22,12 @@ function findRoot(): string {
   let dir = process.cwd();
   for (;;) {
     try {
-      readFileSync(path.join(dir, "corazon.yaml"));
+      readFileSync(path.join(dir, "engineer.yaml"));
       return dir;
     } catch {
       const parent = path.dirname(dir);
       if (parent === dir) {
-        console.error("corazon.yaml not found in any parent directory");
+        console.error("engineer.yaml not found in any parent directory");
         process.exit(1);
       }
       dir = parent;
@@ -49,9 +49,9 @@ const staticBase = flags.static || "http://localhost:7502";
 function resolveAgentsFile(explicit?: string): string {
   const file = explicit
     ? path.resolve(explicit)
-    : path.join(homedir(), ".corazon", "apps", "current", "agents", "AGENTS.md");
+    : path.join(homedir(), ".engineer", "apps", "current", "agents", "AGENTS.md");
   if (!existsSync(file)) {
-    console.error(`corazon ai: agents/AGENTS.md not found at ${file}`);
+    console.error(`engineer ai: agents/AGENTS.md not found at ${file}`);
     process.exit(1);
   }
   return file;
@@ -82,8 +82,8 @@ if (registry.stub) {
       "pi's auth.json); ai falls back to echo stub",
   );
 } else {
-  console.log(`corazon ai: model=${registry.modelInfo}`);
+  console.log(`engineer ai: model=${registry.modelInfo}`);
 }
-console.log(`corazon ai: log=${logBase}`);
-console.log(`corazon ai: spec=${agentsFile}`);
+console.log(`engineer ai: log=${logBase}`);
+console.log(`engineer ai: spec=${agentsFile}`);
 serve(registry, addr);

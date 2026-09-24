@@ -49,11 +49,11 @@ type Store struct {
 }
 
 func Open(root string) (*Store, error) {
-	dir := filepath.Join(root, ".corazon")
+	dir := filepath.Join(root, ".engineer")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", filepath.Join(dir, "corazon.db"))
+	db, err := sql.Open("sqlite", filepath.Join(dir, "engineer.db"))
 	if err != nil {
 		return nil, err
 	}

@@ -24,9 +24,9 @@ esac
 V=$(curl -fsSL https://api.github.com/repos/sien75/Corazon-Engineer/releases/latest \
     | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
 
-curl -fL -o corazon-$V-$P.tar.gz \
-  https://github.com/sien75/Corazon-Engineer/releases/download/$V/corazon-$V-$P.tar.gz
-tar xzf corazon-$V-$P.tar.gz && ./corazon-$V-$P/install.sh
+curl -fL -o engineer-$V-$P.tar.gz \
+  https://github.com/sien75/Corazon-Engineer/releases/download/$V/engineer-$V-$P.tar.gz
+tar xzf engineer-$V-$P.tar.gz && ./engineer-$V-$P/install.sh
 ```
 
 Corazon Engineer 的 ai 服务依赖 pi，需要按照 pi 的方式去配置 AI Provider Key（环境变量或 `~/.pi/agent/auth.json`）。
@@ -34,17 +34,17 @@ Corazon Engineer 的 ai 服务依赖 pi，需要按照 pi 的方式去配置 AI 
 ### 使用
 
 ```bash
-corazon             # 前台启动全部服务（Ctrl-C 全部停止），并打印 web 地址
-corazon status      # 查看当前目录各服务状态
+engineer             # 前台启动全部服务（Ctrl-C 全部停止），并打印 web 地址
+engineer status      # 查看当前目录各服务状态
 ```
 
 打开它打印出的 web 地址即可与 Agent 对话。
-当前工作目录**就是**项目 —— 可以是空目录，Agent 会把它初始化；所有数据都存在该目录下的 `.corazon/`。
+当前工作目录**就是**项目 —— 可以是空目录，Agent 会把它初始化；所有数据都存在该目录下的 `.engineer/`。
 
 ### 卸载
 
 ```bash
-corazon uninstall           # 卸载软件
+engineer uninstall           # 卸载软件
 ```
 
 ## 背景

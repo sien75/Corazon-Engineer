@@ -1,11 +1,11 @@
-/.corazon/
+/.engineer/
 
 node_modules
 
 # Compiled binaries
-workspace/ai/corazon-ai
-workspace/log/corazon-log
-workspace/static/corazon-static
+workspace/ai/engineer-ai
+workspace/log/engineer-log
+workspace/static/engineer-static
 
 # Packaged deploy artifacts (cookbooks/prod.deploy.md)
 dist/

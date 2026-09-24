@@ -11,12 +11,12 @@ Source of truth for behaviour and CLI: `workspace/web/server/main.go` (Go).
 ## Setup
 
 ```bash
-cd workspace/web/server && go build -o /tmp/corazon-web . && /tmp/corazon-web 8600 \
+cd workspace/web/server && go build -o /tmp/engineer-web . && /tmp/engineer-web 8600 \
   --root "$(cd .. && pwd)" \
   --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
 ```
 
-Expected on startup: a log line `corazon web: http://localhost:8600`.
+Expected on startup: a log line `engineer web: http://localhost:8600`.
 
 ## 1. the app shell is served
 
@@ -48,11 +48,11 @@ curl -s http://localhost:8600/config.js
 Expected: `200 text/javascript; charset=utf-8`, body exactly
 
 ```js
-window.CORAZON = {"static":"http://localhost:8502","ai":"http://localhost:8501","log":"http://localhost:8503"};
+window.ENGINEER = {"static":"http://localhost:8502","ai":"http://localhost:8501","log":"http://localhost:8503"};
 ```
 
 i.e. the three `--static` / `--ai` / `--log` values, in that key order. The frontend
-reads `window.CORAZON` to reach the other services.
+reads `window.ENGINEER` to reach the other services.
 
 ## 4. unknown paths fall back to the app shell (SPA routing)
 
@@ -75,5 +75,5 @@ Expected: `403`, `403`, `404` — nothing outside `--root` is ever served.
 ## 6. teardown
 
 ```bash
-pkill -f 'corazon-web 8600'
+pkill -f 'engineer-web 8600'
 ```

@@ -1,6 +1,6 @@
 atoms:
   - name: web
-    description: Corazon web frontend — renders the architecture graph (static-query), drives ai conversation, shows log records
+    description: Corazon Engineer web frontend — renders the architecture graph (static-query), drives ai conversation, shows log records
     path: ./workspace/web
     runtime_type: browser
     role: service

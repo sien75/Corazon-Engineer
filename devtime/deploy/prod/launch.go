@@ -1,11 +1,11 @@
-// Command corazon is the prod launcher shipped in the package. It starts the
+// Command engineer is the prod launcher shipped in the package. It starts the
 // four packaged services (log, static, ai, web) on free ports, names the
-// terminal "corazon", holds the foreground until Ctrl-C, then tears the whole
+// terminal "engineer", holds the foreground until Ctrl-C, then tears the whole
 // stack down.
 //
 // It is a native binary on purpose: the terminal's foreground process is named
-// "corazon" (not the shell running a start.sh script), so terminals that title
-// tabs from the process name — VS Code, notably — show "corazon" with no
+// "engineer" (not the shell running a start.sh script), so terminals that title
+// tabs from the process name — VS Code, notably — show "engineer" with no
 // configuration.
 package main
 
@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-const usageText = "usage: corazon [start|status|version|uninstall [--purge]]"
+const usageText = "usage: engineer [start|status|version|uninstall [--purge]]"
 
 // default ports; the launcher advances to the next free one on conflict
 var defaultPorts = map[string]int{"web": 7500, "ai": 7501, "static": 7502, "log": 7503}
@@ -56,15 +56,15 @@ func launch() {
 	}
 	binDir, pkg := selfDirs()
 
-	d := filepath.Join(root, ".corazon")
+	d := filepath.Join(root, ".engineer")
 	runDir := filepath.Join(d, "run")
 	logDir := filepath.Join(d, "logs")
 	mustMkdir(runDir)
 	mustMkdir(logDir)
 
-	// name the terminal/window/tab "corazon" for terminals that honor OSC titles
+	// name the terminal/window/tab "engineer" for terminals that honor OSC titles
 	if isTTY(os.Stdout) {
-		fmt.Print("\033]0;corazon\007")
+		fmt.Print("\033]0;engineer\007")
 	}
 
 	reclaim(runDir, root)
@@ -80,15 +80,15 @@ func launch() {
 	addr := func(name string) string { return ":" + strconv.Itoa(ports[name]) }
 
 	specs := []*service{
-		{name: "log", bin: filepath.Join(binDir, "corazon-log"),
+		{name: "log", bin: filepath.Join(binDir, "engineer-log"),
 			args: []string{"serve-log", "--root", root, "--addr", addr("log")}},
-		{name: "static", bin: filepath.Join(binDir, "corazon-static"),
+		{name: "static", bin: filepath.Join(binDir, "engineer-static"),
 			args: []string{"serve-static", "--root", root, "--addr", addr("static")}},
-		{name: "ai", bin: filepath.Join(binDir, "corazon-ai"),
+		{name: "ai", bin: filepath.Join(binDir, "engineer-ai"),
 			args: []string{"--root", root, "--addr", addr("ai"),
 				"--agents", filepath.Join(pkg, "agents", "AGENTS.md"),
 				"--log", base + addr("log"), "--static", base + addr("static")}},
-		{name: "web", bin: filepath.Join(binDir, "corazon-web"),
+		{name: "web", bin: filepath.Join(binDir, "engineer-web"),
 			args: []string{strconv.Itoa(ports["web"]), "--root", filepath.Join(pkg, "web"),
 				"--static", base + addr("static"), "--ai", base + addr("ai"), "--log", base + addr("log")}},
 	}
@@ -105,7 +105,7 @@ func launch() {
 		started = append(started, s)
 	}
 
-	fmt.Printf("corazon up — project: %s\n", root)
+	fmt.Printf("engineer up — project: %s\n", root)
 	fmt.Printf("  web     %s:%d\n", base, ports["web"])
 	fmt.Printf("  ai      %s:%d\n", base, ports["ai"])
 	fmt.Printf("  static  %s:%d\n", base, ports["static"])
@@ -148,7 +148,7 @@ func status() {
 	if err != nil {
 		fatal(err)
 	}
-	runDir := filepath.Join(root, ".corazon", "run")
+	runDir := filepath.Join(root, ".engineer", "run")
 	for _, name := range []string{"log", "static", "ai", "web"} {
 		pid, err := readPid(filepath.Join(runDir, name+".pid"))
 		if err == nil && alive(pid) {
@@ -160,36 +160,36 @@ func status() {
 }
 
 // versionName is the installed package dir of the running binary, e.g.
-// "corazon-3a3eff8-darwin-arm64".
+// "engineer-3a3eff8-darwin-arm64".
 func versionName() string {
 	_, pkg := selfDirs()
 	return filepath.Base(pkg)
 }
 
-// uninstall removes the software and the command. Project .corazon/ dirs are
+// uninstall removes the software and the command. Project .engineer/ dirs are
 // never touched — they stay with their projects.
 func uninstall(purge bool) {
-	home := corazonHome()
+	home := engineerHome()
 	apps := filepath.Join(home, "apps")
 	cur := filepath.Join(apps, "current")
 	if _, err := os.Readlink(cur); err != nil {
-		fmt.Fprintln(os.Stderr, "corazon: not installed")
+		fmt.Fprintln(os.Stderr, "engineer: not installed")
 		os.Exit(1)
 	}
 
 	// stop every running service of the installed version, across projects
 	if realCur, err := filepath.EvalSymlinks(cur); err == nil {
-		killMatching(filepath.Join(realCur, "bin", "corazon-"))
+		killMatching(filepath.Join(realCur, "bin", "engineer-"))
 	}
 	_ = os.RemoveAll(apps)
 	_ = os.RemoveAll(filepath.Join(home, "bin"))
-	_ = os.Remove("/usr/local/bin/corazon")
+	_ = os.Remove("/usr/local/bin/engineer")
 
 	if purge {
 		_ = os.RemoveAll(home)
-		fmt.Println("corazon uninstalled (purged)")
+		fmt.Println("engineer uninstalled (purged)")
 	} else {
-		fmt.Println("corazon uninstalled")
+		fmt.Println("engineer uninstalled")
 	}
 }
 
@@ -359,15 +359,15 @@ func selfDirs() (binDir, pkgDir string) {
 	return binDir, pkgDir
 }
 
-func corazonHome() string {
-	if h := os.Getenv("CORAZON_HOME"); h != "" {
+func engineerHome() string {
+	if h := os.Getenv("ENGINEER_HOME"); h != "" {
 		return h
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fatal(err)
 	}
-	return filepath.Join(home, ".corazon")
+	return filepath.Join(home, ".engineer")
 }
 
 func isTTY(f *os.File) bool {
@@ -382,6 +382,6 @@ func mustMkdir(dir string) {
 }
 
 func fatal(err error) {
-	fmt.Fprintln(os.Stderr, "corazon:", err)
+	fmt.Fprintln(os.Stderr, "engineer:", err)
 	os.Exit(1)
 }

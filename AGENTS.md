@@ -1,6 +1,6 @@
 # AGENTS.md — Corazon Engineer
 
-**Corazon Engineer** is Corazon — an engineering agent above the coding agent. Developing this project with Corazon is dogfooding.
+**Corazon Engineer** is an engineering agent above the coding agent. Developing this project with Corazon Engineer is dogfooding.
 
 > The spec shipped with the tool is `agents/AGENTS.md` (Chinese in `agents/zh/`): how to use Corazon Engineer to develop a Corazon-like project.
 
@@ -31,7 +31,7 @@ General rules:
 
 ### Type 3 — Change how-to files
 
-**Phase 1 — Edit as instructed.** Modify the files the user points to. If both an English file and its `_zh` mirror exist, update both. `devtime/development/` is always Chinese; elsewhere English takes priority. Scope includes `devtime/deploy/`, `runtime/operation/`, `devtime/README.md`, `runtime/README.md`, `AGENTS.md`, `corazon.yaml`, and similar.
+**Phase 1 — Edit as instructed.** Modify the files the user points to. If both an English file and its `_zh` mirror exist, update both. `devtime/development/` is always Chinese; elsewhere English takes priority. Scope includes `devtime/deploy/`, `runtime/operation/`, `devtime/README.md`, `runtime/README.md`, `AGENTS.md`, `engineer.yaml`, and similar.
 
 ## Repository layout
 

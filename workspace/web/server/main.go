@@ -1,4 +1,4 @@
-// corazon web — the web frontend's file server.
+// engineer web — the web frontend's file server.
 //
 // Serves the assets in workspace/web and generates /config.js carrying the
 // addresses the launcher picked. It replaces the Bun version (serve.js): same
@@ -74,13 +74,13 @@ func main() {
 	if root == "" {
 		exe, err := os.Executable()
 		if err != nil {
-			log.Fatalf("corazon web: cannot locate the binary: %v", err)
+			log.Fatalf("engineer web: cannot locate the binary: %v", err)
 		}
 		root = filepath.Dir(exe)
 	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
-		log.Fatalf("corazon web: bad --root %q: %v", root, err)
+		log.Fatalf("engineer web: bad --root %q: %v", root, err)
 	}
 
 	addr := ":" + strconv.Itoa(port)
@@ -89,11 +89,11 @@ func main() {
 	// logging a URL that belongs to somebody else's process.
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Fatalf("corazon web: %v", err)
+		log.Fatalf("engineer web: %v", err)
 	}
-	log.Printf("corazon web: http://localhost:%d", port)
+	log.Printf("engineer web: http://localhost:%d", port)
 	if err := http.Serve(ln, handler(abs, rt)); err != nil {
-		log.Fatalf("corazon web: %v", err)
+		log.Fatalf("engineer web: %v", err)
 	}
 }
 
@@ -128,7 +128,7 @@ func handler(root string, rt runtimeConfig) http.Handler {
 				return
 			}
 			w.Header().Set("Content-Type", types[".js"])
-			fmt.Fprintf(w, "window.CORAZON = %s;\n", body)
+			fmt.Fprintf(w, "window.ENGINEER = %s;\n", body)
 			return
 		}
 

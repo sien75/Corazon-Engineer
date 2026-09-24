@@ -2,7 +2,7 @@
 
 > All content under `devtime/` is written in Chinese. This English `README.md` is the authoritative entry (its Chinese mirror is `README_zh.md`).
 
-Corazon's **development-time** material — everything that turns a requirement into a runnable system. It is **not shipped** with the system. A plain file tree; the layout below is its contract.
+Corazon Engineer's **development-time** material — everything that turns a requirement into a runnable system. It is **not shipped** with the system. A plain file tree; the layout below is its contract.
 
 ## Layout
 

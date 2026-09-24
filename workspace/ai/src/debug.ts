@@ -1,7 +1,7 @@
 import { appendFileSync } from "node:fs";
 
-// Debug: set CORAZON_AI_DEBUG=/path/to/log to trace all pi + corazon events.
-const DEBUG = process.env.CORAZON_AI_DEBUG;
+// Debug: set ENGINEER_AI_DEBUG=/path/to/log to trace all pi + engineer events.
+const DEBUG = process.env.ENGINEER_AI_DEBUG;
 
 export function dbg(...args: unknown[]): void {
   if (!DEBUG) return;

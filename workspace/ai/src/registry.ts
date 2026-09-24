@@ -34,13 +34,13 @@ type Model = Awaited<ReturnType<ModelRuntime["getAvailable"]>>[number];
 // The SSE envelope sent to the frontend. It carries the native pi event as-is
 // (passthrough) plus a per-session `seq`. A non-pi `error` event reuses the
 // shape of pi's assistant-message error: { type, reason, error }.
-export interface CorazonEvent {
+export interface EngineerEvent {
   seq: number;
   type: string;
   [key: string]: unknown;
 }
 
-type Listener = (ev: CorazonEvent) => void;
+type Listener = (ev: EngineerEvent) => void;
 
 // ask_user is the only custom tool. It does not block: it ends the current run
 // and the user's answer is injected later as a normal user text turn (via the
@@ -102,7 +102,7 @@ function withVisionCapability(model: Model | undefined): Model | undefined {
 interface Sess {
   id: string;
   agent?: AgentSession; // undefined in stub mode (no API key)
-  events: CorazonEvent[];
+  events: EngineerEvent[];
   listeners: Set<Listener>;
   tail: Promise<void>; // serializes prompts within the session
   turnText: string; // accumulated assistant text of the in-flight run
@@ -387,7 +387,7 @@ export class Registry {
     // pi always emits a text block before images; avoid an empty one.
     const promptText = text || "[image]";
     if (!sess.agent) {
-      const reply = `Corazon AI (dev stub) received your prompt:\n\n> ${promptText}`;
+      const reply = `Corazon Engineer AI (dev stub) received your prompt:\n\n> ${promptText}`;
       this.append(sess, { type: "agent_start" });
       this.append(sess, {
         type: "message_update",
@@ -466,7 +466,7 @@ export class Registry {
   }
 
   // subscribe returns the backlog and registers a live listener.
-  subscribe(sess: Sess, listener: Listener): CorazonEvent[] {
+  subscribe(sess: Sess, listener: Listener): EngineerEvent[] {
     sess.listeners.add(listener);
     return [...sess.events];
   }
@@ -476,7 +476,7 @@ export class Registry {
   }
 
   private append(sess: Sess, ev: { type: string; [key: string]: unknown }): void {
-    const full = { seq: sess.events.length + 1, ...ev } as CorazonEvent;
+    const full = { seq: sess.events.length + 1, ...ev } as EngineerEvent;
     sess.events.push(full);
     for (const l of sess.listeners) l(full);
   }

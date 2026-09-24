@@ -1,4 +1,4 @@
-module corazon/static
+module engineer/static
 
 go 1.22
 

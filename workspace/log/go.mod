@@ -1,4 +1,4 @@
-module corazon/log
+module engineer/log
 
 go 1.25.0
 

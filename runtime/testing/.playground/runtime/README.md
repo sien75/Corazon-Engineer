@@ -16,6 +16,6 @@ runtime/
 
 ## Conventions
 
-- Env name = directory name under `testing/`; `corazon.yaml`'s `default_runtime` must exist.
+- Env name = directory name under `testing/`; `engineer.yaml`'s `default_runtime` must exist.
 - Structured data lives in yaml: test metadata in `desp.yaml`. Everything else is prose.
 - Launch / deploy recipes live in `devtime/deploy/`, not here.

@@ -2,7 +2,7 @@
 
 # static
 
-Corazon static service — watches the schema file tree, serves the read-only schema views (query / query-detail / stream) to the web frontend, and validates atoms / edges / contracts; writes go through the ai shell
+Corazon Engineer static service — watches the schema file tree, serves the read-only schema views (query / query-detail / stream) to the web frontend, and validates atoms / edges / contracts; writes go through the ai shell
 
 - runtime: go 1.22
 

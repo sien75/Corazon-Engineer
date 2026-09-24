@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"corazon/log/internal/store"
+	"engineer/log/internal/store"
 
 	"gopkg.in/yaml.v3"
 )

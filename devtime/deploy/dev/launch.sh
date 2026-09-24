@@ -1,7 +1,7 @@
 #!/bin/sh
 # dev launcher — builds sources and starts all four services, choosing free ports.
 #
-# Run from the project root (the directory holding corazon.yaml):
+# Run from the project root (the directory holding engineer.yaml):
 #   devtime/deploy/dev/launch.sh
 # Stop with devtime/deploy/dev/stop.sh
 #
@@ -11,12 +11,12 @@
 # so there is no port config file to keep in sync.
 set -e
 ROOT="$PWD"
-[ -f "$ROOT/corazon.yaml" ] || {
-  echo "run from the project root (no corazon.yaml in $ROOT)" >&2
+[ -f "$ROOT/engineer.yaml" ] || {
+  echo "run from the project root (no engineer.yaml in $ROOT)" >&2
   exit 1
 }
 
-D="$ROOT/.corazon/dev"
+D="$ROOT/.engineer/dev"
 BIN="$D/bin"
 mkdir -p "$BIN"
 
@@ -31,7 +31,7 @@ for s in web ai static log; do
     rm -f "$D/$s.pid"
   fi
 done
-pkill -f "$BIN/corazon-" 2>/dev/null || true
+pkill -f "$BIN/engineer-" 2>/dev/null || true
 sleep 1
 
 # --- port selection -------------------------------------------------------
@@ -66,14 +66,14 @@ PORT_LOG=$(pick_port 8503 "$PORT_WEB" "$PORT_AI" "$PORT_STATIC")
 BASE=http://localhost
 
 # --- build ----------------------------------------------------------------
-( cd "$ROOT/workspace/log"    && go build -o "$BIN/corazon-log" . )
-( cd "$ROOT/workspace/static" && go build -o "$BIN/corazon-static" . )
-( cd "$ROOT/workspace/web/server" && go build -o "$BIN/corazon-web" . )
+( cd "$ROOT/workspace/log"    && go build -o "$BIN/engineer-log" . )
+( cd "$ROOT/workspace/static" && go build -o "$BIN/engineer-static" . )
+( cd "$ROOT/workspace/web/server" && go build -o "$BIN/engineer-web" . )
 
 # --- start (order: log → static → ai → web) -------------------------------
-nohup "$BIN/corazon-log" serve-log --root "$ROOT" --addr ":$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
+nohup "$BIN/engineer-log" serve-log --root "$ROOT" --addr ":$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
 echo $! >"$D/log.pid"
-nohup "$BIN/corazon-static" serve-static --root "$ROOT" --addr ":$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
+nohup "$BIN/engineer-static" serve-static --root "$ROOT" --addr ":$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
 echo $! >"$D/static.pid"
 # exec so the recorded pid IS the server process (not a wrapper that outlives kill)
 ( cd "$ROOT/workspace/ai" && exec nohup bun src/main.ts \
@@ -81,12 +81,12 @@ echo $! >"$D/static.pid"
     --agents "$ROOT/agents/AGENTS.md" \
     --log "$BASE:$PORT_LOG" --static "$BASE:$PORT_STATIC" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
-nohup "$BIN/corazon-web" "$PORT_WEB" \
+nohup "$BIN/engineer-web" "$PORT_WEB" \
     --root "$ROOT/workspace/web" \
     --static "$BASE:$PORT_STATIC" --ai "$BASE:$PORT_AI" --log "$BASE:$PORT_LOG" >"$D/web.log" 2>&1 </dev/null &
 echo $! >"$D/web.pid"
 
-echo "corazon dev up — project: $ROOT"
+echo "engineer dev up — project: $ROOT"
 printf '  web     %s\n' "$BASE:$PORT_WEB"
 printf '  ai      %s\n' "$BASE:$PORT_AI"
 printf '  static  %s\n' "$BASE:$PORT_STATIC"

@@ -24,11 +24,11 @@ How to do it — development & operation
 
 ## File Organization
 
-A root `corazon.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` is a content directory. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are **special entries**: they do not participate in the directory's sibling structure (they are not content entities).
+A root `engineer.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` is a content directory. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are **special entries**: they do not participate in the directory's sibling structure (they are not content entities).
 
 ```yaml
-# corazon.yaml — root meta only, does NOT enumerate data files
-project: Corazon
+# engineer.yaml — root meta only, does NOT enumerate data files
+project: Corazon Engineer
 version: 1.0
 default_runtime: dev
 # optional: only when deviating from convention
@@ -40,7 +40,7 @@ exclude:
 
 ```
 project/
-├── corazon.yaml               # Root meta only (project, version, default_runtime, include/exclude)
+├── engineer.yaml               # Root meta only (project, version, default_runtime, include/exclude)
 ├── atoms/                     # *.yaml → atom
 │   ├── user-service.yaml
 │   ├── notification-service.yaml

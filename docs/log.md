@@ -2,7 +2,7 @@
 
 # log
 
-Corazon log service — owns sqlite records (call / observe / conversation); exposes log query/detail/search/mutation/stream APIs
+Corazon Engineer log service — owns sqlite records (call / observe / conversation); exposes log query/detail/search/mutation/stream APIs
 
 - runtime: go 1.22
 

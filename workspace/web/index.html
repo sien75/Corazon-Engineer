@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Corazon</title>
+  <title>Corazon Engineer</title>
   <script>
     (function () {
       var t = "light";
       try {
-        var stored = localStorage.getItem("corazon.theme");
+        var stored = localStorage.getItem("engineer.theme");
         if (stored === "dark" || stored === "solarized" || stored === "light") t = stored;
       } catch (e) {}
       document.documentElement.setAttribute("data-theme", t);
@@ -19,7 +19,7 @@
 </head>
 <body>
   <header id="topbar">
-    <span id="logo">Corazon</span>
+    <span id="logo">Corazon Engineer</span>
     <nav id="menu">
       <button type="button" data-view="graph" class="active">graph</button>
       <button type="button" data-view="runtime">runtime</button>
