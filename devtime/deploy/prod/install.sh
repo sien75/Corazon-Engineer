@@ -30,7 +30,21 @@ ln -sfn "$APPS/versions/$NAME" "$APPS/current"
 #    process name (VS Code, notably) show "corazon" with no configuration.
 ln -sfn "$APPS/current/bin/corazon" "$CORAZON_HOME/bin/corazon"
 
-# 6. put corazon on PATH when possible, otherwise tell the user how
+# 6. prune old versions — keep the current one plus the most recent others,
+#    so at most KEEP versions stay installed. Never remove the version `current`
+#    points at.
+KEEP=3
+CUR_NAME="$(basename "$(readlink "$APPS/current" 2>/dev/null || echo "$NAME")")"
+i=0
+for v in $(cd "$APPS/versions" && ls -1t); do
+  [ -d "$APPS/versions/$v" ] || continue
+  if [ "$v" = "$CUR_NAME" ]; then continue; fi
+  i=$((i + 1))
+  if [ "$i" -lt "$KEEP" ]; then continue; fi
+  rm -rf "$APPS/versions/$v"
+done
+
+# 7. put corazon on PATH when possible, otherwise tell the user how
 if [ -w /usr/local/bin ]; then
   ln -sfn "$CORAZON_HOME/bin/corazon" /usr/local/bin/corazon
 else

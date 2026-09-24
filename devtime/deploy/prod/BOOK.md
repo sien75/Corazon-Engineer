@@ -112,12 +112,15 @@ On macOS both toolchains ad-hoc sign their output, so no separate `codesign` ste
 
 ## install.sh
 
-`install.sh` (copied from `devtime/deploy/prod/`) is idempotent: first run = install, every later run = upgrade. It stops any running instance of the currently-installed version, swaps in the new software, and flips `current`. It only touches `~/.corazon/apps/` and `~/.corazon/bin/`, and points the `corazon` command (`~/.corazon/bin/corazon`) at `apps/current/bin/corazon` — so an upgrade is just the `current` flip.
+`install.sh` (copied from `devtime/deploy/prod/`) is idempotent: first run = install, every later run = upgrade. It stops any running instance of the currently-installed version, swaps in the new software, and flips `current`. It only touches `~/.corazon/apps/` and `~/.corazon/bin/`, and points the `corazon` command (`~/.corazon/bin/corazon`) at `apps/current/bin/corazon` — so an upgrade is just the `current` flip. After flipping, it prunes old version dirs, keeping the current version plus the two most recent others (**at most 3 installed versions**); the version `current` points at is never removed.
 
 ```bash
 # runtime state (logs/, run/) is created when the package is run — never ship it
 rm -rf "$OUT/logs" "$OUT/run"
 tar czf "$OUT.tar.gz" -C dist "$(basename "$OUT")"
+# the tarball is the only artifact that ships: drop the unpacked tree so dist/
+# ends up holding just the .tar.gz, not a directory next to it
+rm -rf "$OUT"
 ```
 
 ## Release
@@ -162,7 +165,7 @@ corazon status      # per-service state for the current project
 corazon version     # which version is current
 ```
 
-- **Upgrade** replaces only `~/.corazon/apps/` (new version dir + `current` flip). Project data is never touched — the project being processed keeps its own `.corazon/` in place. Old version dirs stay until you delete them manually (`rm -rf ~/.corazon/apps/versions/<old>`).
+- **Upgrade** replaces only `~/.corazon/apps/` (new version dir + `current` flip), then prunes older version dirs down to the current one plus the two most recent others. Project data is never touched — the project being processed keeps its own `.corazon/` in place.
 - **Uninstall**: `corazon uninstall` removes the software and the command; `corazon uninstall --purge` removes all of `~/.corazon/`. Project `.corazon/` directories always stay with their projects — uninstalling never deletes project data.
 - LLM provider key: read from pi's own config (env vars or `~/.pi/agent/auth.json`). External tools keep their own credentials under their own `~/.xxx` locations.
 - The tarball still works portable-style too: unpack anywhere and `./bin/corazon` directly, no install.
