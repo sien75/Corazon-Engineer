@@ -1,8 +1,8 @@
 # prod deploy cookbook
 
-Package Corazon as a one-click tarball and deploy it on a fresh machine. No runtime dependencies on the target (no Go / Bun / Node) — the four Go programs (`corazon` launcher, log, static, web) compile to static binaries, and the ai service compiles to a self-contained Bun binary. Docker is optional, not required: one-click comes from the `corazon` launcher, not from a container.
+Package Corazon as a one-click tarball and install it on a fresh machine. The target needs no runtime (no Go / Bun / Node): the four Go programs (`corazon` launcher, log, static, web) build to static binaries, and ai to a self-contained Bun binary. Docker is optional — one-click comes from the `corazon` launcher, not a container.
 
-What ships — the five binaries (built from `workspace/`) plus the published tool content (`agents/`, `docs/`). The package is the **tool**, not a project:
+**What ships** — five binaries (from `workspace/`) plus the published tool content (`agents/`, `docs/`). The package is the **tool**, not a project:
 
 ```
 corazon-<version>-<os>-<arch>/
@@ -10,7 +10,7 @@ corazon-<version>-<os>-<arch>/
 ├── web/          index.html  app.js  style.css  vendor/
 ├── agents/       the AI capability description shipped with the tool
 ├── docs/         published documentation
-└── install.sh    install / upgrade (see the Install section)
+└── install.sh    install / upgrade
 ```
 
 The installed layout (under `~/.corazon/`) is software only — **upgrades only ever touch `apps/`**:
@@ -23,28 +23,29 @@ The installed layout (under `~/.corazon/`) is software only — **upgrades only 
 └── bin/corazon -> apps/current/bin/corazon   # the `corazon` command (symlink)
 ```
 
-The `bin/corazon` symlink is the whole command: a native Go launcher that serves
-`start` (default) / `status` / `version` / `uninstall [--purge]`.
+`bin/corazon` is the whole command: a native Go launcher serving `start` (default) / `status` / `version` / `uninstall [--purge]`.
 
-**Which project gets served**: `corazon` serves the directory it was invoked from — the current working directory **is** the project being processed, and it may be empty (the agent initializes it). All data lives in that directory's own `.corazon/`; the tool ships no project and keeps no project data. Logs and pids live in that project's `.corazon/logs/` and `.corazon/run/`, so two projects started from different directories never share processes or ports.
+**Which project gets served**: `corazon` serves the directory it was invoked from — the cwd **is** the project, and may be empty (the agent initializes it). All data lives in that directory's `.corazon/`; the tool ships no project and keeps no project data. Logs and pids live under the project's `.corazon/logs/` and `.corazon/run/`, so two projects started from different directories never share processes or ports.
 
-**Lifecycle**: `corazon` starts the four services and holds the foreground. Ctrl-C stops them all — there is no `stop` command.
+**Lifecycle**: `corazon` starts the four services and holds the foreground; Ctrl-C stops them all. There is no `stop` command.
 
 ## Prerequisites (build machine only)
 
 - Go 1.22+ and Bun, on any macOS/Linux machine (cross-compile flags below cover other targets)
-- Target machine: same OS/arch as the build output, an LLM provider key for the ai service (pi's own config: env var or `~/.pi/agent/auth.json`)
+- Target: same OS/arch as the build output, plus an LLM provider key for ai (pi's own config: env var or `~/.pi/agent/auth.json`)
 
 ## Build & pack
 
-One build per platform: the same steps, with that platform's variables set. Two platforms ship today —
+Packing is standalone — run it any time to produce a tarball; it publishes nothing.
+
+One build per platform: same steps, with that platform's variables set. Two platforms ship today —
 
 | platform | `OS` | `ARCH` | `BUN_TARGET` |
 | --- | --- | --- | --- |
 | apple silicon (macOS) | `darwin` | `arm64` | `bun-darwin-arm64` |
 | linux x86-64 (servers) | `linux` | `amd64` | `bun-linux-x64` |
 
-Set all three together. Go reads `GOOS`/`GOARCH` from the environment on its own; Bun needs `--target` spelled out, and Bun names the x86-64 target `x64` where Go says `amd64`. Setting only part of them is the mixed-tarball trap below.
+Set all three together. Go reads `GOOS`/`GOARCH` from the environment; Bun needs `--target` spelled out and names x86-64 `x64` where Go says `amd64`. Setting only part of them is the mixed-tarball trap below.
 
 Run from the repo root:
 
@@ -58,8 +59,8 @@ OUT=dist/corazon-$VER-$OS-$ARCH
 mkdir -p "$OUT"/{bin,web}
 
 # 1. Go programs — CGO off, fully static (log's sqlite driver is pure Go).
-#    `-s -w` drops the debug/symbol tables: measured ~1/3 off each binary
-#    (static 8.8 → 6.0 MB, log 14.8 → 9.9 MB) with no runtime effect.
+#    `-s -w` drops debug/symbol tables: ~1/3 off each binary (static 8.8 → 6.0 MB,
+#    log 14.8 → 9.9 MB) with no runtime effect.
 #    launcher (the `corazon` command) first — one file, built straight from the
 #    runtime tree — then the three services
 CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OUT/bin/corazon" devtime/deploy/prod/launch.go
@@ -68,19 +69,19 @@ CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OUT/bin/coraz
 (cd workspace/web/server && CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OLDPWD/$OUT/bin/corazon-web" .)
 
 # 2. ai service — Bun single-file binary (needs node_modules installed).
-#    `--target` is not optional: without it Bun builds for the host, so a
-#    package named linux-amd64 would still carry a mac binary.
+#    `--target` is not optional: without it Bun builds for the host, so a package
+#    named linux-amd64 would still carry a mac binary.
 (cd workspace/ai && bun install && bun build --compile --target=$BUN_TARGET src/main.ts --outfile "$OLDPWD/$OUT/bin/corazon-ai")
 
-# 3. web assets — shipped loose next to the binary, which serves them from
-#    `--root` (the layout the launcher passes at runtime), so the frontend
-#    stays editable without a rebuild
+# 3. web assets — shipped loose next to the binary, which serves them from `--root`
+#    (the layout the launcher passes at runtime), so the frontend stays editable
+#    without a rebuild
 cp workspace/web/{index.html,app.js,style.css} "$OUT/web/"
 cp -R workspace/web/vendor "$OUT/web/"
 
-# 4. tool content — the published parts only: agents/ (the AI capability
-#    description) and docs/. Everything else (schema, runtime, devtime, ...)
-#    is dev-time internal and never ships.
+# 4. tool content — published parts only: agents/ (AI capability description) and
+#    docs/. Everything else (schema, runtime, devtime, ...) is dev-time internal
+#    and never ships.
 for d in agents docs; do
   [ -d "$d" ] && cp -R "$d" "$OUT/"
 done
@@ -88,11 +89,18 @@ done
 # 5. installer — copied in as a real file, never generated from this BOOK
 cp devtime/deploy/prod/install.sh "$OUT/install.sh"
 chmod +x "$OUT/install.sh"
+
+# 6. pack the tarball — runtime state (logs/, run/) is created when the package
+#    is first run, so it is never in the tarball. The tarball is the only artifact
+#    that ships: drop the unpacked tree so dist/ ends up holding just the .tar.gz.
+rm -rf "$OUT/logs" "$OUT/run"
+tar czf "$OUT.tar.gz" -C dist "$(basename "$OUT")"
+rm -rf "$OUT"
 ```
 
-**Cross-compiling — both platforms from one machine.** Go honors `GOOS`/`GOARCH` and Bun honors `--target`, in both directions (verified: darwin-arm64 → linux-amd64/arm64 for both toolchains). Run the block above once per row of the table.
+**Cross-compiling — both platforms from one machine.** Go honors `GOOS`/`GOARCH` and Bun honors `--target`, in both directions (verified: darwin-arm64 → linux-amd64/arm64). Run the block above once per row.
 
-**The mixed-tarball trap.** Go picks up `GOOS`/`GOARCH` by itself, while `bun build --compile` defaults to the host. Set `OS`/`ARCH` without `BUN_TARGET` and you get Go ELF binaries next to a Bun Mach-O inside a package named `linux-amd64` — it packs, publishes and installs fine, and fails only when the launcher tries to start `corazon-ai` on Linux. Check before releasing:
+**The mixed-tarball trap.** Go picks up `GOOS`/`GOARCH` itself, while `bun build --compile` defaults to the host. Set `OS`/`ARCH` without `BUN_TARGET` and you get Go ELF binaries next to a Bun Mach-O in a package named `linux-amd64` — it packs, publishes and installs fine, then fails only when the launcher starts `corazon-ai` on Linux. Check before releasing:
 
 ```bash
 file "$OUT"/bin/*   # every one must match the target: ELF for linux, Mach-O for darwin
@@ -102,87 +110,66 @@ On macOS both toolchains ad-hoc sign their output, so no separate `codesign` ste
 
 ## the `corazon` launcher
 
-`bin/corazon` is built from `devtime/deploy/prod/launch.go` (a single-file Go program, compiled at pack time) — a native binary, shipped as the package's entry point:
+`bin/corazon` is built from `devtime/deploy/prod/launch.go` (a single-file Go program compiled at pack time) — a native binary, shipped as the package's entry point:
 
-- picks free ports (defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free port on conflict), hands each address to the services (ai gets `--log` + `--static`, web gets `--static` / `--ai` / `--log`), starts log → static → ai → web as children, prints the chosen ports, then **holds the foreground**. Ctrl-C tears the whole stack down. There is **no port config file** and no stop script.
+- picks free ports (defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free one on conflict), hands each address to its service (`--addr` for log/static/ai, positional for web; ai also gets `--log` + `--static`, web gets `--static` / `--ai` / `--log`), starts log → static → ai → web as children, prints the chosen ports, then **holds the foreground**. Ctrl-C tears the whole stack down. There is **no port config file and no stop script**.
 - also serves the `corazon` subcommands: `start` (default) / `status` / `version` / `uninstall [--purge]`.
-- native on purpose: the terminal's foreground process is named `corazon` (a shell script would show as `bash`/`zsh` there), so terminals that title tabs from the process name — VS Code, notably — show `corazon` with no configuration.
+- native on purpose: the terminal's foreground process is named `corazon` (a shell script would show as `bash`/`zsh`), so terminals that title tabs from the process name — VS Code, notably — show `corazon` with no configuration.
 
-`install.sh` is the other shipped script: install / upgrade (next section).
-
-## install.sh
-
-`install.sh` (copied from `devtime/deploy/prod/`) is idempotent: first run = install, every later run = upgrade. It stops any running instance of the currently-installed version, swaps in the new software, and flips `current`. It only touches `~/.corazon/apps/` and `~/.corazon/bin/`, and points the `corazon` command (`~/.corazon/bin/corazon`) at `apps/current/bin/corazon` — so an upgrade is just the `current` flip. After flipping, it prunes old version dirs, keeping the current version plus the two most recent others (**at most 3 installed versions**); the version `current` points at is never removed.
-
-```bash
-# runtime state (logs/, run/) is created when the package is run — never ship it
-rm -rf "$OUT/logs" "$OUT/run"
-tar czf "$OUT.tar.gz" -C dist "$(basename "$OUT")"
-# the tarball is the only artifact that ships: drop the unpacked tree so dist/
-# ends up holding just the .tar.gz, not a directory next to it
-rm -rf "$OUT"
-```
+`install.sh` is the other shipped script: it installs (first run) or upgrades
+(later runs) from a tarball.
 
 ## Release
 
-Packing leaves the tarball on the build machine only: `dist/` is git-ignored and binaries never go into git. Users get it from **GitHub Releases** — so a release is *tag the source → pack from that tag → attach the tarball to the release*.
+A release happens only when the user explicitly asks for one.
 
-**The tag comes first, packing second.** The pack step derives `VER` from `git describe --tags`, and that string becomes the tarball name, the unpacked directory, and what `corazon version` prints. Tagging after packing would ship a bare commit hash as the version; if you already packed, just re-run Build & pack once the tag exists. No tags exist yet — the first release picks the starting version (`v0.1.0` below).
+Packing leaves the tarball on the build machine only: `dist/` is git-ignored and binaries never go into git. Users get it from **GitHub Releases**. Two machines take part, and they are not interchangeable:
 
-Preconditions, on the build machine:
+- the **build machine** (this repo, with Go + Bun) — packs the tarballs and uploads them;
+- the **release server** (`my-server`) — holds the repo, pushes the tag, and publishes the release with `gh`.
 
-- a clean tree on the release commit (`git status --porcelain` prints nothing) — the release must be reproducible from the tag alone.
-- the `gh` CLI, authenticated (`gh auth status`). Install with `brew install gh` (macOS) or `sudo apt install gh` / `dnf install gh` (Linux); detect with `command -v gh`. Signing in is the user's job — if it is not authenticated, ask the user.
-- the repository is whatever `origin` points at — `gh` reads it from the git remote, so nothing here is hard-coded (`gh repo view` shows the resolved owner/name).
+**The publish step runs only on the release server. Never run `gh release create` on the build machine.**
+
+**Confirm the tag with the user first.** The tag *is* the version; never invent it. Ask which tag to release (e.g. `v0.1.0`) before touching anything.
+
+**The tag comes first, packing second.** The pack step derives `VER` from `git describe --tags`, and that string becomes the tarball name, the unpacked directory, and what `corazon version` prints. Tagging after packing ships a bare commit hash; if you already packed, re-run Build & pack once the tag exists.
 
 ```bash
-TAG=v0.1.0                       # the version being released
+SRV=my-server                                        # ssh alias of the release server
+TAG=v0.1.0                                            # confirmed with the user
 
-# 1. tag the release commit and push the tag — source only, dist/ stays out of git
-git tag -a "$TAG" -m "Corazon $TAG"
-git push origin "$TAG"
+# 1. tag the release commit ON THE SERVER and push — source only, dist/ stays out of git.
+#    The server's tree must be clean and on the release commit.
+ssh "$SRV" "cd ~/workspace/1/GithubCode/Corazon-Engineer && git status --porcelain && git tag -a '$TAG' -m 'Corazon $TAG' && git push origin '$TAG'"
 
-# 2. pack from that tag (Build & pack above), then confirm you really are on it:
-git describe --tags --exact-match    # must print exactly $TAG (off-tag, it errors)
+# 2. pack ON THE BUILD MACHINE, from that tag (Build & pack above) — fetch it first
+git fetch --tags
+git describe --tags --exact-match    # must print exactly $TAG (off-tag it errors)
 ls dist/corazon-"$TAG"-*.tar.gz      # nothing to release if this is empty
-
-# 3. publish: create the release and attach the tarball(s)
-gh release create "$TAG" dist/corazon-"$TAG"-*.tar.gz --title "Corazon $TAG" --generate-notes
 ```
 
-- **One release, many platforms**: every tarball built for the same commit attaches to the same release — `dist/corazon-"$TAG"-*.tar.gz` matches them all. A platform is not a separate machine: one host can build them all (Go via `GOOS`/`GOARCH`, Bun via `--target` — verified from darwin-arm64 to linux-amd64 and linux-arm64). What is macOS-specific is *codesigning* (Bun's `codesign` support, ≥ 1.2.4), which avoids Gatekeeper warnings on the mac packages — not the build host. Watch the mixed-tarball trap in the cross-compile note in Build & pack.
-- **No `gh`**: the web UI does the same thing — tag and push as above, then draft a release on the repo's Releases page and drag the tarballs in. The API equivalent is `POST https://api.github.com/repos/<owner>/<repo>/releases` with a token; the token belongs to the user/`gh`, and is never echoed into a command line, a log, or an answer.
-- **Verify**: `gh release view "$TAG" --web` — the tarball downloads from the Releases page. On a clean machine, `tar xzf corazon-"$TAG"-*.tar.gz && ./corazon-*/install.sh` followed by `corazon version` prints `$TAG`. The published download link is what the root `README.md`, section "How to use it", points users at — it links the Releases page, plus the current version's asset as a concrete example; update that example when the version moves on.
-
-## Install / Upgrade / Uninstall
+**Upload to the release server, clearing its previous packages first.** `dist/` is git-ignored, so the tarballs travel by `scp`, not git. Wipe the server's `dist/` so a stale tarball can never be attached to the new release.
 
 ```bash
-# install (first time) or upgrade (any later time) — same command
-tar xzf corazon-*.tar.gz && ./corazon-*/install.sh
+ssh "$SRV" "rm -rf ~/workspace/1/GithubCode/Corazon-Engineer/dist && mkdir -p ~/workspace/1/GithubCode/Corazon-Engineer/dist"
+scp dist/corazon-"$TAG"-*.tar.gz "$SRV:~/workspace/1/GithubCode/Corazon-Engineer/dist/"
 
-corazon             # one command: all four services up, foreground (Ctrl-C to stop)
-corazon status      # per-service state for the current project
-corazon version     # which version is current
+# verify integrity end to end before publishing
+shasum -a 256 dist/corazon-"$TAG"-*.tar.gz
+ssh "$SRV" "cd ~/workspace/1/GithubCode/Corazon-Engineer/dist && sha256sum corazon-$TAG-*.tar.gz"
 ```
 
-- **Upgrade** replaces only `~/.corazon/apps/` (new version dir + `current` flip), then prunes older version dirs down to the current one plus the two most recent others. Project data is never touched — the project being processed keeps its own `.corazon/` in place.
-- **Uninstall**: `corazon uninstall` removes the software and the command; `corazon uninstall --purge` removes all of `~/.corazon/`. Project `.corazon/` directories always stay with their projects — uninstalling never deletes project data.
-- LLM provider key: read from pi's own config (env vars or `~/.pi/agent/auth.json`). External tools keep their own credentials under their own `~/.xxx` locations.
-- The tarball still works portable-style too: unpack anywhere and `./bin/corazon` directly, no install.
-
-Ports: the launcher chooses them itself — defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free port when a default is taken — and prints the result. There is no config file; the chosen addresses are handed to each service (`--addr` for log/static/ai, positional for web; ai also gets `--log`/`--static`, web gets `--static`/`--ai`/`--log`) and to the frontend via `/config.js`. ai additionally has `--model <provider/model>`.
-
-## Verify
-
-The launcher prints the chosen addresses. Query static on the printed static port:
+**Publish from the release server** — the build machine never does this:
 
 ```bash
-curl -s -X POST http://localhost:<static port>/static/query -d '{}'
+ssh "$SRV" "cd ~/workspace/1/GithubCode/Corazon-Engineer && gh release create '$TAG' dist/corazon-$TAG-*.tar.gz --title 'Corazon $TAG' --generate-notes"
 ```
 
-A YAML response listing atoms / edges / runtime entries means the stack is up; browse the web UI at the printed web address. Logs are under the project's `.corazon/logs/`; Ctrl-C tears everything down.
-
-For a packaged release, the same check applies after `./corazon-*/install.sh`: see the Release section.
+- **One release, many platforms**: every tarball built for the same commit attaches to the same release — `dist/corazon-"$TAG"-*.tar.gz` matches them all. A platform is not a separate machine: one host can build them all (Go via `GOOS`/`GOARCH`, Bun via `--target` — verified from darwin-arm64 to linux-amd64 and linux-arm64). What is macOS-specific is *codesigning* (Bun's `codesign`, ≥ 1.2.4), which avoids Gatekeeper warnings on the mac packages — not the build host. Watch the mixed-tarball trap in Build & pack.
+- **The release server's prerequisites**: `git` with the repo (clean tree on the release commit), the `gh` CLI authenticated (`gh auth status`), and network reach to `api.github.com` and `uploads.github.com`. Install `gh` with `brew install gh` (macOS) or `dnf install gh` / `sudo apt install gh` (Linux). Signing in is the user's job — if not authenticated, ask the user.
+- **When `github.com` is blocked but the API hosts are not** (common on locked-down servers): the browser device flow fails with `Post "https://github.com/login/device/code": EOF`, yet `gh release create` still works because it uses `api.github.com` + `uploads.github.com`. Authenticate with a token instead — `gh auth login --with-token` reads the token from stdin, so it never lands in a command line or a log. The token belongs to the user (`repo` scope, or fine-grained `Contents: Read and write` on this repo) and is never echoed into a command line, a log, or an answer.
+- **No `gh` and no way to install it**: the web UI does the same — the tag is already pushed from the server, so draft a release on the repo's Releases page and drag the tarballs in. The API equivalent is `POST https://api.github.com/repos/<owner>/<repo>/releases` with a token (never echoed).
+- **Verify**: on the server, `gh release view "$TAG"` lists the assets; then fetch the exact download link from `README.md` and confirm it returns `HTTP 200`. On a clean machine, `tar xzf corazon-"$TAG"-*.tar.gz && ./corazon-*/install.sh` followed by `corazon version` prints the package directory name, `corazon-$TAG-<os>-<arch>`. The Releases page is what the root `README.md`, section "How to use it", points users at.
 
 ## Notes
 

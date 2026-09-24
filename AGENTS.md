@@ -13,6 +13,7 @@ General rules:
 - Clarify first: never code from assumptions — confirm goal, scope, and acceptance criteria (and what is **out of scope**) before acting. Below 80% confidence, keep asking.
 - Keep changes minimal and limited to the current phase; no drive-by refactors.
 - Test each step immediately. If the same failure repeats **3 times in a row**, stop and report the error, what you tried, and the suspected blocker, with alternatives.
+- Commit & push go through `my-server` (`ssh my-server`), not the local machine: send the changes as a patch → commit & push on `my-server` → delete the local working-tree changes and pull. **Never push directly from the local machine.**
 
 ### Type 1 — Requirement development
 
@@ -22,7 +23,7 @@ General rules:
 
 **Phase 3 — Build, run, test.** Repack and launch per `devtime/deploy/dev/BOOK.md`, then run the test cases. Pass → continue; fail → return to Phase 2 with the error.
 
-**Phase 4 — Human review & commit.** Stop and wait for human review. Rejected → return to Phase 2. Approved → `git add` & `git commit` (do **not** push).
+**Phase 4 — Human review & commit.** Stop and wait for human review. Rejected → return to Phase 2. Approved → commit & push on `my-server`, then pull locally (see General rules).
 
 ### Type 2 — Build & release
 
