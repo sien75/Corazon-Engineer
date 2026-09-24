@@ -6,13 +6,15 @@ Corazon Engineer's **development-time** material — everything that turns a req
 
 ## Layout
 
-- `development/` — requirements analysis, architecture design, and design work before coding (meetings, ADRs, iteration records, one dir per iteration number).
+- `development/` — development material before coding: design work plus iteration records.
+  - `plans/` — design / plan documents, one dir per iteration number (`2608/`, `2609/`, ...).
+  - `iteration/` — the plan confirmed at each iteration: one markdown file per iteration, named by timestamp (e.g. `20250924-1751.md`).
 - `deploy/` — build, pack, launch, and deploy a project, per environment. It ensures the project starts; it does not verify business behavior.
 
 ## Development entry
 
 1. **Process** — the development SOP lives in the project-root `AGENTS.md`. Follow it; do not skip stages.
-2. **Design records** — important decisions and risks go into `development/iteration-XXXX/` (one dir per iteration number); do not leave them scattered in chat.
+2. **Design records** — designs and plans go into `development/plans/<iteration-number>/`; the plan confirmed at each iteration goes into `development/iteration/` as one timestamp-named markdown file. Do not leave them scattered in chat.
 3. **Deploy** — launch local services per `deploy/dev/BOOK.md` (log :8503 → static :8502 → ai :8501 → web :8500).
 4. **Verification** — system cases live in `runtime/testing/dev/` (`case-core-*/TEST.md`).
 5. **Structure** — before changing code, understand the schema: see `agents/zh/schema.md` / `agents/zh/enum.md`, or use `/static/query` once services are up.

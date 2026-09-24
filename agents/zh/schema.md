@@ -59,7 +59,7 @@ project/
 ├── notes/                     # *.md → 内部批注（标记 + thread，锚定实体）
 ├── devtime/                   # 普通文件树：开发时资料（布局由 devtime/README.md 定义）
 │   ├── README.md              # devtime 树自身的约定 —— 先读
-│   ├── development/           # 编码前的需求分析与架构设计（按迭代）
+│   ├── development/           # 编码前的需求分析、架构设计与迭代记录
 │   └── deploy/                # 构建 / 打包 / 启动 / 部署
 └── runtime/                   # 普通文件树：testing + operation（布局由 runtime/README.md 定义）
     ├── README.md              # runtime 树自身的约定 —— 先读
@@ -193,7 +193,7 @@ errors:
 
 把需求变成可运行系统的一切，位于 `devtime/`。为普通文件树（同 `runtime/`），布局由 `devtime/README.md` 定义。两个模块：
 
-- **`development/`** —— 需求分析、架构设计及编码前的设计工作（会议、ADR、迭代记录，按迭代编号建目录）。
+- **`development/`** —— 需求分析、架构设计及编码前的设计工作，含方案设计与迭代记录。
 - **`deploy/`** —— 每个环境的构建、打包、启动与部署；负责确保项目成功启动，不负责验证业务功能。
 
 以普通 markdown 为主，不做格式约定；也可能包含脚本文件（如 deploy 脚本）。应当读 README 并遵循项目声明的约定。

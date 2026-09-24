@@ -137,10 +137,11 @@ Packing leaves the tarball on the build machine only: `dist/` is git-ignored and
 ```bash
 SRV=my-server                                        # ssh alias of the release server
 TAG=v0.1.0                                            # confirmed with the user
+REPO=$(ssh "$SRV" "find ~ -maxdepth 6 -type d -name Corazon-Engineer 2>/dev/null | head -1")  # locate the project's clone by repo name
 
 # 1. tag the release commit ON THE SERVER and push — source only, dist/ stays out of git.
 #    The server's tree must be clean and on the release commit.
-ssh "$SRV" "cd ~/workspace/1/GithubCode/Corazon-Engineer && git status --porcelain && git tag -a '$TAG' -m 'Corazon Engineer $TAG' && git push origin '$TAG'"
+ssh "$SRV" "cd $REPO && git status --porcelain && git tag -a '$TAG' -m 'Corazon Engineer $TAG' && git push origin '$TAG'"
 
 # 2. pack ON THE BUILD MACHINE, from that tag (Build & pack above) — fetch it first
 git fetch --tags
@@ -151,18 +152,18 @@ ls dist/engineer-"$TAG"-*.tar.gz      # nothing to release if this is empty
 **Upload to the release server, clearing its previous packages first.** `dist/` is git-ignored, so the tarballs travel by `scp`, not git. Wipe the server's `dist/` so a stale tarball can never be attached to the new release.
 
 ```bash
-ssh "$SRV" "rm -rf ~/workspace/1/GithubCode/Corazon-Engineer/dist && mkdir -p ~/workspace/1/GithubCode/Corazon-Engineer/dist"
-scp dist/engineer-"$TAG"-*.tar.gz "$SRV:~/workspace/1/GithubCode/Corazon-Engineer/dist/"
+ssh "$SRV" "rm -rf $REPO/dist && mkdir -p $REPO/dist"
+scp dist/engineer-"$TAG"-*.tar.gz "$SRV:$REPO/dist/"
 
 # verify integrity end to end before publishing
 shasum -a 256 dist/engineer-"$TAG"-*.tar.gz
-ssh "$SRV" "cd ~/workspace/1/GithubCode/Corazon-Engineer/dist && sha256sum engineer-$TAG-*.tar.gz"
+ssh "$SRV" "cd $REPO/dist && sha256sum engineer-$TAG-*.tar.gz"
 ```
 
 **Publish from the release server** — the build machine never does this:
 
 ```bash
-ssh "$SRV" "cd ~/workspace/1/GithubCode/Corazon-Engineer && gh release create '$TAG' dist/engineer-$TAG-*.tar.gz --title 'Corazon Engineer $TAG' --generate-notes"
+ssh "$SRV" "cd $REPO && gh release create '$TAG' dist/engineer-$TAG-*.tar.gz --title 'Corazon Engineer $TAG' --generate-notes"
 ```
 
 - **One release, many platforms**: every tarball built for the same commit attaches to the same release — `dist/engineer-"$TAG"-*.tar.gz` matches them all. A platform is not a separate machine: one host can build them all (Go via `GOOS`/`GOARCH`, Bun via `--target` — verified from darwin-arm64 to linux-amd64 and linux-arm64). What is macOS-specific is *codesigning* (Bun's `codesign`, ≥ 1.2.4), which avoids Gatekeeper warnings on the mac packages — not the build host. Watch the mixed-tarball trap in Build & pack.

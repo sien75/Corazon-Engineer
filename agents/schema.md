@@ -59,7 +59,7 @@ project/
 ├── notes/                     # *.md → internal annotation (marker + thread, anchored to entity)
 ├── devtime/                   # plain file tree: dev-time material (layout defined by devtime/README.md)
 │   ├── README.md              # the devtime tree's own conventions — read first
-│   ├── development/           # requirements / design before coding (per iteration)
+│   ├── development/           # requirements / design / iteration records before coding
 │   └── deploy/                # build / pack / launch / deploy
 └── runtime/                   # plain file tree: testing + operation (layout defined by runtime/README.md)
     ├── README.md              # the runtime tree's own conventions — read first
@@ -193,7 +193,7 @@ Internal markers and discussions targeting an entity, under `notes/`. Plain mark
 
 Everything that turns a requirement into a runnable system, under `devtime/`. A plain file tree (like `runtime/`); its layout is defined by `devtime/README.md`. Two modules:
 
-- **`development/`** — requirements analysis, architecture design, and design work before coding (meetings, ADRs, iteration records, one dir per iteration number).
+- **`development/`** — requirements analysis, architecture design, and design work before coding, including plan docs and iteration records.
 - **`deploy/`** — build, pack, launch, and deploy a project, per environment; ensures the project starts, but does not verify business behavior.
 
 Mostly plain markdown, no format convention; it may also contain script files (e.g. deploy scripts). Read the README and follow the project's stated conventions.
