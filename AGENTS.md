@@ -17,7 +17,7 @@ General rules:
 
 ### Type 1 — Requirement development
 
-**Phase 1 — Design.** Scope: `devtime/development/` and `notes/`. Turn the requirement into design records: design docs under `development/plans/<iteration-number>/`, and the plan confirmed at the iteration's end as one timestamp-named markdown file under `development/iteration/`.
+**Phase 1 — Design.** Scope: `devtime/development/` and `notes/`. Turn the requirement into design records: design docs under `development/plans/<iteration-number>/`, and the plan confirmed at the iteration's end as one markdown file under `development/iteration/`, named `[YYMM]-[2-digit sequence]-[short title].md`.
 
 **Phase 2 — Contracts, tests, code.** Scope: `contracts/`, `atoms/` `edges/`, `runtime/testing/`, `workspace/` (and `agents/` if the change involves it). Order matters: define the **contracts** first, then the static relations (`atoms/` `edges/`), then the tests (`runtime/testing/`), and only then develop the code (`workspace/`).
 
@@ -35,7 +35,7 @@ General rules:
 
 ## Repository layout
 
-- `devtime/` — development-time, not shipped: `development/` (design & iteration records — `plans/` holds design docs by iteration number, `iteration/` holds the plan confirmed at each iteration as one timestamp-named markdown file), `deploy/` (build / pack / launch / deploy, per environment).
+- `devtime/` — development-time, not shipped: `development/` (design & iteration records — `plans/` holds design docs by iteration number, `iteration/` holds the confirmed plan as one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`), `deploy/` (build / pack / launch / deploy, per environment).
 - `runtime/` — running-system, shipped: `testing/` (E2E tests), `operation/` (connect to / observe resources).
 - `agents/` — shipped AI capability spec (`agents/AGENTS.md`, Chinese in `agents/zh/`) plus schema / contract / enum reference.
 - `atoms/` `edges/` `contracts/` `docs/` `notes/` `workspace/` — this project's schema and code.

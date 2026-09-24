@@ -19,7 +19,7 @@
 
 ### 第一类:需求开发
 
-**阶段一:设计。** 范围:`devtime/development/` 与 `notes/`。把需求整理为设计记录:方案设计写入 `development/plans/<迭代编号>/`;每次迭代确定的方案写入 `development/iteration/`(一次迭代一个 md 文件,用时间戳命名)。
+**阶段一:设计。** 范围:`devtime/development/` 与 `notes/`。把需求整理为设计记录:方案设计写入 `development/plans/<迭代编号>/`;每次迭代确定的方案写入 `development/iteration/`,命名为 `[YYMM]-[2位序号]-[简短标题].md`。
 
 **阶段二:契约、测试、代码。** 范围:`contracts/`、`atoms/` `edges/`、`runtime/testing/`、`workspace/`(若涉及 `agents/` 改动,也可改 `agents/`)。顺序很重要:先定义 **contracts**,再定义静态关系(`atoms/` `edges/`),再定义测试(`runtime/testing/`),最后才开发代码(`workspace/`)。
 
@@ -37,7 +37,7 @@
 
 ## 仓库结构
 
-- `devtime/` —— 开发期材料,不随工具发布:`development/`(设计工作与迭代记录 —— `plans/` 按迭代编号放方案设计,`iteration/` 放每次迭代确定的方案,一次迭代一个 md 文件、用时间戳命名)、`deploy/`(构建 / 打包 / 启动 / 部署,按环境)。
+- `devtime/` —— 开发期材料,不随工具发布:`development/`(设计工作与迭代记录 —— `plans/` 按迭代编号放方案设计,`iteration/` 放每次迭代确定的方案,一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`)、`deploy/`(构建 / 打包 / 启动 / 部署,按环境)。
 - `runtime/` —— 运行期材料,随工具发布:`testing/`(E2E 测试)、`operation/`(连接 / 观测资源)。
 - `agents/` —— 随工具发布的 AI 能力规范(`agents/AGENTS.md`,中文在 `agents/zh/`),以及 schema / contract / enum 参考。
 - `atoms/` `edges/` `contracts/` `docs/` `notes/` `workspace/` —— 本项目的 schema 与代码。
