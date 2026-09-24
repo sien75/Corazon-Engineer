@@ -2,21 +2,54 @@
 
 [English](README.md)
 
-一个位于 Coding Agent 之上的 **Engineering Agent**。它用朴素的 schema（atoms、edges、contracts、runtime）描述一个系统 —— 由什么组成、各部分怎么连接、在真实环境中怎么运行 —— 从而让一次变更能够在「单个代码仓库之上」被设计、构建、验证和运维。
+一个位于 Coding Agent 之上的 **Engineering Agent**。
+
+把系统变成一份朴素、好读的 schema —— atoms、edges、contracts、runtime，并使用合适的可视化方式展示出来，让一次变更能在「工程维度」被设计、构建、验证和运维。
+
+![Corazon Engineer —— 架构图与 Agent 对话](notes/corazon-v0_1_0.png)
 
 ## 怎么用
 
-到 [Releases 页面](https://github.com/sien75/Corazon-Engineer/releases) 下载对应 OS/arch 的 tar 包，解包、装一次，在你想处理的项目的目录下运行 `corazon`：
+### 安装（升级）
 
 ```bash
-tar xzf corazon-*.tar.gz && ./corazon-*/install.sh
-corazon             # 前台启动全部服务（Ctrl-C 全部停止）
+# 平台：macOS Apple Silicon → darwin-arm64，Linux x86-64 → linux-amd64
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) P=darwin-arm64 ;;
+  Linux-x86_64) P=linux-amd64 ;;
+  *) echo "不支持的平台"; exit 1 ;;
+esac
+
+# 最新版本（也可写死：V=v0.1.0）
+V=$(curl -fsSL https://api.github.com/repos/sien75/Corazon-Engineer/releases/latest \
+    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+
+curl -fL -o corazon-$V-$P.tar.gz \
+  https://github.com/sien75/Corazon-Engineer/releases/download/$V/corazon-$V-$P.tar.gz
+tar xzf corazon-$V-$P.tar.gz && ./corazon-$V-$P/install.sh
+```
+
+Corazon Engineer 的 ai 服务依赖 pi，需要按照 pi 的方式去配置 AI Provider Key（环境变量或 `~/.pi/agent/auth.json`）。
+
+### 使用
+
+```bash
+corazon             # 前台启动全部服务（Ctrl-C 全部停止），并打印 web 地址
 corazon status      # 查看当前目录各服务状态
 ```
 
-打开它打印出的 web 地址即可与 Agent 对话。当前工作目录**就是**项目 —— 可以是空目录，Agent 会把它初始化；所有数据都存在该目录下的 `.corazon/`。
+打开它打印出的 web 地址即可与 Agent 对话。
+当前工作目录**就是**项目 —— 可以是空目录，Agent 会把它初始化；所有数据都存在该目录下的 `.corazon/`。
 
-升级是同一条命令（只替换软件，绝不动项目的 `.corazon/`）；卸载用 `corazon uninstall [--purge]`。也可以不安装，直接把 tar 包解开运行 `./bin/corazon`。ai 服务的 LLM key 读取 pi 自己的配置（环境变量或 `~/.pi/agent/auth.json`）。
+### 卸载
+
+```bash
+corazon uninstall           # 卸载软件
+```
+
+## 背景
+
+为什么需要 Coding Agent 之上的一层，以及这个原型的设计思路 —— 见 [notes/share-corazon_zh.md](notes/share-corazon_zh.md)。
 
 ## 许可证
 
