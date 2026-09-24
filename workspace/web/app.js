@@ -617,7 +617,13 @@ function aiMarkdown() {
   let rafId = 0;
   const render = () => {
     scheduled = false;
+    // The markdown render is deferred to an animation frame, so it lands in the
+    // DOM after the caller's append/scroll. Decide stickiness and pin to the
+    // bottom around the DOM write — pinning before it leaves the view short of
+    // the newest content (the stream then reads as "stuck" above the bottom).
+    const stick = aiAtBottom();
     div.innerHTML = renderMarkdown(raw);
+    if (stick) aiScrollToBottom();
   };
   return {
     el: div,
