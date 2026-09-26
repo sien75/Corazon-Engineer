@@ -24,7 +24,7 @@ How to do it — development & operation
 
 ## File Organization
 
-A root `engineer.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` is a content directory. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are **special entries**: they do not participate in the directory's sibling structure (they are not content entities).
+A root `engineer.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` is a content directory. Discovery of content entities under `atoms/`, `edges/` and `contracts/` is **recursive** — any `*.yaml` at any depth is picked up. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are **special entries**: they do not participate in the directory's sibling structure (they are not content entities).
 
 ```yaml
 # engineer.yaml — root meta only, does NOT enumerate data files
@@ -41,14 +41,14 @@ exclude:
 ```
 project/
 ├── engineer.yaml               # Root meta only (project, version, default_runtime, include/exclude)
-├── atoms/                     # *.yaml → atom
+├── atoms/                     # **/*.yaml → atom (recursive)
 │   ├── user-service.yaml
 │   ├── notification-service.yaml
 │   └── ...
-├── edges/                     # *.yaml → edge
+├── edges/                     # **/*.yaml → edge (recursive)
 │   ├── user-to-notification.yaml
 │   └── ...
-├── contracts/                 # content files (interface contract yaml)
+├── contracts/                 # content files (interface contract yaml, recursive)
 │   ├── create-user-api.yaml
 │   ├── user-created-event.yaml
 │   ├── postgres-client.yaml

@@ -24,7 +24,7 @@ schema 由「**是什么**」与「**怎么做**」组成：
 
 ## 文件组织
 
-根 `engineer.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 为内容文件目录。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目都是**特殊条目**——它们不参与该目录的并列结构（不作为内容实体）。
+根 `engineer.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 为内容文件目录。`atoms/`、`edges/`、`contracts/` 下内容实体按**递归**发现——任意深度下的 `*.yaml` 都会被加载与校验。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目都是**特殊条目**——它们不参与该目录的并列结构（不作为内容实体）。
 
 ```yaml
 # engineer.yaml —— 只放根 meta，不枚举数据文件
@@ -41,14 +41,14 @@ exclude:
 ```
 project/
 ├── engineer.yaml               # 仅根 meta（project、version、default_runtime、include/exclude）
-├── atoms/                     # *.yaml → atom
+├── atoms/                     # **/*.yaml → atom（递归）
 │   ├── user-service.yaml
 │   ├── notification-service.yaml
 │   └── ...
-├── edges/                     # *.yaml → edge
+├── edges/                     # **/*.yaml → edge（递归）
 │   ├── user-to-notification.yaml
 │   └── ...
-├── contracts/                 # 内容文件（接口 contract yaml）
+├── contracts/                 # 内容文件（接口 contract yaml，递归）
 │   ├── create-user-api.yaml
 │   ├── user-created-event.yaml
 │   ├── postgres-client.yaml

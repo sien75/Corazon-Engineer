@@ -55,37 +55,25 @@ func str(m map[string]interface{}, key string) string {
 	return ""
 }
 
-// LoadAtoms reads all atoms/*.yaml files and returns the full atom list.
+// LoadAtoms reads every *.yaml under atoms/ (recursively) and returns the full atom list.
 func LoadAtoms(root string) ([]interface{}, error) {
 	return loadStructure(root, "atoms")
 }
 
-// LoadEdges reads all edges/*.yaml files and returns the full edge list.
+// LoadEdges reads every *.yaml under edges/ (recursively) and returns the full edge list.
 func LoadEdges(root string) ([]interface{}, error) {
 	return loadStructure(root, "edges")
 }
 
 func loadStructure(root, kind string) ([]interface{}, error) {
-	dir := filepath.Join(root, kind)
 	out := []interface{}{}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return out, nil
-		}
-		return nil, err
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") || strings.HasPrefix(e.Name(), ".") {
+	for _, rel := range ListEntries(root, kind) {
+		if !strings.HasSuffix(rel, ".yaml") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		doc, err := readYAMLMap(root, rel)
 		if err != nil {
-			return nil, err
-		}
-		var doc map[string]interface{}
-		if err := yaml.Unmarshal(data, &doc); err != nil {
-			return nil, fmt.Errorf("%s/%s: %w", kind, e.Name(), err)
+			return nil, fmt.Errorf("%s: %w", rel, err)
 		}
 		if list, ok := doc[kind].([]interface{}); ok {
 			out = append(out, list...)

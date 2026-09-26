@@ -91,3 +91,57 @@ rm .engineer/.playground/atoms/broken.yaml
 ```
 
 Expected: 200, `ok: false`; `errors` includes `file: atoms/broken.yaml`, `type: atom`, with a `yaml parse error` message.
+
+## 6. nested dirs are discovered recursively
+
+`atoms/` / `edges/` / `contracts/` are recursive: any `*.yaml` at any depth is loaded and validated.
+
+```bash
+mkdir -p .engineer/.playground/atoms/nested .engineer/.playground/edges/nested .engineer/.playground/contracts/nested
+cat > .engineer/.playground/contracts/nested/deep-api.yaml <<'YAML'
+id: deep-api
+description: Nested mock contract
+request:
+  body:
+    msg: string
+response:
+  status: 200
+  body:
+    ok: boolean
+YAML
+cat > .engineer/.playground/atoms/nested/deep-actor.yaml <<'YAML'
+atoms:
+  - name: deep-actor
+    description: Nested mock atom
+    role: service
+    runtime_type: go
+    interfaces:
+      provides:
+        - id: deep-api
+          channel: network
+          protocol: http
+          contract: ./contracts/nested/deep-api.yaml
+          extend:
+            path: /deep
+            method: POST
+      consumes: []
+YAML
+cat > .engineer/.playground/edges/nested/deep-edge.yaml <<'YAML'
+edges:
+  - id: deep-edge
+    from: demo-service
+    from_interface: demo-events
+    to: deep-actor
+    to_interface: deep-api
+    channel: network
+    protocol: http
+    description: nested edge to nested atom
+YAML
+curl -s -X POST http://localhost:7502/static/query \
+  -H 'Content-Type: application/yaml' --data-binary ''
+curl -s -X POST http://localhost:7502/static/validate \
+  -H 'Content-Type: application/yaml' --data-binary ''
+rm -rf .engineer/.playground/atoms/nested .engineer/.playground/edges/nested .engineer/.playground/contracts/nested
+```
+
+Expected: `/static/query` `atoms` includes `name: deep-actor` and `edges` includes `id: deep-edge` (the loader recurses, not just validate); `/static/validate` returns 200, `ok: true`, `errors: []`.
