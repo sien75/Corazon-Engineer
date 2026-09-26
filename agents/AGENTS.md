@@ -52,10 +52,10 @@ A Corazon-like project is an engineering-architecture system. It describes atomi
 
 `devtime/` and `runtime/` divide one workflow: turning a requirement into a system, then verifying and operating it.
 
-- `devtime/` (**not shipped**) — turning a requirement into a runnable system: `development/` (requirements / design records — plans and iteration records), `deploy/` (build / pack / launch / deploy).
-- `runtime/` (**shipped**) — verifying the running system and interacting with its resources: `testing/` (E2E tests from the user's point of view), `operation/` (connect to / observe databases, caches, logs, service instances).
+- `devtime/` (**not shipped**) — turning a requirement into a runnable system: requirements / design records, plus build / pack / launch / deploy material. Its internal layout is project-specific; `devtime/README.md` is its overview.
+- `runtime/` (**shipped**) — verifying the running system and interacting with its resources: E2E tests from the user's point of view, plus connecting to and observing databases, caches, logs, and service instances. Its internal layout is project-specific; `runtime/README.md` is its overview.
 
-So: to develop a Corazon-like project, read `devtime/README.md` first — it explains how development works. To test, connect to, or operate a project's environments, read `runtime/README.md` — it explains how they run.
+So: besides the project's own `AGENTS.md`, we recommend also reading `devtime/README.md` — it explains how development works — and `runtime/README.md` — it explains how the running system is tested, connected to, and operated — before making changes.
 
 ## Directory conventions
 
@@ -64,10 +64,10 @@ So: to develop a Corazon-like project, read `devtime/README.md` first — it exp
 - `edges/` — connections between atoms.
 - `contracts/` — interface contracts referenced by atoms; the internal source of truth for request/response shapes.
 - `workspace/` — source code of the atoms (the local checkouts). It need not live inside this repository: an atom's `repo` / `path` link the upstream and the checkout location.
-- `runtime/` — the running system: `testing/` (E2E tests) + `operation/` (connect to / observe resources); a plain file tree; `runtime/README.md` is its overview.
-- `docs/` — external-facing documentation. It must explain how to consume the `workspace/` build artifacts, including the public view of the relevant contracts — a consumer should not need the internal source tree to use the artifacts.
-- `agents/` — this AI capability description, plus the schema, contract, and enum reference.
-- `devtime/` — development-time material (not shipped): `development/` (requirements / design records — plans and iteration records) + `deploy/` (per-environment build / launch); a plain file tree; `devtime/README.md` is its overview.
+- `runtime/` — the running system: E2E tests and connections to / observation of resources; a plain file tree whose internal layout is project-specific; `runtime/README.md` is its overview.
+- `docs/` — documentation, in the ordinary sense.
+- `agents/` — the project's agent instructions: how an AI agent should work on this project, plus the schema / contract / enum reference.
+- `devtime/` — development-time material (not shipped): requirements / design records and per-environment build / launch; a plain file tree whose internal layout is project-specific; `devtime/README.md` is its overview.
 - `notes/` — free-form notes.
 - `.engineer/` — local private data of the project (database, run data, logs). Git-ignored. Never commit it.
 
