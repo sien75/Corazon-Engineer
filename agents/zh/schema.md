@@ -30,7 +30,6 @@ schema 由「**是什么**」与「**怎么做**」组成：
 # engineer.yaml —— 只放根 meta，不枚举数据文件
 project: Corazon Engineer
 version: 1.0
-default_runtime: dev
 # 可选：偏离约定时才写
 include:
   - ../shared-atoms/billing-service.yaml   # 从外部引入一个 atom
@@ -40,7 +39,7 @@ exclude:
 
 ```
 project/
-├── engineer.yaml               # 仅根 meta（project、version、default_runtime、include/exclude）
+├── engineer.yaml               # 仅根 meta（project、version、include/exclude）
 ├── atoms/                     # **/*.yaml → atom（递归）
 │   ├── user-service.yaml
 │   ├── notification-service.yaml
@@ -120,7 +119,7 @@ atoms:
 - `interfaces.provides` / `interfaces.consumes` 按角色声明接口：`provides` = 本 atom 提供的能力（别人调本 atom）,`consumes` = 本 atom 依赖的能力（本 atom 调别人）
 - `role` 是 atom 在架构中的角色（service | database | cache | queue | storage | gateway | scheduler | worker | proxy），见 ./enum.md
 - 接口公共字段：`id` / `channel` / `protocol` / `contract`（指向 `contracts/` 下的契约文件）
-- 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）。监听地址/端口属于运行环境（`endpoints.address`），不写在 atom 里
+- 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）。
 
 ---
 

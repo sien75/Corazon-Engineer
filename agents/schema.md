@@ -30,7 +30,6 @@ A root `engineer.yaml` holds project-level metadata only. `atoms/` / `edges/` / 
 # engineer.yaml — root meta only, does NOT enumerate data files
 project: Corazon Engineer
 version: 1.0
-default_runtime: dev
 # optional: only when deviating from convention
 include:
   - ../shared-atoms/billing-service.yaml   # pull in an atom from outside
@@ -40,7 +39,7 @@ exclude:
 
 ```
 project/
-├── engineer.yaml               # Root meta only (project, version, default_runtime, include/exclude)
+├── engineer.yaml               # Root meta only (project, version, include/exclude)
 ├── atoms/                     # **/*.yaml → atom (recursive)
 │   ├── user-service.yaml
 │   ├── notification-service.yaml
@@ -120,7 +119,7 @@ atoms:
 - `interfaces.provides` / `interfaces.consumes` declare the atom's interfaces by role: `provides` = capabilities this atom exposes (others call this atom), `consumes` = capabilities this atom depends on (this atom calls others)
 - `role` is the atom's role in the architecture (service | database | cache | queue | storage | gateway | scheduler | worker | proxy), see ./enum.md
 - Common interface fields: `id` / `channel` / `protocol` / `contract` (pointing to a contract file under `contracts/`)
-- Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.). Bind addresses/ports belong to the runtime environment (`endpoints.address`), not to the atom
+- Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.).
 
 ---
 

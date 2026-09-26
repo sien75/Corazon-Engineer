@@ -48,7 +48,7 @@ External tools keep their own credentials (under their own `~/.xxx` locations); 
 
 # Part 2 — Developing a Corazon-like project
 
-A Corazon-like project is an engineering-architecture system. It describes atomic projects (atoms), their connections (edges), interface contracts (contracts), and environment mappings (runtime) through schema files, keeps implementation code in `workspace/`, and validates the whole system through system-level tests. A Corazon-like project chooses its own runtime layout; it does not inherit Corazon Engineer's services or ports.
+A Corazon-like project is an engineering-architecture system. It describes atomic projects (atoms), their connections (edges), and interface contracts (contracts) through schema files, keeps implementation code in `workspace/`, and validates the whole system through system-level tests. A Corazon-like project chooses how it runs; it does not inherit Corazon Engineer's services or ports.
 
 `development/` and `how-to/` split the material: what the development process produces, and how to build / operate the system.
 
@@ -59,7 +59,7 @@ So: besides the project's own `AGENTS.md`, we recommend also reading `developmen
 
 ## Directory conventions
 
-- `engineer.yaml` — project root marker (project name, version, default runtime).
+- `engineer.yaml` — project root marker (project name, version).
 - `atoms/` — one YAML per atom: what it is, what it provides, what it consumes.
 - `edges/` — connections between atoms.
 - `contracts/` — interface contracts referenced by atoms; the internal source of truth for request/response shapes.

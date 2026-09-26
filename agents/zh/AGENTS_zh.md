@@ -48,7 +48,7 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 # 第二部分 —— 开发 Corazon-like 项目
 
-一个 Corazon-like 项目是一个工程架构系统:通过 schema 文件描述原子项目(atoms)、连接(edges)、接口契约(contracts)、环境映射(runtime),实现代码放在 `workspace/`,并通过系统级测试验证整体。Corazon-like 项目自行决定运行方式,不继承 Corazon Engineer 的服务与端口。
+一个 Corazon-like 项目是一个工程架构系统:通过 schema 文件描述原子项目(atoms)、连接(edges)、接口契约(contracts),实现代码放在 `workspace/`,并通过系统级测试验证整体。Corazon-like 项目自行决定怎么运行,不继承 Corazon Engineer 的服务与端口。
 
 `development/` 和 `how-to/` 划分材料:开发过程产出什么,以及系统怎么构建 / 操作。
 
@@ -59,7 +59,7 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 ## 目录约定
 
-- `engineer.yaml` — 项目根标记(项目名、版本、默认 runtime)。
+- `engineer.yaml` — 项目根标记(项目名、版本)。
 - `atoms/` — 每个 atom 一个 YAML:它是谁、提供什么、依赖什么。
 - `edges/` — atom 之间的连接。
 - `contracts/` — atom 引用的接口契约;请求/响应结构的内部事实源。
