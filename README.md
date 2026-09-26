@@ -4,7 +4,7 @@
 
 An **engineering agent** on top of the coding agent.
 
-Turns a system into a small, readable schema — atoms, edges, contracts, runtime — and presents it in an appropriate visualization, so a change can be designed, built, verified and operated at the engineering dimension.
+Turns a system into a small, readable schema — atoms, edges, contracts, development and how-to — and presents it in an appropriate visualization, so a change can be designed, built, verified and operated at the engineering dimension.
 
 ![Corazon Engineer — architecture graph and agent conversation](notes/corazon-v0_1_0.png)
 

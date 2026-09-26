@@ -1,10 +1,10 @@
 id: static-stream
-description: Long-lived connection pushing schema-change events; the service watches the schema file tree and emits an event whenever a content file is added, updated or removed. Execution events (call / test / devtime) reserved.
+description: Long-lived connection pushing schema-change events; the service watches the schema file tree and emits an event whenever a content file is added, updated or removed. Execution events (call / test / development) reserved.
 
 request:
   body:
     kinds?: string  # event kinds to subscribe (comma-separated); empty = all
-    edges?: string  # edge ids to subscribe; only for kind=runtime (reserved); empty = all
+    edges?: string  # edge ids to subscribe; only for kind=how-to (reserved); empty = all
 
 response:
   status: 200
@@ -12,12 +12,12 @@ response:
   body:
     seq: number  # event sequence
     ts: string  # date-time
-    kind: schema | runtime | test | devtime  # schema implemented; others reserved
+    kind: schema | how-to | test | development  # schema implemented; others reserved
 
     payload:
       # kind=schema: content snapshot of the changed file, shape matches the type below
       op: add | update | remove
-      type: atom | edge | runtime | devtime | contract | docs | notes
+      type: atom | edge | how-to | development | contract | docs | notes
       id: string  # changed file path, e.g. "contracts/ai-ask.yaml"
       file: string  # changed file; coincides with id
 
@@ -53,9 +53,9 @@ response:
         protocol: string
         description: string
 
-      runtime?: string  # when type=runtime, raw file text
+      how-to?: string  # when type=how-to, raw file text
 
-      devtime?: string  # when type=devtime
+      development?: string  # when type=development
 
       contract?:  # when type=contract
         id: string
@@ -68,7 +68,7 @@ response:
 
       notes?: string  # when type=notes
 
-      # kind=runtime | test | devtime (execution events, reserved): payload shape TBD when execution lands
+      # kind=how-to | test | development (execution events, reserved): payload shape TBD when execution lands
 
 errors:
   - status: 400

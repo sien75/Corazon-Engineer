@@ -4,7 +4,7 @@
 
 一个位于 Coding Agent 之上的 **Engineering Agent**。
 
-把系统变成一份朴素、好读的 schema —— atoms、edges、contracts、runtime，并使用合适的可视化方式展示出来，让一次变更能在「工程维度」被设计、构建、验证和运维。
+把系统变成一份朴素、好读的 schema —— atoms、edges、contracts、development 与 how-to —— 并使用合适的可视化方式展示出来，让一次变更能在「工程维度」被设计、构建、验证和运维。
 
 ![Corazon Engineer —— 架构图与 Agent 对话](notes/corazon-v0_1_0.png)
 

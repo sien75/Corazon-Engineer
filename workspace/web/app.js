@@ -431,11 +431,11 @@ document.getElementById("panel-close").addEventListener("click", hidePanel);
 
 const contentEl = document.getElementById("content");
 const graphEl = document.getElementById("graph");
-const SECTIONS = ["runtime", "devtime", "contracts", "docs", "notes"];
+const SECTIONS = ["how-to", "development", "contracts", "docs", "notes"];
 const SECTION_DETAIL_TYPE = {
-  runtime: "runtime",
+  "how-to": "how-to",
   contracts: "contract",
-  devtime: "devtime",
+  development: "development",
   docs: "docs",
   notes: "notes",
 };

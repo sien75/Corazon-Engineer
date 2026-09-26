@@ -13,8 +13,8 @@ Local development environment: builds and runs the Go services (static / log / w
 Run from the project root (the directory holding `engineer.yaml`):
 
 ```bash
-devtime/deploy/dev/launch.sh    # build + start log → static → ai → web
-devtime/deploy/dev/stop.sh      # stop everything
+how-to/deploy/dev/launch.sh    # build + start log → static → ai → web
+how-to/deploy/dev/stop.sh      # stop everything
 ```
 
 `launch.sh` owns port selection: defaults are 8500 web / 8501 ai / 8502 static / 8503 log, and a taken default advances to the next free port. It builds the Go services into `.engineer/dev/bin/` (including `engineer-web` from `workspace/web/server`, which serves the assets in `workspace/web/`), starts all four, hands each service the chosen addresses (ai gets `--log` / `--static`; web gets its port plus `--root` / `--static` / `--ai` / `--log`), and prints the port table. There is **no port config file**.
@@ -31,4 +31,4 @@ To pin a model, pass it through: `AI_MODEL=... ` is not wired yet — run ai dir
 curl -s -X POST http://localhost:<static port>/static/query -d '{}'
 ```
 
-A response listing atoms / edges / runtime entries means the stack is up. For system-level tests see `runtime/testing/dev/` (each `case-*/TEST.md`).
+A response listing atoms / edges / how-to / development entries means the stack is up. For system-level tests see `development/testing/dev/` (each `case-*/TEST.md`).

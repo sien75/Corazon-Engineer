@@ -3,18 +3,18 @@ description: Fetch content of a single leaf file
 
 request:
   body:
-    type: runtime | devtime | contract | docs | notes  # leaf file type
+    type: how-to | development | contract | docs | notes  # leaf file type
     id: string  # relative path (directory entry from static-query), e.g. "contracts/ai-ask.yaml"
 
 response:
   status: 200
   body:
-    type: runtime | devtime | contract | docs | notes  # echoed request type
+    type: how-to | development | contract | docs | notes  # echoed request type
     id: string  # echoed request id
 
-    runtime?: string  # when type=runtime, raw file text (prose markdown / config yaml)
+    how-to?: string  # when type=how-to, raw file text (prose markdown / config yaml)
 
-    devtime?: string  # when type=devtime, raw markdown text
+    development?: string  # when type=development, raw markdown text
 
     contract?:  # when type=contract, parsed contract file
       id: string

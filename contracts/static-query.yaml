@@ -40,9 +40,9 @@ response:
         protocol: string  # per channel, see agents/enum.md
         description: string
 
-    runtime: [string]  # plain file tree under runtime/, recursive relative paths, e.g. "runtime/testing/dev/case-x/TEST.md"
+    how-to: [string]  # plain file tree under how-to/, recursive relative paths
     contracts: [string]  # entries under contracts/, relative paths e.g. "contracts/ai-ask.yaml"
-    devtime: [string]  # entries under devtime/, relative paths
+    development: [string]  # plain file tree under development/, recursive relative paths, e.g. "development/testing/dev/case-x/TEST.md"
     docs: [string]  # entries under docs/, relative paths
     notes: [string]  # entries under notes/, relative paths
 

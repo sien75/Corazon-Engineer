@@ -63,7 +63,7 @@ mkdir -p "$OUT"/{bin,web}
 #    log 14.8 → 9.9 MB) with no runtime effect.
 #    launcher (the `engineer` command) first — one file, built straight from the
 #    runtime tree — then the three services
-CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OUT/bin/engineer" devtime/deploy/prod/launch.go
+CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OUT/bin/engineer" how-to/deploy/prod/launch.go
 (cd workspace/log    && CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OLDPWD/$OUT/bin/engineer-log" .)
 (cd workspace/static && CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OLDPWD/$OUT/bin/engineer-static" .)
 (cd workspace/web/server && CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OLDPWD/$OUT/bin/engineer-web" .)
@@ -80,14 +80,14 @@ cp workspace/web/{index.html,app.js,style.css} "$OUT/web/"
 cp -R workspace/web/vendor "$OUT/web/"
 
 # 4. tool content — published parts only: agents/ (AI capability description) and
-#    docs/. Everything else (schema, runtime, devtime, ...) is dev-time internal
+#    docs/. Everything else (schema, development, how-to, ...) is dev-time internal
 #    and never ships.
 for d in agents docs; do
   [ -d "$d" ] && cp -R "$d" "$OUT/"
 done
 
 # 5. installer — copied in as a real file, never generated from this BOOK
-cp devtime/deploy/prod/install.sh "$OUT/install.sh"
+cp how-to/deploy/prod/install.sh "$OUT/install.sh"
 chmod +x "$OUT/install.sh"
 
 # 6. pack the tarball — runtime state (logs/, run/) is created when the package
@@ -110,7 +110,7 @@ On macOS both toolchains ad-hoc sign their output, so no separate `codesign` ste
 
 ## the `engineer` launcher
 
-`bin/engineer` is built from `devtime/deploy/prod/launch.go` (a single-file Go program compiled at pack time) — a native binary, shipped as the package's entry point:
+`bin/engineer` is built from `how-to/deploy/prod/launch.go` (a single-file Go program compiled at pack time) — a native binary, shipped as the package's entry point:
 
 - picks free ports (defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free one on conflict), hands each address to its service (`--addr` for log/static/ai, positional for web; ai also gets `--log` + `--static`, web gets `--static` / `--ai` / `--log`), starts log → static → ai → web as children, prints the chosen ports, then **holds the foreground**. Ctrl-C tears the whole stack down. There is **no port config file and no stop script**.
 - also serves the `engineer` subcommands: `start` (default) / `status` / `version` / `uninstall [--purge]`.
@@ -176,5 +176,5 @@ ssh "$SRV" "cd $REPO && gh release create '$TAG' dist/engineer-$TAG-*.tar.gz --t
 
 - **Why the web server is Go, not Bun**: it is ~100 lines of `net/http` + `os` — serve files, generate one `/config.js` — with no JS in it, so as a Bun binary it cost 61 MB of embedded runtime for nothing. `ai` stays Bun: the pi SDK is TypeScript, so a JS runtime is needed either way, and embedding it (70 MB) beats asking the user to install one.
 - **Why not Docker**: not needed for one-click — the tarball has zero runtime dependencies and `bin/engineer` is the single entry point. If you want container isolation anyway, build one all-in-one image: `COPY` the unpacked tarball, `CMD ["./bin/engineer"]` — the launcher already holds the foreground, so the container stays up until stopped.
-- **If `bun build --compile` misbehaves for ai** (the pi SDK is the most dynamic dependency): fall back to installing Bun on the target, ship `workspace/ai/` (src + package.json + bun.lock, then `bun install --production`), and change the ai spec in `devtime/deploy/prod/launch.go` to `bun run ai/src/main.ts --root <project>` (rebuild `bin/engineer`).
+- **If `bun build --compile` misbehaves for ai** (the pi SDK is the most dynamic dependency): fall back to installing Bun on the target, ship `workspace/ai/` (src + package.json + bun.lock, then `bun install --production`), and change the ai spec in `how-to/deploy/prod/launch.go` to `bun run ai/src/main.ts --root <project>` (rebuild `bin/engineer`).
 - **Where the data lives**: everything mutable (the log service's sqlite db, plus per-project `run/` pids and `logs/`) goes under `<cwd project>/.engineer/` — the project being processed; back it up with the project.

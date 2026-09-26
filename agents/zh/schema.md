@@ -13,9 +13,9 @@ schema 由「**是什么**」与「**怎么做**」组成：
 ├── Docs          docs/       对外文档   —— 散文
 └── Notes         notes/      内部批注   —— 散文
 
-怎么做 —— 开发与运行
-├── Devtime       devtime/    怎么开发（development + deploy）—— 散文
-└── Runtime       runtime/    怎么测试与操作（testing + operation）      —— 散文
+怎么工作
+├── Development   development/  开发过程材料（plans + iterations + testing）—— 散文
+└── How-to        how-to/       怎么构建与操作（deploy + operation）        —— 散文
 ```
 
 `workspace/` 放各 atom 的实现代码。atom 通过 `repo` 关联上游仓库、通过 `path` 关联本地检出;代码可以放在 `workspace/`(默认),也可以放在 `path` 指向的任意位置 —— **不一定要在这个仓库里**。
@@ -24,7 +24,7 @@ schema 由「**是什么**」与「**怎么做**」组成：
 
 ## 文件组织
 
-根 `engineer.yaml` 只放项目级 meta。`atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 为内容文件目录。`atoms/`、`edges/`、`contracts/` 下内容实体按**递归**发现——任意深度下的 `*.yaml` 都会被加载与校验。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目都是**特殊条目**——它们不参与该目录的并列结构（不作为内容实体）。
+根 `engineer.yaml` 只放项目级 meta。`atoms/` / `edges/` / `development/` / `how-to/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 为内容文件目录。`atoms/`、`edges/`、`contracts/` 下内容实体按**递归**发现——任意深度下的 `*.yaml` 都会被加载与校验。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目都是**特殊条目**——它们不参与该目录的并列结构（不作为内容实体）。
 
 ```yaml
 # engineer.yaml —— 只放根 meta，不枚举数据文件
@@ -57,13 +57,14 @@ project/
 ├── workspace/                 # 本地代码仓库（检出）
 ├── docs/                      # *.md → 对外文档
 ├── notes/                     # *.md → 内部批注（标记 + thread，锚定实体）
-├── devtime/                   # 普通文件树：开发时资料（布局由 devtime/README.md 定义）
-│   ├── README.md              # devtime 树自身的约定 —— 先读
-│   ├── development/           # 编码前的需求分析、架构设计与迭代记录
-│   └── deploy/                # 构建 / 打包 / 启动 / 部署
-└── runtime/                   # 普通文件树：testing + operation（布局由 runtime/README.md 定义）
-    ├── README.md              # runtime 树自身的约定 —— 先读
-    ├── testing/               # E2E 测试
+├── development/               # 普通文件树：开发过程材料（布局由 development/README.md 定义）
+│   ├── README.md              # development 树自身的约定 —— 先读
+│   ├── plans/                 # 方案设计，按迭代编号分目录
+│   ├── iterations/            # 每次迭代确定的方案
+│   └── testing/               # E2E 测试
+└── how-to/                    # 普通文件树：deploy + operation（布局由 how-to/README.md 定义）
+    ├── README.md              # how-to 树自身的约定 —— 先读
+    ├── deploy/                # 构建 / 打包 / 启动 / 部署
     └── operation/             # 连接 / 观测资源（数据库、缓存、日志、服务）
 ```
 
@@ -119,7 +120,7 @@ atoms:
 - `interfaces.provides` / `interfaces.consumes` 按角色声明接口：`provides` = 本 atom 提供的能力（别人调本 atom）,`consumes` = 本 atom 依赖的能力（本 atom 调别人）
 - `role` 是 atom 在架构中的角色（service | database | cache | queue | storage | gateway | scheduler | worker | proxy），见 ./enum.md
 - 接口公共字段：`id` / `channel` / `protocol` / `contract`（指向 `contracts/` 下的契约文件）
-- 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）。监听地址/端口属于部署关注点，由 Runtime 层的 `endpoints.address` 表达，不写在 atom 里
+- 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）。监听地址/端口属于运行环境（`endpoints.address`），不写在 atom 里
 
 ---
 
@@ -189,24 +190,25 @@ errors:
 
 ---
 
-## Devtime 文件 — 开发时资料
+## Development 文件 — 开发过程材料
 
-把需求变成可运行系统的一切，位于 `devtime/`。为普通文件树（同 `runtime/`），布局由 `devtime/README.md` 定义。两个模块：
+开发过程材料，位于 `development/`。为普通文件树（同 `how-to/`），布局由 `development/README.md` 定义。三个模块：
 
-- **`development/`** —— 需求分析、架构设计及编码前的设计工作，含方案设计与迭代记录。
-- **`deploy/`** —— 每个环境的构建、打包、启动与部署；负责确保项目成功启动，不负责验证业务功能。
+- **`plans/`** —— 需求分析与架构设计，按迭代编号分目录。
+- **`iterations/`** —— 每次迭代确定的方案。
+- **`testing/`** —— 从真实用户视角的 E2E 测试，通过 UI / API 操作业务系统验证功能。
 
-以普通 markdown 为主，不做格式约定；也可能包含脚本文件（如 deploy 脚本）。应当读 README 并遵循项目声明的约定。
+系统级测试放在 `testing/` 下，含 `desp.yaml`（元数据）和 `TEST.md`（用例）；不得对真实项目树执行。
+
+以普通 markdown 为主，不做格式约定；也可能包含脚本文件。应当读 README 并遵循项目声明的约定。
 
 ---
 
-## Runtime 层 — 运行系统与资源交互
+## How-to 文件 — 构建与操作
 
-运行中的系统及其资源，位于 `runtime/`。为普通文件树（同 `devtime/`），布局由 `runtime/README.md` 定义。两个模块：
+系统怎么构建、怎么操作，位于 `how-to/`。为普通文件树（同 `development/`），布局由 `how-to/README.md` 定义。两个模块：
 
-- **`testing/`** —— 从真实用户视角的 E2E 测试，通过 UI / API 操作业务系统验证功能。
+- **`deploy/`** —— 每个环境的构建、打包、启动与部署；负责确保项目成功启动，不负责验证业务功能。
 - **`operation/`** —— 连接并观测资源（数据库、缓存、日志、服务实例），含 telemetry：实时监控、历史日志查询，以及对底层资源的主动操作。
-
-系统级测试放在 `testing/` 下，含 `desp.yaml`（元数据）和 `TEST.md`（用例）；不得对真实项目树执行。
 
 以普通 markdown 为主，不做格式约定；也可能包含脚本文件。应当读 README 并遵循项目声明的约定。

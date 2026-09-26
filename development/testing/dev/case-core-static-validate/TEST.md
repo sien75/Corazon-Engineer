@@ -7,8 +7,8 @@ Note: the static API speaks YAML (`application/yaml`) — request and response b
 ## Setup
 
 ```bash
-# Prepare the mock project: runtime/testing/.playground is a minimal mock unrelated to the real project; place it at .engineer/.playground/
-rm -rf .engineer/.playground && mkdir -p .engineer && cp -R runtime/testing/.playground .engineer/.playground
+# Prepare the mock project: development/testing/.playground is a minimal mock unrelated to the real project; place it at .engineer/.playground/
+rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/.playground .engineer/.playground
 # Start the server under test with .engineer/.playground as project root
 cd workspace/static && go build -o engineer . && ./engineer serve-static --root ../../.engineer/.playground --addr :7502 &
 ```

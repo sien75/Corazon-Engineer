@@ -13,9 +13,9 @@ What it is — define the system structure
 ├── Docs            docs/        external-facing docs   — prose
 └── Notes           notes/       internal annotations    — prose
 
-How to do it — development & operation
-├── Devtime         devtime/     how to develop (development + deploy) — prose
-└── Runtime         runtime/     how to test & operate (testing + operation)      — prose
+How to work on it
+├── Development    development/  development material (plans + iterations + testing) — prose
+└── How-to         how-to/       how to build & operate (deploy + operation)         — prose
 ```
 
 `workspace/` holds the atoms' implementation code. An atom links its upstream repo via `repo` and its local checkout via `path`; the code may be checked out under `workspace/` (the default) or anywhere `path` points — it does not have to live inside this repository.
@@ -24,7 +24,7 @@ How to do it — development & operation
 
 ## File Organization
 
-A root `engineer.yaml` holds project-level metadata only. `atoms/` / `edges/` / `runtime/` / `devtime/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` is a content directory. Discovery of content entities under `atoms/`, `edges/` and `contracts/` is **recursive** — any `*.yaml` at any depth is picked up. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are **special entries**: they do not participate in the directory's sibling structure (they are not content entities).
+A root `engineer.yaml` holds project-level metadata only. `atoms/` / `edges/` / `development/` / `how-to/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` is a content directory. Discovery of content entities under `atoms/`, `edges/` and `contracts/` is **recursive** — any `*.yaml` at any depth is picked up. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are **special entries**: they do not participate in the directory's sibling structure (they are not content entities).
 
 ```yaml
 # engineer.yaml — root meta only, does NOT enumerate data files
@@ -57,13 +57,14 @@ project/
 ├── workspace/                 # local code repositories (checkouts)
 ├── docs/                      # *.md → external-facing doc
 ├── notes/                     # *.md → internal annotation (marker + thread, anchored to entity)
-├── devtime/                   # plain file tree: dev-time material (layout defined by devtime/README.md)
-│   ├── README.md              # the devtime tree's own conventions — read first
-│   ├── development/           # requirements / design / iteration records before coding
-│   └── deploy/                # build / pack / launch / deploy
-└── runtime/                   # plain file tree: testing + operation (layout defined by runtime/README.md)
-    ├── README.md              # the runtime tree's own conventions — read first
-    ├── testing/               # E2E tests
+├── development/               # plain file tree: development material (layout defined by development/README.md)
+│   ├── README.md              # the development tree's own conventions — read first
+│   ├── plans/                 # design docs, one dir per iteration number
+│   ├── iterations/            # the confirmed plan per iteration
+│   └── testing/               # E2E tests
+└── how-to/                    # plain file tree: deploy + operation (layout defined by how-to/README.md)
+    ├── README.md              # the how-to tree's own conventions — read first
+    ├── deploy/                # build / pack / launch / deploy
     └── operation/             # connect to / observe resources (db, cache, logs, services)
 ```
 
@@ -119,7 +120,7 @@ atoms:
 - `interfaces.provides` / `interfaces.consumes` declare the atom's interfaces by role: `provides` = capabilities this atom exposes (others call this atom), `consumes` = capabilities this atom depends on (this atom calls others)
 - `role` is the atom's role in the architecture (service | database | cache | queue | storage | gateway | scheduler | worker | proxy), see ./enum.md
 - Common interface fields: `id` / `channel` / `protocol` / `contract` (pointing to a contract file under `contracts/`)
-- Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.). Bind addresses/ports belong to the Runtime layer's `endpoints.address`, not to the atom
+- Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.). Bind addresses/ports belong to the runtime environment (`endpoints.address`), not to the atom
 
 ---
 
@@ -189,24 +190,25 @@ Internal markers and discussions targeting an entity, under `notes/`. Plain mark
 
 ---
 
-## Devtime Files — Dev-Time Material
+## Development Files — Development Material
 
-Everything that turns a requirement into a runnable system, under `devtime/`. A plain file tree (like `runtime/`); its layout is defined by `devtime/README.md`. Two modules:
+Development material, under `development/`. A plain file tree (like `how-to/`); its layout is defined by `development/README.md`. Three modules:
 
-- **`development/`** — requirements analysis, architecture design, and design work before coding, including plan docs and iteration records.
-- **`deploy/`** — build, pack, launch, and deploy a project, per environment; ensures the project starts, but does not verify business behavior.
+- **`plans/`** — requirements analysis and architecture design, one dir per iteration number.
+- **`iterations/`** — the plan confirmed at each iteration.
+- **`testing/`** — E2E tests from the real user's point of view, exercising the business system through its UI / API.
 
-Mostly plain markdown, no format convention; it may also contain script files (e.g. deploy scripts). Read the README and follow the project's stated conventions.
+System-level tests live under `testing/`, with `desp.yaml` (metadata) and `TEST.md` (the case); they must not run against the real project tree.
+
+Mostly plain markdown, no format convention; it may also contain script files. Read the README and follow the project's stated conventions.
 
 ---
 
-## Runtime Layer
+## How-to Files — Deploy & Operation
 
-The running system and its resources, under `runtime/`. A plain file tree (like `devtime/`); its layout is defined by `runtime/README.md`. Two modules:
+How to build and operate the system, under `how-to/`. A plain file tree (like `development/`); its layout is defined by `how-to/README.md`. Two modules:
 
-- **`testing/`** — E2E tests from the real user's point of view, exercising the business system through its UI / API.
+- **`deploy/`** — build, pack, launch, and deploy a project, per environment; ensures the project starts, but does not verify business behavior.
 - **`operation/`** — connecting to and observing resources (databases, caches, logs, service instances), including telemetry: live monitoring, historical log queries, and active operations.
-
-System-level tests live under `testing/`, with `desp.yaml` (metadata) and `TEST.md` (the case); they must not run against the real project tree.
 
 Mostly plain markdown, no format convention; it may also contain script files. Read the README and follow the project's stated conventions.

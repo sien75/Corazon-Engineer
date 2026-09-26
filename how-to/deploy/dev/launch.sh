@@ -2,8 +2,8 @@
 # dev launcher — builds sources and starts all four services, choosing free ports.
 #
 # Run from the project root (the directory holding engineer.yaml):
-#   devtime/deploy/dev/launch.sh
-# Stop with devtime/deploy/dev/stop.sh
+#   how-to/deploy/dev/launch.sh
+# Stop with how-to/deploy/dev/stop.sh
 #
 # Ports have defaults (8500 web / 8501 ai / 8502 static / 8503 log); if a
 # default is already in use the launcher advances to the next free port. The
@@ -91,4 +91,4 @@ printf '  web     %s\n' "$BASE:$PORT_WEB"
 printf '  ai      %s\n' "$BASE:$PORT_AI"
 printf '  static  %s\n' "$BASE:$PORT_STATIC"
 printf '  log     %s\n' "$BASE:$PORT_LOG"
-echo "logs: $D/*.log    stop: devtime/deploy/dev/stop.sh"
+echo "logs: $D/*.log    stop: how-to/deploy/dev/stop.sh"

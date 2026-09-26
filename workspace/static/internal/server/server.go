@@ -113,13 +113,13 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
-		"atoms":     atoms,
-		"edges":     edges,
-		"runtime":   schema.ListEntries(s.root, "runtime"),
-		"contracts": schema.ListEntries(s.root, "contracts"),
-		"devtime":   schema.ListEntries(s.root, "devtime"),
-		"docs":      schema.ListEntries(s.root, "docs"),
-		"notes":     schema.ListEntries(s.root, "notes"),
+		"atoms":       atoms,
+		"edges":       edges,
+		"how-to":      schema.ListEntries(s.root, "how-to"),
+		"contracts":   schema.ListEntries(s.root, "contracts"),
+		"development": schema.ListEntries(s.root, "development"),
+		"docs":        schema.ListEntries(s.root, "docs"),
+		"notes":       schema.ListEntries(s.root, "notes"),
 	})
 }
 
@@ -133,7 +133,7 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 	if !decode(w, r, &req) {
 		return
 	}
-	if !containsStr([]string{"runtime", "devtime", "contract", "docs", "notes"}, req.Type) {
+	if !containsStr([]string{"how-to", "development", "contract", "docs", "notes"}, req.Type) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid type: "+req.Type)
 		return
 	}
@@ -155,7 +155,7 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		resp["contract"] = doc
-	default: // runtime, devtime, docs, notes — raw text
+	default: // how-to, development, docs, notes — raw text
 		data, err := os.ReadFile(path)
 		if err != nil {
 			writeErr(w, http.StatusNotFound, "not_found", "file not found: "+req.ID)
@@ -332,8 +332,8 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 			}
 			seq++
 			payload := map[string]interface{}{
-				"seq": seq,
-				"ts":  time.Now().UTC().Format(time.RFC3339),
+				"seq":  seq,
+				"ts":   time.Now().UTC().Format(time.RFC3339),
 				"kind": ev.Kind,
 				"payload": map[string]interface{}{
 					"op":    ev.Op,

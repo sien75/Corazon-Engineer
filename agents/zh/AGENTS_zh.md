@@ -50,12 +50,12 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 一个 Corazon-like 项目是一个工程架构系统:通过 schema 文件描述原子项目(atoms)、连接(edges)、接口契约(contracts)、环境映射(runtime),实现代码放在 `workspace/`,并通过系统级测试验证整体。Corazon-like 项目自行决定运行方式,不继承 Corazon Engineer 的服务与端口。
 
-`devtime/` 和 `runtime/` 是同一条工作流的划分:先把需求变成系统,再验证并操作它。
+`development/` 和 `how-to/` 划分材料:开发过程产出什么,以及系统怎么构建 / 操作。
 
-- `devtime/`(**不发布**)—— 把需求变成可运行系统:需求 / 设计记录,以及构建 / 打包 / 启动 / 部署资料。它下面的组织方式因项目而异,`devtime/README.md` 是它的概述。
-- `runtime/`(**发布**)—— 验证运行中的系统并与资源交互:从用户视角的 E2E 测试,以及连接 / 观测数据库、缓存、日志、服务实例。它下面的组织方式因项目而异,`runtime/README.md` 是它的概述。
+- `development/` —— 开发过程的产出:设计记录、迭代记录,以及从用户视角的 E2E 测试。它下面的组织方式因项目而异,`development/README.md` 是它的概述。
+- `how-to/` —— 系统怎么构建与操作:构建 / 打包 / 启动 / 部署资料,以及连接 / 观测数据库、缓存、日志、服务实例。它下面的组织方式因项目而异,`how-to/README.md` 是它的概述。
 
-所以:除了项目自己的 `AGENTS.md` 之外,建议在修改前也读 `devtime/README.md` —— 它说明了开发方式;以及 `runtime/README.md` —— 它说明了运行方式(测试 / 连接 / 操作)。
+所以:除了项目自己的 `AGENTS.md` 之外,建议在修改前也读 `development/README.md` —— 它说明开发过程产出什么;以及 `how-to/README.md` —— 它说明系统怎么构建、测试、连接与操作。
 
 ## 目录约定
 
@@ -64,23 +64,31 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 - `edges/` — atom 之间的连接。
 - `contracts/` — atom 引用的接口契约;请求/响应结构的内部事实源。
 - `workspace/` — atom 的源码(本地检出)。不必放在本仓库内:atom 的 `repo` / `path` 分别关联上游与检出位置。
-- `runtime/` — 运行中的系统:E2E 测试、资源的连接 / 观测;一个普通文件树,内部组织方式因项目而异;`runtime/README.md` 是它的概述。
+- `how-to/` — 系统怎么构建与操作:构建 / 部署配方,以及资源的连接 / 观测;一个普通文件树,内部组织方式因项目而异;`how-to/README.md` 是它的概述。
 - `docs/` — 文档,即通常意义上的文档。
 - `agents/` — 项目面向 AI 的说明:AI 应如何在本项目上工作;以及 schema / contract / enum 参考。
-- `devtime/` — 开发时资料(不发布):需求 / 设计记录、按环境的构建 / 启动;一个普通文件树,内部组织方式因项目而异;`devtime/README.md` 是它的概述。
+- `development/` — 开发过程的产出:设计 / 迭代记录与 E2E 测试;一个普通文件树,内部组织方式因项目而异;`development/README.md` 是它的概述。
 - `notes/` — 自由笔记。
 - `.engineer/` — 项目的本地私有数据(数据库、运行数据、日志),不进 git,绝不提交。
 
 ## 参考
 
-- `./schema.md` — schema 结构(atoms / edges / runtime / contracts / docs / notes)。
+- `./schema.md` — schema 结构(atoms / edges / contracts / development / how-to / docs / notes)。
 - `./contract.md` — contract 文件书写规范。
 - `./enum.md` — 枚举取值(channel / protocol / runtime_type / role)。
 
-## 开发入口
+## 开发类型
 
-明确区分这些场景:
+在一个 Corazon-like 项目上的工作分为三类操作。具体阶段属于项目自己的 `AGENTS.md` —— 读它并遵循;下面只是分类。
 
-1. **项目初始化** —— 项目还没有 Corazon Engineer 结构时:在根目录建 `engineer.yaml`,然后搭目录骨架(`atoms/`、`contracts/`、`edges/`、`workspace/`、`runtime/`、`docs/`、`agents/`、`devtime/`)。先定义第一个 atom 和它的契约,再写实现代码;并尽早和用户一起建立 `devtime/README.md`、`runtime/README.md` 和开发 SOP。
-2. **已有开发指南** —— 读 `devtime/README.md` 并遵循它。不要另起炉灶,在已有 SOP 内工作。
-3. **指南缺失或过时** —— 当现实与 `devtime/` 脱节(新增目录、流程变化、新约定),先向用户提出具体调整建议,确认后再更新 `devtime/`。
+1. **常规需求开发** —— 把需求变成系统的一部分,固定顺序:设计记录写入 `development/`,然后 contracts → 静态关系(`atoms/` `edges/`)→ 测试(`development/`)→ 代码(`workspace/`),再构建运行,最后人工评审。契约先于代码,并且是请求 / 响应结构的事实源。
+
+2. **系统变更** —— 改变系统或其环境本身,而不是它规定的行为:打包发布、启动与操作基础服务、变更运行中资源的数据。不要自行发挥:每类变更都有自己的 how-to,全部放在 `how-to/` 下;找到它并遵循它。
+
+3. **更改 How-to 内容** —— 改的是说明本身:告诉人和 agent 如何构建、如何操作这个项目的内容。即 `how-to/` 加上项目自己的 SOP(`AGENTS.md`)。初始化是这一类的最初形态,此后是同一件事的延续 —— 项目的 how-to 内容是有待持续维护的产物,不是一次性动作。
+
+   - **初始化。** 项目还没有 how-to 材料时:
+     1. 在根目录建项目标记 `engineer.yaml`。
+     2. 铺好 how-to 目录:`how-to/`。
+     3. 和用户一起写 how-to:`how-to/README.md` 和项目的开发 SOP。
+   - **持续维护。** 当现实与 how-to 脱节(新增目录、流程变化、新约定),先向用户提出具体调整建议,确认后再更新 how-to。绝不要默默绕过过时的 how-to —— 先改它,再遵循它。

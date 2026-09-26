@@ -22,16 +22,16 @@ var RuntimeTypes = []string{"native", "go", "browser", "node", "bun", "jre", "py
 
 var AtomRoles = []string{"service", "database", "cache", "queue", "storage", "gateway", "scheduler", "worker", "proxy"}
 
-var ObjectTypes = []string{"atom", "edge", "runtime", "devtime", "contract", "docs", "notes"}
+var ObjectTypes = []string{"atom", "edge", "how-to", "development", "contract", "docs", "notes"}
 
 var TypeDirs = map[string]string{
-	"atom":     "atoms",
-	"edge":     "edges",
-	"runtime":  "runtime",
-	"contract": "contracts",
-	"devtime":  "devtime",
-	"docs":     "docs",
-	"notes":    "notes",
+	"atom":        "atoms",
+	"edge":        "edges",
+	"how-to":      "how-to",
+	"contract":    "contracts",
+	"development": "development",
+	"docs":        "docs",
+	"notes":       "notes",
 }
 
 type FieldError struct {
@@ -151,7 +151,7 @@ func Validate(objType string, body map[string]interface{}) []FieldError {
 		if _, ok := body["response"]; !ok {
 			fail("response", "required")
 		}
-	case "runtime", "devtime", "docs", "notes":
+	case "how-to", "development", "docs", "notes":
 		// raw content, no structural validation
 	}
 	return errs

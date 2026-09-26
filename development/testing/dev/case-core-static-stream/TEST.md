@@ -1,14 +1,14 @@
 # Test: core-static-stream
 
-`static-stream` pushes schema changes to subscribers. The service watches the schema file tree and emits an SSE event whenever a content file is added, updated or removed. Test data comes from the `runtime/testing/.playground/` mock project.
+`static-stream` pushes schema changes to subscribers. The service watches the schema file tree and emits an SSE event whenever a content file is added, updated or removed. Test data comes from the `development/testing/.playground/` mock project.
 
 Note: the static API speaks YAML (`application/yaml`) — request and response bodies below are YAML. SSE events are YAML docs sent as one `data:` line per YAML line. The watcher polls about once per second, so allow a short wait before asserting an event.
 
 ## Setup
 
 ```bash
-# Prepare the mock project: runtime/testing/.playground is a minimal mock unrelated to the real project; place it at .engineer/.playground/
-rm -rf .engineer/.playground && mkdir -p .engineer && cp -R runtime/testing/.playground .engineer/.playground
+# Prepare the mock project: development/testing/.playground is a minimal mock unrelated to the real project; place it at .engineer/.playground/
+rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/.playground .engineer/.playground
 # Start the server under test with .engineer/.playground as project root
 cd workspace/static && go build -o engineer . && ./engineer serve-static --root ../../.engineer/.playground --addr :7502 &
 ```
@@ -50,7 +50,7 @@ Expected: terminal A receives an `update` event with `payload.type: atom` and `p
 
 ```bash
 curl -N -X POST http://localhost:7502/static/stream \
-  -H 'Content-Type: application/yaml' --data-binary 'kinds: runtime'
+  -H 'Content-Type: application/yaml' --data-binary 'kinds: how-to'
 ```
 
 Terminal B: touch a notes file again.

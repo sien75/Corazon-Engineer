@@ -44,7 +44,7 @@ atoms:
       runtime_version?: string
 contracts:
     - string
-devtime:
+development:
     - string
 docs:
     - string
@@ -57,9 +57,9 @@ edges:
       protocol: string
       to: string
       to_interface: string
-notes:
+how-to:
     - string
-runtime:
+notes:
     - string
 ```
 
@@ -88,7 +88,7 @@ Fetch content of a single leaf file
 
 ```yaml
 id: string
-type: runtime | devtime | contract | docs | notes
+type: how-to | development | contract | docs | notes
 ```
 
 ### Response (status 200)
@@ -100,12 +100,12 @@ contract?:
     id: string
     request: object
     response: object
-devtime?: string
+development?: string
 docs?: string
+how-to?: string
 id: string
 notes?: string
-runtime?: string
-type: runtime | devtime | contract | docs | notes
+type: how-to | development | contract | docs | notes
 ```
 
 ### Errors
@@ -120,7 +120,7 @@ type: runtime | devtime | contract | docs | notes
 curl -s -X POST <address>/static/query-detail \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
   id: string
-  type: runtime | devtime | contract | docs | notes
+  type: how-to | development | contract | docs | notes
 YAML
 ```
 
@@ -171,7 +171,7 @@ curl -s -X POST <address>/static/validate \
 
 - `POST /static/stream` (network / http)
 
-Long-lived connection pushing schema-change events; the service watches the schema file tree and emits an event whenever a content file is added, updated or removed. Execution events (call / test / devtime) reserved.
+Long-lived connection pushing schema-change events; the service watches the schema file tree and emits an event whenever a content file is added, updated or removed. Execution events (call / test / development) reserved.
 
 ### Request body
 
@@ -185,7 +185,7 @@ kinds?: string
 
 ```yaml
 env: string
-kind: schema | runtime | test | devtime
+kind: schema | how-to | test | development
 payload:
     atom?:
         description: string
@@ -214,7 +214,7 @@ payload:
         id: string
         request: object
         response: object
-    devtime?: string
+    development?: string
     docs?: string
     edge?:
         channel: network | stdio | ipc
@@ -226,11 +226,11 @@ payload:
         to: string
         to_interface: string
     file: string
+    how-to?: string
     id: string
     notes?: string
     op: add | update | remove
-    runtime?: string
-    type: atom | edge | runtime | devtime | contract | docs | notes
+    type: atom | edge | how-to | development | contract | docs | notes
 seq: number
 ts: string
 ```
