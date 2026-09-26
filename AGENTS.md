@@ -41,11 +41,11 @@ Change the instructions themselves — the content that tells a human or an agen
 
 **Phase 1 — Edit as instructed.** Modify the files the user points to. If both an English file and its `_zh` mirror exist, update both. `development/plans/` and `development/iterations/` are always Chinese; elsewhere English takes priority. The scope is the how-to content: `how-to/` and `AGENTS.md`.
 
-Initialization is this same type applied to a project that has no how-to yet: create the project marker `engineer.yaml`, lay down the how-to material (`how-to/`, with `how-to/README.md`, and the SOP) together with the user.
+Initialization is this same type applied to a project that has no how-to yet: create the project marker `engineer.yaml`, lay down the how-to material (`how-to/`, with `how-to/README.md`, and the SOP) together with the user. The complete initialization steps live in `agents/how-to.md` — five steps, each saying what to work out, what to ask, and what to write: follow it end to end when initializing, and read the matching step when only one part of the material is being written or revised.
 
 ## Repository layout
 
 - `development/` — what the development process produces: `iterations/` (the AI-generated plan per requirement, one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created in Phase 1 and kept updated), `plans/` (human discussion / raw notes, one dir per iteration number), `testing/` (E2E tests).
 - `how-to/` — how to build and operate the system: `deploy/` (build / pack / launch / deploy, per environment), `operation/` (connect to / observe resources).
-- `agents/` — the shipped AI capability spec (`agents/AGENTS.md`, Chinese in `agents/zh/`) plus schema / contract / enum reference.
+- `agents/` — the shipped AI capability spec (`agents/AGENTS.md`, Chinese in `agents/zh/`) plus schema / contract / enum reference and the how-to writing guide (`agents/how-to.md`).
 - `atoms/` `edges/` `contracts/` `docs/` `notes/` `workspace/` — this project's schema and code.

@@ -76,6 +76,7 @@ So: besides the project's own `AGENTS.md`, we recommend also reading `developmen
 - `./schema.md` — structure of the schema (atoms / edges / contracts / development / how-to / docs / notes).
 - `./contract.md` — conventions for writing contract files.
 - `./enum.md` — enum values (channel / protocol / runtime_type / role).
+- `./how-to.md` — writing and maintaining the project's how-to content with the user: the complete initialization steps, in order.
 
 ## Development types
 
@@ -87,8 +88,6 @@ Work on a Corazon-like project falls into one of three types of operation. The c
 
 3. **Changing How-to content** — change the instructions themselves: the material that tells a human or an agent how this project is built and operated. That is `how-to/` plus the project's own SOP (`AGENTS.md`). Initialization is the first instance of this type, and the same work continues afterwards — a project's how-to content is a maintained artifact, not a one-off.
 
-   - **Initialization.** When a project has no how-to material yet:
-     1. Create the project marker `engineer.yaml` at the root.
-     2. Lay down the how-to directory: `how-to/`.
-     3. Write the how-to together with the user: `how-to/README.md` and the project's development SOP.
-   - **Ongoing maintenance.** When reality has drifted from the how-to (new directories, changed workflow, new conventions), propose concrete adjustments to the user first, and update the how-to only after confirmation. Never work around an outdated how-to silently — fix it, then follow it.
+   - **The steps.** `./how-to.md` is the complete initialization path — five steps (map the system → attach the real code → analyze contracts → how it is built and run → verification and operation), each with what to work out, what to ask the user, and what to write. Read it whole when initializing a project; read the matching step when only one part of the material is being written or revised.
+   - **Initialization.** When a project has no how-to material yet, follow `./how-to.md` end to end: create the project marker `engineer.yaml` at the root, lay down the how-to directory `how-to/`, and write the material together with the user (`how-to/README.md` and the project's development SOP).
+   - **Ongoing maintenance.** When reality has drifted from the how-to (new directories, changed workflow, new conventions), propose concrete adjustments to the user first, and update the how-to only after confirmation — the same steps say which part to touch. Never work around an outdated how-to silently — fix it, then follow it.

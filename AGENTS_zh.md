@@ -43,11 +43,11 @@
 
 **阶段一:按指示修改。** 按用户指定的文件修改。若英文与 `_zh` 版本都存在,则两个都要改。`development/plans/` 与 `development/iterations/` 固定用中文;其他地方英文优先。范围就是 how-to 内容:`how-to/` 与 `AGENTS.md`。
 
-初始化就是同一类型应用在「还没有 how-to」的项目上:建项目标记 `engineer.yaml`,铺好 how-to 材料(`how-to/`,以及 `how-to/README.md` 和开发 SOP),和用户一起完成。
+初始化就是同一类型应用在「还没有 how-to」的项目上:建项目标记 `engineer.yaml`,铺好 how-to 材料(`how-to/`,以及 `how-to/README.md` 和开发 SOP),和用户一起完成。完整的初始化步骤在 `agents/how-to.md` —— 五步,每步写明要弄清楚什么、要问什么、要写什么:初始化时从头走完,只写或只改其中一部分材料时读对应的那一步。
 
 ## 仓库结构
 
 - `development/` —— 开发过程的产出:`iterations/`(AI 生成的方案,一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`,阶段一创建、随迭代更新)、`plans/`(人工的讨论与原始笔记,按迭代编号分目录)、`testing/`(E2E 测试)。
 - `how-to/` —— 系统怎么构建与操作:`deploy/`(构建 / 打包 / 启动 / 部署,按环境)、`operation/`(连接 / 观测资源)。
-- `agents/` —— 随工具发布的 AI 能力规范(`agents/AGENTS.md`,中文在 `agents/zh/`),以及 schema / contract / enum 参考。
+- `agents/` —— 随工具发布的 AI 能力规范(`agents/AGENTS.md`,中文在 `agents/zh/`),以及 schema / contract / enum 参考和 how-to 书写指南(`agents/how-to.md`)。
 - `atoms/` `edges/` `contracts/` `docs/` `notes/` `workspace/` —— 本项目的 schema 与代码。

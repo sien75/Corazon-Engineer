@@ -76,6 +76,7 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 - `./schema.md` — schema 结构(atoms / edges / contracts / development / how-to / docs / notes)。
 - `./contract.md` — contract 文件书写规范。
 - `./enum.md` — 枚举取值(channel / protocol / runtime_type / role)。
+- `./how-to.md` — 如何和用户一起写、一起维护项目的 how-to 内容:完整的初始化步骤,按顺序。
 
 ## 开发类型
 
@@ -87,8 +88,6 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 3. **更改 How-to 内容** —— 改的是说明本身:告诉人和 agent 如何构建、如何操作这个项目的内容。即 `how-to/` 加上项目自己的 SOP(`AGENTS.md`)。初始化是这一类的最初形态,此后是同一件事的延续 —— 项目的 how-to 内容是有待持续维护的产物,不是一次性动作。
 
-   - **初始化。** 项目还没有 how-to 材料时:
-     1. 在根目录建项目标记 `engineer.yaml`。
-     2. 铺好 how-to 目录:`how-to/`。
-     3. 和用户一起写 how-to:`how-to/README.md` 和项目的开发 SOP。
-   - **持续维护。** 当现实与 how-to 脱节(新增目录、流程变化、新约定),先向用户提出具体调整建议,确认后再更新 how-to。绝不要默默绕过过时的 how-to —— 先改它,再遵循它。
+   - **步骤。** `./how-to.md` 是完整的初始化路径 —— 五步(建立系统地图 → 关联实际代码 → 分析 contract → 构建与运行方式 → 验证与操作方式),每步都写明要弄清楚什么、要问用户什么、要写什么。初始化项目时整篇读;只写或只改其中一部分材料时,读对应的那一步。
+   - **初始化。** 项目还没有 how-to 材料时,按 `./how-to.md` 从头走完:在根目录建项目标记 `engineer.yaml`,铺好 how-to 目录 `how-to/`,和用户一起写材料(`how-to/README.md` 和项目的开发 SOP)。
+   - **持续维护。** 当现实与 how-to 脱节(新增目录、流程变化、新约定),先向用户提出具体调整建议,确认后再更新 how-to —— 该动哪一部分,同样看这几步。绝不要默默绕过过时的 how-to —— 先改它,再遵循它。
