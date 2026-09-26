@@ -534,6 +534,11 @@ const themeToggleEl = document.getElementById("theme-toggle");
 const themeMenuEl = document.getElementById("theme-menu");
 const aiMessagesEl = document.getElementById("ai-messages");
 const aiInputEl = document.getElementById("ai-input-field");
+// The input grows with its content — soft-wrapped lines included — from the
+// 2-row minimum (the rows attribute) up to this many rendered lines, then it
+// scrolls inside. The pixel ceiling is derived from the computed style, so
+// changing font / line-height / this number needs no other edit.
+const AI_INPUT_MAX_LINES = 10;
 const aiSendEl = document.getElementById("ai-send");
 const aiStopEl = document.getElementById("ai-stop");
 const aiCmdEl = document.getElementById("ai-cmd");
@@ -732,6 +737,29 @@ async function aiCompressImage(file) {
 // tokens are paired, in order, with the queued images.
 const AI_IMAGE_TOKEN = "[image]";
 
+// aiResizeInput makes the textarea track its rendered content: height:auto
+// first, so scrollHeight reports the true content height (and falls back to the
+// 2-row minimum when the content is shorter). The global box-sizing is
+// border-box, so the border has to be added to scrollHeight, which excludes it;
+// otherwise a non-overflowing box would still read as overflowing and show a
+// scrollbar. Hidden panels have no layout, so this is a no-op there.
+function aiResizeInput() {
+  if (aiEl.hidden) return;
+  const cs = getComputedStyle(aiInputEl);
+  const lineHeight =
+    parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
+  const border =
+    parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+  const chrome =
+    parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + border;
+  const maxHeight = Math.ceil(lineHeight * AI_INPUT_MAX_LINES + chrome);
+
+  aiInputEl.style.height = "auto";
+  const contentHeight = aiInputEl.scrollHeight + border;
+  aiInputEl.style.height = Math.min(contentHeight, maxHeight) + "px";
+  aiInputEl.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+}
+
 function aiInsertImageToken() {
   const start = aiInputEl.selectionStart ?? aiInputEl.value.length;
   const end = aiInputEl.selectionEnd ?? start;
@@ -739,6 +767,7 @@ function aiInsertImageToken() {
   aiInputEl.value = v.slice(0, start) + AI_IMAGE_TOKEN + v.slice(end);
   const caret = start + AI_IMAGE_TOKEN.length;
   aiInputEl.setSelectionRange(caret, caret);
+  aiResizeInput();
 }
 
 function aiAddPastedImage(file) {
@@ -1274,6 +1303,7 @@ async function aiSend() {
   if (!text.trim() || !aiSession) return;
   aiDrawerHide();
   aiInputEl.value = "";
+  aiResizeInput();
   await Promise.all(aiImageTasks); // let any in-flight paste finish decoding
   const images = aiImages;
   aiClearImages();
@@ -1577,6 +1607,7 @@ function aiDrawerSelect(index) {
   if (!item) return;
   aiDrawerHide();
   aiInputEl.value = "";
+  aiResizeInput();
   item.run();
 }
 
@@ -1828,6 +1859,9 @@ const AI_OPEN_KEY = "engineer.ai.open";
 function aiSetOpen(open) {
   aiEl.hidden = !open;
   aiToggleEl.classList.toggle("active", open);
+  // A hidden element has no layout, so the height has to be recomputed once
+  // the panel is actually visible again.
+  if (open) aiResizeInput();
   try {
     localStorage.setItem(AI_OPEN_KEY, open ? "1" : "0");
   } catch (e) {}
@@ -1868,6 +1902,10 @@ aiToggleEl.addEventListener("click", () => {
 aiSendEl.addEventListener("click", aiSend);
 aiStopEl.addEventListener("click", aiStop);
 aiInputEl.addEventListener("input", aiSyncCommandDrawer);
+aiInputEl.addEventListener("input", aiResizeInput);
+// Soft wrapping depends on the input's width, so a resized window changes the
+// rendered line count and the box has to be measured again.
+window.addEventListener("resize", aiResizeInput);
 
 aiInputEl.addEventListener("paste", (event) => {
   const files = [...(event.clipboardData?.items || [])]
@@ -1925,6 +1963,7 @@ aiInputEl.addEventListener("keydown", (event) => {
       if (cmd) {
         aiInputEl.value = cmd.label;
         aiDrawerHide();
+        aiResizeInput();
       }
       return;
     }
@@ -1947,6 +1986,7 @@ aiInputEl.addEventListener("keydown", (event) => {
       aiRemoveImagesForRange(v, range[0], range[1]);
       aiInputEl.value = v.slice(0, range[0]) + v.slice(range[1]);
       aiInputEl.setSelectionRange(range[0], range[0]);
+      aiResizeInput();
       aiSyncCommandDrawer();
       return;
     }

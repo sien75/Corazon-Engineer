@@ -58,8 +58,8 @@ project/
 ├── notes/                     # *.md → 内部批注（标记 + thread，锚定实体）
 ├── development/               # 普通文件树：开发过程材料（布局由 development/README.md 定义）
 │   ├── README.md              # development 树自身的约定 —— 先读
-│   ├── plans/                 # 方案设计，按迭代编号分目录
-│   ├── iterations/            # 每次迭代确定的方案
+│   ├── plans/                 # 人工的讨论与原始笔记，按迭代编号分目录
+│   ├── iterations/            # AI 生成的方案，按需求一个 md
 │   └── testing/               # E2E 测试
 └── how-to/                    # 普通文件树：deploy + operation（布局由 how-to/README.md 定义）
     ├── README.md              # how-to 树自身的约定 —— 先读
@@ -193,8 +193,8 @@ errors:
 
 开发过程材料，位于 `development/`。为普通文件树（同 `how-to/`），布局由 `development/README.md` 定义。三个模块：
 
-- **`plans/`** —— 需求分析与架构设计，按迭代编号分目录。
-- **`iterations/`** —— 每次迭代确定的方案。
+- **`plans/`** —— 人工的讨论与原始笔记，按迭代编号分目录。
+- **`iterations/`** —— AI 生成的方案，一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`，阶段一创建、随迭代更新。
 - **`testing/`** —— 从真实用户视角的 E2E 测试，通过 UI / API 操作业务系统验证功能。
 
 系统级测试放在 `testing/` 下，含 `desp.yaml`（元数据）和 `TEST.md`（用例）；不得对真实项目树执行。

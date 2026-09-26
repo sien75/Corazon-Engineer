@@ -58,8 +58,8 @@ project/
 ├── notes/                     # *.md → internal annotation (marker + thread, anchored to entity)
 ├── development/               # plain file tree: development material (layout defined by development/README.md)
 │   ├── README.md              # the development tree's own conventions — read first
-│   ├── plans/                 # design docs, one dir per iteration number
-│   ├── iterations/            # the confirmed plan per iteration
+│   ├── plans/                 # human discussion / raw notes, one dir per iteration number
+│   ├── iterations/            # the AI-generated plan per requirement
 │   └── testing/               # E2E tests
 └── how-to/                    # plain file tree: deploy + operation (layout defined by how-to/README.md)
     ├── README.md              # the how-to tree's own conventions — read first
@@ -193,8 +193,8 @@ Internal markers and discussions targeting an entity, under `notes/`. Plain mark
 
 Development material, under `development/`. A plain file tree (like `how-to/`); its layout is defined by `development/README.md`. Three modules:
 
-- **`plans/`** — requirements analysis and architecture design, one dir per iteration number.
-- **`iterations/`** — the plan confirmed at each iteration.
+- **`plans/`** — human discussion and raw notes, one dir per iteration number.
+- **`iterations/`** — the AI-generated plan per requirement, one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created in Phase 1 and kept updated through the iteration.
 - **`testing/`** — E2E tests from the real user's point of view, exercising the business system through its UI / API.
 
 System-level tests live under `testing/`, with `desp.yaml` (metadata) and `TEST.md` (the case); they must not run against the real project tree.

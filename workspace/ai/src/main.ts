@@ -4,6 +4,25 @@ import path from "node:path";
 import { Registry } from "./registry.ts";
 import { serve } from "./server.ts";
 
+// Local service-to-service calls (ai → log) must never be proxied. A system
+// proxy exported as http_proxy / https_proxy (e.g. Clash) also captures
+// localhost: the request reaches the remote proxy and returns 502, which
+// silently breaks history reads (resume → "session not found") and record
+// writes (conversations never reach sqlite). Bun's fetch honors NO_PROXY;
+// bypass only the loopback names so external LLM-provider calls stay proxied.
+function withLocalNoProxy(value: string | undefined): string {
+  const hosts = new Set(
+    (value ?? "")
+      .split(",")
+      .map((h) => h.trim())
+      .filter(Boolean),
+  );
+  for (const h of ["localhost", "127.0.0.1", "::1"]) hosts.add(h);
+  return [...hosts].join(",");
+}
+process.env.no_proxy = withLocalNoProxy(process.env.no_proxy);
+process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
+
 // usage: bun run src/main.ts [--addr :7501] [--root <project dir>]
 //        [--log http://localhost:7503] [--static http://localhost:7502]
 //        [--agents <AGENTS.md>] [--model provider/model-id]

@@ -17,7 +17,7 @@ General rules:
 
 ### Type 1 — Normal requirement development
 
-**Phase 1 — Design.** Scope: `development/` and `notes/`. Turn the requirement into design records: design docs under `development/plans/<iteration-number>/`, and the plan confirmed at the iteration's end as one markdown file under `development/iterations/`, named `[YYMM]-[2-digit sequence]-[short title].md`.
+**Phase 1 — Design.** Scope: `development/` and `notes/`. Turn the requirement into a design record: the AI-generated plan is written under `development/iterations/` as one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created here and updated as the design evolves. `development/plans/<iteration-number>/` holds human discussion and raw notes only.
 
 **Phase 2 — Contracts, tests, code.** Scope: `contracts/`, `atoms/` `edges/`, `development/testing/`, `workspace/`. Order matters: define the **contracts** first, then the static relations (`atoms/` `edges/`), then the tests (`development/testing/`), and only then develop the code (`workspace/`).
 
@@ -45,7 +45,7 @@ Initialization is this same type applied to a project that has no how-to yet: cr
 
 ## Repository layout
 
-- `development/` — what the development process produces: `plans/` (design docs, one dir per iteration number), `iterations/` (the confirmed plan per iteration, one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`), `testing/` (E2E tests).
+- `development/` — what the development process produces: `iterations/` (the AI-generated plan per requirement, one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created in Phase 1 and kept updated), `plans/` (human discussion / raw notes, one dir per iteration number), `testing/` (E2E tests).
 - `how-to/` — how to build and operate the system: `deploy/` (build / pack / launch / deploy, per environment), `operation/` (connect to / observe resources).
 - `agents/` — the shipped AI capability spec (`agents/AGENTS.md`, Chinese in `agents/zh/`) plus schema / contract / enum reference.
 - `atoms/` `edges/` `contracts/` `docs/` `notes/` `workspace/` — this project's schema and code.

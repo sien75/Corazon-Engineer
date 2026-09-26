@@ -19,7 +19,7 @@
 
 ### 第一类:常规需求开发
 
-**阶段一:设计。** 范围:`development/` 与 `notes/`。把需求整理为设计记录:方案设计写入 `development/plans/<迭代编号>/`;每次迭代确定的方案写入 `development/iterations/`,命名为 `[YYMM]-[2位序号]-[简短标题].md`。
+**阶段一:设计。** 范围:`development/` 与 `notes/`。把需求整理为设计记录:AI 生成的方案写入 `development/iterations/`,一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`,在此创建并随设计演进更新;`development/plans/<迭代编号>/` 只放人工的讨论与原始笔记。
 
 **阶段二:契约、测试、代码。** 范围:`contracts/`、`atoms/` `edges/`、`development/testing/`、`workspace/`。顺序很重要:先定义 **contracts**,再定义静态关系(`atoms/` `edges/`),再定义测试(`development/testing/`),最后才开发代码(`workspace/`)。
 
@@ -47,7 +47,7 @@
 
 ## 仓库结构
 
-- `development/` —— 开发过程的产出:`plans/`(方案设计,按迭代编号分目录)、`iterations/`(每次迭代确定的方案,一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`)、`testing/`(E2E 测试)。
+- `development/` —— 开发过程的产出:`iterations/`(AI 生成的方案,一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`,阶段一创建、随迭代更新)、`plans/`(人工的讨论与原始笔记,按迭代编号分目录)、`testing/`(E2E 测试)。
 - `how-to/` —— 系统怎么构建与操作:`deploy/`(构建 / 打包 / 启动 / 部署,按环境)、`operation/`(连接 / 观测资源)。
 - `agents/` —— 随工具发布的 AI 能力规范(`agents/AGENTS.md`,中文在 `agents/zh/`),以及 schema / contract / enum 参考。
 - `atoms/` `edges/` `contracts/` `docs/` `notes/` `workspace/` —— 本项目的 schema 与代码。

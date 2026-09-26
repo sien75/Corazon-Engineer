@@ -713,6 +713,7 @@ canvas.layer {
 #ai-input {
   position: relative;
   display: flex;
+  align-items: flex-end;
   gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid var(--border);
@@ -915,6 +916,7 @@ canvas.layer {
 
 #ai-input-field {
   flex: 1;
+  overflow-y: hidden;
   background: var(--code-bg);
   border: 1px solid var(--border-strong);
   color: var(--fg);
