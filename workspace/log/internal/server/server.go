@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,10 +53,27 @@ func cors(next http.Handler) http.Handler {
 
 // The log API speaks YAML on the wire (application/yaml).
 
+// marshalYAML encodes with a 2-space indent. yaml.v3's default indent of 4
+// emits an invalid block scalar (wrong indentation indicator) for multi-line
+// strings whose first line starts with whitespace, which corrupts payloads and
+// makes session-detail unreadable.
+func marshalYAML(v interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 func writeYAMLResp(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/yaml")
 	w.WriteHeader(status)
-	data, err := yaml.Marshal(v)
+	data, err := marshalYAML(v)
 	if err != nil {
 		return
 	}
@@ -336,7 +354,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				"seq":    seq,
 				"record": rec.ListItem(),
 			}
-			data, err := yaml.Marshal(payload)
+			data, err := marshalYAML(payload)
 			if err != nil {
 				continue
 			}

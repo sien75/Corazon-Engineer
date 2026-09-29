@@ -65,7 +65,16 @@ export async function fetchRecords(
       body: YAML.stringify({ sessionId }),
     });
     if (!res.ok) return [];
-    const data = YAML.parse(await res.text());
+    const text = await res.text();
+    let data: any;
+    try {
+      data = YAML.parse(text);
+    } catch (err) {
+      // An unreadable log response is not "no history": log the cause instead
+      // of letting resume report a misleading 404 "session not found".
+      console.error(`engineer ai: session-detail parse failed: ${String(err)}`);
+      return [];
+    }
     const raw = Array.isArray(data?.messages) ? data.messages : [];
     return raw.map((m: any): StoredRecord => {
       const rec: StoredRecord = {

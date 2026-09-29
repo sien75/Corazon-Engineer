@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -104,8 +105,10 @@ func (s *Store) Insert(rec Record) (Record, error) {
 		payload = map[string]interface{}{}
 	}
 	// payload is stored as yaml text; existing rows holding json text still
-	// load fine (json is valid yaml)
-	payloadText, err := yaml.Marshal(payload)
+	// load fine (json is valid yaml). Encode with a 2-space indent: yaml.v3's
+	// default indent of 4 emits an invalid block scalar for multi-line strings
+	// whose first line starts with whitespace, which would corrupt the row.
+	payloadText, err := marshalYAML(payload)
 	if err != nil {
 		return rec, err
 	}
@@ -415,6 +418,22 @@ func joinWhere(conds []string) string {
 		out += c
 	}
 	return out
+}
+
+// marshalYAML encodes with a 2-space indent. yaml.v3's default indent of 4
+// emits an invalid block scalar (wrong indentation indicator) for multi-line
+// strings whose first line starts with whitespace.
+func marshalYAML(v interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func nullable(s string) interface{} {
