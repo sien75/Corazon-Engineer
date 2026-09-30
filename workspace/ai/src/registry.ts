@@ -21,6 +21,12 @@ import {
 } from "./recorder.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
+import { SkillStore } from "./skill/store.ts";
+import {
+  SCAN_THRESHOLD,
+  Suggester,
+  type ScanResult,
+} from "./skill/suggest.ts";
 
 // A user turn as received on /ai/ask: ordered text/image blocks. Images carry
 // base64 + mime and are persisted to the blob store; text is the prompt text
@@ -106,6 +112,9 @@ interface Sess {
   listeners: Set<Listener>;
   tail: Promise<void>; // serializes prompts within the session
   turnText: string; // accumulated assistant text of the in-flight run
+  // Text of the whole run (user turns + assistant prose, never tool traffic),
+  // queued for the suggestion scan when the run settles.
+  runText: string;
   turns: number; // turns elapsed in the in-flight prompt (loop cap)
   recordSeq: number;
   sawSettled: boolean; // whether pi emitted agent_settled for the current run
@@ -124,6 +133,7 @@ export interface RegistryOptions {
   logBase: string;
   systemPrompt: string;
   model?: string; // CLI model pattern, e.g. "deepseek/deepseek-chat" or "sonnet:high"
+  forceStub?: boolean; // skip model resolution entirely (offline / tests)
 }
 
 // Registry owns all chat sessions. The agent loop itself is pi's
@@ -135,12 +145,26 @@ export class Registry {
   private model?: Model;
   private loader?: DefaultResourceLoader;
   private settings = SettingsManager.inMemory();
+  private skillStore?: SkillStore;
+  private suggester?: Suggester;
+  private skillTool?: ReturnType<typeof defineTool>;
 
   constructor(private opts: RegistryOptions) {}
 
   // init resolves the model. Any pi-supported provider works; without any
   // authenticated provider it falls back to the dev echo stub.
   async init(): Promise<void> {
+    // The skill system is independent of the model: CRUD and the run queue work
+    // without one; only the suggestion scan needs a model (and falls back to a
+    // deterministic stub when there is none).
+    this.skillStore = new SkillStore(this.opts.root);
+    this.suggester = new Suggester({
+      store: this.skillStore,
+      oneShot: (prompt) => this.oneShot(prompt),
+      inputBudgetTokens: () => this.scanBudget(),
+    });
+    this.skillTool = this.buildSkillTool();
+    if (this.opts.forceStub) return; // dev stub forced (offline / tests)
     this.modelRuntime = await ModelRuntime.create();
     const requested = this.opts.model ?? DEFAULT_MODEL;
     const r = resolveCliModel({
@@ -184,6 +208,106 @@ export class Registry {
     return this.model ? `${this.model.provider}/${this.model.id}` : "stub";
   }
 
+  // --- skill system ---
+
+  // Saving a skill is itself an agent capability: the user describes a skill in
+  // conversation and the agent stores it. A skill is only a name plus a piece of
+  // text, so this is the whole of the create path.
+  private buildSkillTool(): ReturnType<typeof defineTool> {
+    return defineTool({
+      name: "save_skill",
+      label: "Save skill",
+      description:
+        "Save a reusable skill. A skill is a single piece of text: running it opens " +
+        "a fresh conversation and hands that text to the agent as the first " +
+        "message. Use this when the user asks to remember or save something as a " +
+        "skill / shortcut.",
+      promptSnippet: "save_skill: save a reusable skill (name + text)",
+      parameters: Type.Object({
+        name: Type.String({ description: "Short label for the skill" }),
+        text: Type.String({
+          description:
+            "The skill itself: a self-contained instruction handed to the agent when the skill runs",
+        }),
+      }),
+      executionMode: "sequential",
+      execute: async (_toolCallId, params) => {
+        const name = String(params.name ?? "").trim();
+        const text = String(params.text ?? "").trim();
+        if (!name || !text) {
+          return {
+            content: [{ type: "text", text: "name and text are both required." }],
+            details: undefined,
+          };
+        }
+        const skill = this.skillStore?.save({ name, text });
+        if (!skill) {
+          return {
+            content: [{ type: "text", text: "could not save the skill." }],
+            details: undefined,
+          };
+        }
+        return {
+          content: [
+            { type: "text", text: `Saved skill ${skill.id} ("${skill.name}").` },
+          ],
+          details: { skillId: skill.id, name: skill.name, text: skill.text },
+        };
+      },
+    });
+  }
+
+  get skills(): SkillStore {
+    if (!this.skillStore) throw new Error("skill store not initialized");
+    return this.skillStore;
+  }
+
+  // scanSkills runs one suggestion scan. The automatic path is fire-and-forget;
+  // this is the manual one behind /ai/skill/refresh.
+  async scanSkills(force = false): Promise<ScanResult> {
+    if (!this.suggester) return { triggered: false, scanned: 0 };
+    return this.suggester.maybeScan({ force });
+  }
+
+  private scanBudget(): number {
+    const cw = Number((this.model as any)?.contextWindow ?? 0);
+    if (!cw) return 8000;
+    return Math.max(2000, cw - 24000);
+  }
+
+  // oneShot is a single non-streaming model call outside any user session: no
+  // tools, no history, nothing recorded. Used by the suggestion scan.
+  private async oneShot(prompt: string): Promise<string | undefined> {
+    if (!this.model || !this.modelRuntime) return undefined;
+    const sessionManager = SessionManager.inMemory(this.opts.root);
+    const settings = SettingsManager.inMemory({
+      compaction: { enabled: false, reserveTokens: 0, keepRecentTokens: 0 },
+    });
+    const { session } = await createAgentSession({
+      cwd: this.opts.root,
+      model: this.model,
+      modelRuntime: this.modelRuntime,
+      sessionManager,
+      settingsManager: settings,
+      noTools: "all",
+    });
+    let out = "";
+    session.subscribe((ev) => {
+      if (
+        ev.type === "message_update" &&
+        ev.assistantMessageEvent?.type === "text_delta"
+      ) {
+        out += ev.assistantMessageEvent.delta;
+      }
+    });
+    try {
+      await session.prompt(prompt);
+    } finally {
+      session.dispose();
+    }
+    return out;
+  }
+
   async new(): Promise<Sess> {
     return this.build(`s_${randomBytes(8).toString("hex")}`);
   }
@@ -208,6 +332,7 @@ export class Registry {
       listeners: new Set(),
       tail: Promise.resolve(),
       turnText: "",
+      runText: "",
       turns: 0,
       // Continue the recorder's per-session sequence after a resume.
       recordSeq: history.reduce((max, m) => Math.max(max, m.seq), 0),
@@ -232,9 +357,22 @@ export class Registry {
         settingsManager: this.settings,
         // Capability surface: read/grep/find/ls + bash (execution, including
         // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
-        // is the one custom tool and must be in the allowlist to stay enabled.
-        tools: ["read", "grep", "find", "ls", "bash", "write", "edit", "ask_user"],
-        customTools: [askUserTool],
+        // and save_skill are the custom tools and must be in the allowlist to
+        // stay enabled.
+        tools: [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "bash",
+          "write",
+          "edit",
+          "ask_user",
+          "save_skill",
+        ],
+        customTools: this.skillTool
+          ? [askUserTool, this.skillTool]
+          : [askUserTool],
       });
       sess.agent = session;
       session.agent.shouldStopAfterTurn = () => ++sess.turns >= MAX_TURNS;
@@ -250,6 +388,7 @@ export class Registry {
           ev.assistantMessageEvent?.type === "text_delta"
         ) {
           sess.turnText += ev.assistantMessageEvent.delta;
+          sess.runText += ev.assistantMessageEvent.delta;
         }
         if (ev.type === "agent_settled") {
           sess.sawSettled = true;
@@ -384,10 +523,17 @@ export class Registry {
       content,
       timestamp: Date.now(),
     });
+    // A steered prompt joins the run in flight; anything else starts a new run.
+    if (sess.agent?.isStreaming) {
+      sess.runText = sess.runText ? `${sess.runText}\n${projection}` : projection;
+    } else {
+      sess.runText = projection;
+    }
     // pi always emits a text block before images; avoid an empty one.
     const promptText = text || "[image]";
     if (!sess.agent) {
       const reply = `Corazon Engineer AI (dev stub) received your prompt:\n\n> ${promptText}`;
+      sess.runText = [sess.runText, reply].filter(Boolean).join("\n");
       this.append(sess, { type: "agent_start" });
       this.append(sess, {
         type: "message_update",
@@ -417,7 +563,7 @@ export class Registry {
       return;
     }
     // Mark active before scheduling so a client that subscribes immediately
-    // after /ai/ask sees the run as in flight (the microtask may not have run).
+    // after /ai/ask sees the run as in flight (the microskill may not have run).
     sess.active = true;
     sess.tail = sess.tail.then(() =>
       this.runTurn(sess, agent, promptText, piImages),
@@ -479,6 +625,27 @@ export class Registry {
     const full = { seq: sess.events.length + 1, ...ev } as EngineerEvent;
     sess.events.push(full);
     for (const l of sess.listeners) l(full);
+    // A settled run becomes a suggestion-scan candidate. Hooked here (not in the
+    // pi subscriber) because the dev stub settles through this same path.
+    if (ev.type === "agent_settled") this.onRunSettled(sess);
+  }
+
+  // onRunSettled queues the run's text for the suggestion scan and fires a scan
+  // once enough runs have piled up. It must never block or break a conversation:
+  // queueing is one local sqlite write, and the scan itself runs as an
+  // independent async task that never touches a user session.
+  private onRunSettled(sess: Sess): void {
+    const text = sess.runText.trim();
+    sess.runText = "";
+    if (!this.skillStore || !text) return;
+    try {
+      this.skillStore.enqueueRun(sess.id, text);
+      if (this.skillStore.pendingCount() >= SCAN_THRESHOLD) {
+        void this.suggester?.maybeScan();
+      }
+    } catch (err) {
+      console.error(`engineer ai: skill queue failed: ${String(err)}`);
+    }
   }
 
   // Non-pi error event, reusing pi's assistant-error shape { type, reason, error }.

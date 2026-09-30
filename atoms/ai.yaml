@@ -1,6 +1,6 @@
 atoms:
   - name: ai
-    description: Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash
+    description: Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash; also owns the skill system (a skill is one piece of text; running it opens a session with that text) in its own sqlite (.engineer/skill.db), including suggested-skill discovery over past conversation runs
     path: ./workspace/ai
     runtime_type: bun
     runtime_version: "1.3"
@@ -42,6 +42,48 @@ atoms:
           contract: ./contracts/ai-resume.yaml
           extend:
             path: /ai/resume
+            method: POST
+        - id: ai-skill-list
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-list.yaml
+          extend:
+            path: /ai/skill/list
+            method: POST
+        - id: ai-skill-save
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-save.yaml
+          extend:
+            path: /ai/skill/save
+            method: POST
+        - id: ai-skill-delete
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-delete.yaml
+          extend:
+            path: /ai/skill/delete
+            method: POST
+        - id: ai-skill-ignore
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-ignore.yaml
+          extend:
+            path: /ai/skill/ignore
+            method: POST
+        - id: ai-skill-run
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-run.yaml
+          extend:
+            path: /ai/skill/run
+            method: POST
+        - id: ai-skill-refresh
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-refresh.yaml
+          extend:
+            path: /ai/skill/refresh
             method: POST
 
       consumes:

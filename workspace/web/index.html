@@ -20,13 +20,14 @@
 <body>
   <header id="topbar">
     <span id="logo">Corazon Engineer</span>
-    <nav id="menu">
-      <button type="button" data-view="graph" class="active">graph</button>
-      <button type="button" data-view="how-to">how-to</button>
-      <button type="button" data-view="development">development</button>
-      <button type="button" data-view="contracts">contracts</button>
-      <button type="button" data-view="docs">docs</button>
-      <button type="button" data-view="notes">notes</button>
+    <nav id="tabs">
+      <button type="button" data-view="graph" class="tab fixed active">graph</button>
+      <button type="button" data-view="how-to" class="tab fixed">how-to</button>
+      <button type="button" data-view="development" class="tab fixed">development</button>
+      <button type="button" data-view="contracts" class="tab fixed">contracts</button>
+      <button type="button" data-view="docs" class="tab fixed">docs</button>
+      <button type="button" data-view="notes" class="tab fixed">notes</button>
+      <button type="button" id="tab-add" title="skills">+</button>
     </nav>
     <div id="theme-wrap">
       <button id="theme-toggle" type="button" title="theme">theme</button>
@@ -36,7 +37,6 @@
         <button type="button" data-theme="solarized">solarized</button>
       </div>
     </div>
-    <button id="ai-toggle" type="button">ai</button>
   </header>
   <main id="main">
     <div id="left">
@@ -48,6 +48,7 @@
         <div id="panel-body"></div>
       </aside>
     </div>
+    <div id="newtab" hidden></div>
     <aside id="ai" hidden>
       <div id="ai-messages"></div>
       <div id="ai-input">

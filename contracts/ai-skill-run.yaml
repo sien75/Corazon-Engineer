@@ -1,0 +1,25 @@
+id: ai-skill-run
+description: Instantiate a skill — open a session and hand the skill text to the model as the first prompt; the client then subscribes to ai-stream with the returned sessionId
+
+request:
+  body:
+    skillId?: string  # instantiate a saved skill
+    name?: string  # or run an ad-hoc skill (text required, name optional)
+    text?: string
+
+response:
+  status: 200
+  body:
+    sessionId: string  # the session created for this skill instance
+    skillId?: string  # echoed when a saved skill was instantiated
+
+errors:
+  - status: 400
+    code: bad_request
+    description: neither skillId nor text given
+  - status: 404
+    code: not_found
+    description: skill does not exist
+  - status: 500
+    code: internal
+    description: server error

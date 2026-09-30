@@ -31,3 +31,51 @@ edges:
     channel: network
     protocol: http
     description: Web frontend deletes a session, releasing the live in-memory agent
+  - id: web-to-ai-skill-list
+    from: web
+    from_interface: ai-skill-list
+    to: ai
+    to_interface: ai-skill-list
+    channel: network
+    protocol: http
+    description: Web frontend lists custom / suggested skills for the launcher
+  - id: web-to-ai-skill-save
+    from: web
+    from_interface: ai-skill-save
+    to: ai
+    to_interface: ai-skill-save
+    channel: network
+    protocol: http
+    description: Web frontend (or the agent itself) creates / updates a custom skill
+  - id: web-to-ai-skill-delete
+    from: web
+    from_interface: ai-skill-delete
+    to: ai
+    to_interface: ai-skill-delete
+    channel: network
+    protocol: http
+    description: Web frontend deletes a custom skill
+  - id: web-to-ai-skill-ignore
+    from: web
+    from_interface: ai-skill-ignore
+    to: ai
+    to_interface: ai-skill-ignore
+    channel: network
+    protocol: http
+    description: Web frontend ignores / restores a suggested skill
+  - id: web-to-ai-skill-run
+    from: web
+    from_interface: ai-skill-run
+    to: ai
+    to_interface: ai-skill-run
+    channel: network
+    protocol: http
+    description: Web frontend instantiates a skill by opening a session with the skill text
+  - id: web-to-ai-skill-refresh
+    from: web
+    from_interface: ai-skill-refresh
+    to: ai
+    to_interface: ai-skill-refresh
+    channel: network
+    protocol: http
+    description: Web frontend manually triggers a suggested-skill scan

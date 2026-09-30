@@ -232,8 +232,7 @@ async function refresh() {
     } else {
       graph.setEntities({ blocks, connections });
     }
-    hidePanel();
-    route();
+    showView(parseRoute());
   } catch (err) {
     contentEl.hidden = false;
     graphEl.hidden = true;
@@ -461,9 +460,19 @@ function entryHref(id) {
 function route() {
   const r = parseRoute();
   currentView = r.view;
-  for (const btn of document.querySelectorAll("#menu button")) {
-    btn.classList.toggle("active", btn.dataset.view === r.view);
-  }
+  // A fixed view leaves skill mode and the new tab page; the skill's session
+  // stays in its tab, so the user can come back to it.
+  activeSkillId = null;
+  newTabOpen = false;
+  applyLayout();
+  syncTabActive();
+  showView(r);
+}
+
+// showView renders one fixed view into the left area. It is separate from
+// route() because a data refresh re-renders the view without touching which tab
+// is active — a schema push must not kick the user out of a skill tab.
+function showView(r) {
   hidePanel();
   if (r.view === "graph") {
     contentEl.hidden = true;
@@ -513,10 +522,24 @@ async function renderDetail(view, id) {
   }
 }
 
-document.getElementById("menu").addEventListener("click", (event) => {
-  const btn = event.target.closest("button[data-view]");
-  if (!btn) return;
-  navigate(btn.dataset.view === "graph" ? "/" : `/${btn.dataset.view}`);
+// Tab clicks: a fixed view navigates, a skill tab shows its conversation, and a
+// skill tab's × closes it (fixed views have no ×).
+document.getElementById("tabs").addEventListener("click", (event) => {
+  const close = event.target.closest(".tab-close");
+  if (close) {
+    event.stopPropagation();
+    closeSkillTab(close.dataset.close);
+    return;
+  }
+  const skill = event.target.closest(".tab.skill");
+  if (skill) {
+    activateSkillTab(skill.dataset.skillTab);
+    return;
+  }
+  const view = event.target.closest("button[data-view]");
+  if (view) {
+    navigate(view.dataset.view === "graph" ? "/" : `/${view.dataset.view}`);
+  }
 });
 
 contentEl.addEventListener("click", (event) => {
@@ -529,7 +552,6 @@ contentEl.addEventListener("click", (event) => {
 // ---------- ai panel ----------
 
 const aiEl = document.getElementById("ai");
-const aiToggleEl = document.getElementById("ai-toggle");
 const themeToggleEl = document.getElementById("theme-toggle");
 const themeMenuEl = document.getElementById("theme-menu");
 const aiMessagesEl = document.getElementById("ai-messages");
@@ -542,6 +564,7 @@ const AI_INPUT_MAX_LINES = 10;
 const aiSendEl = document.getElementById("ai-send");
 const aiStopEl = document.getElementById("ai-stop");
 const aiCmdEl = document.getElementById("ai-cmd");
+const leftEl = document.getElementById("left");
 let aiSession = null;
 let aiSeenSeq = 0;
 let aiStreaming = false;
@@ -550,9 +573,8 @@ let aiStreaming = false;
 // rendering and cannot clobber the new session's seq tracking.
 let aiStreamCtl = null; // { id, ctrl } | null
 let aiStreamGen = 0;
-// The last session id is persisted so a page reload can resume it instead of
-// starting a fresh conversation.
-const AI_SESSION_KEY = "engineer.ai.session";
+// The chat panel is no longer a side panel the user toggles: it is the content
+// of a skill tab, and nothing else opens it.
 // A dropped SSE connection reconnects with capped exponential backoff; the
 // server replays only the events after the last seq this client rendered.
 const AI_STREAM_MAX_RETRIES = 6;
@@ -908,20 +930,6 @@ function aiAppendUserParts(parts) {
   return div;
 }
 
-function aiRememberSession(id) {
-  try {
-    localStorage.setItem(AI_SESSION_KEY, id);
-  } catch (e) {}
-}
-
-function aiStoredSession() {
-  try {
-    return localStorage.getItem(AI_SESSION_KEY) || "";
-  } catch (e) {
-    return "";
-  }
-}
-
 async function aiNew() {
   aiCancelStream();
   const res = await fetch(`${AI_BASE}/ai/new`, {
@@ -933,7 +941,7 @@ async function aiNew() {
   if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
   aiSession = data.sessionId;
   aiSeenSeq = 0;
-  aiRememberSession(aiSession);
+  renderedTabId = null;
 }
 
 // aiCollapse builds a block that is collapsed by default: a clickable header
@@ -1349,6 +1357,398 @@ async function aiAnswer(answer) {
   }
   await aiStream();
 }
+
+// ---------- skill tabs ----------
+//
+// A skill is one piece of text. Opening it instantiates it: the ai service
+// creates a session and hands the text to the model as the first prompt. A tab
+// is the frontend form of that instance. The fixed views above are not skills —
+// they are part of the shell and can never be closed.
+
+const TABS_KEY = "engineer.skill.tabs";
+const TAB_ACTIVE_KEY = "engineer.skill.active";
+const tabsEl = document.getElementById("tabs");
+const tabAddEl = document.getElementById("tab-add");
+// The skill whose conversation is currently rendered into #ai-messages. Null
+// when something else (an ad-hoc chat) owns the message area.
+let renderedTabId = null;
+let skillTabs = loadSkillTabs(); // [{ id, skillId, sessionId, name, fresh }]
+let activeSkillId = null; // skill tab on screen, null while a fixed view is active
+
+function loadSkillTabs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TABS_KEY) || "[]");
+    if (!Array.isArray(raw)) return [];
+    // `fresh` is deliberately never restored: after a reload the session is
+    // loaded through /ai/resume like any other history session.
+    return raw
+      .filter((t) => t && t.id && t.sessionId && t.name)
+      .map((t) => ({
+        id: t.id,
+        skillId: t.skillId || "",
+        sessionId: t.sessionId,
+        name: t.name,
+        text: t.text || "",
+      }));
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveSkillTabs() {
+  try {
+    localStorage.setItem(TABS_KEY, JSON.stringify(skillTabs));
+  } catch (e) {}
+}
+
+function renderSkillTabs() {
+  for (const el of tabsEl.querySelectorAll(".tab.skill")) el.remove();
+  for (const t of skillTabs) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tab skill";
+    btn.dataset.skillTab = t.id;
+    btn.title = t.name;
+    const label = document.createElement("span");
+    label.className = "tab-label";
+    label.textContent = t.name;
+    const close = document.createElement("span");
+    close.className = "tab-close";
+    close.dataset.close = t.id;
+    close.title = "close";
+    close.textContent = "×";
+    btn.appendChild(label);
+    btn.appendChild(close);
+    tabsEl.insertBefore(btn, tabAddEl);
+  }
+  syncTabActive();
+}
+
+function syncTabActive() {
+  for (const btn of tabsEl.querySelectorAll("button[data-view]")) {
+    btn.classList.toggle(
+      "active",
+      !activeSkillId && !newTabOpen && btn.dataset.view === currentView,
+    );
+  }
+  for (const btn of tabsEl.querySelectorAll(".tab.skill")) {
+    btn.classList.toggle("active", btn.dataset.skillTab === activeSkillId);
+  }
+  // The new tab page has no tab of its own; `+` stands in for it.
+  tabAddEl.classList.toggle("active", newTabOpen);
+}
+
+// applyLayout switches between the two page contents: a fixed view (graph or a
+// section tree) and a skill conversation. The conversation takes the whole page
+// while a skill tab is active; otherwise the side panel behaves as before.
+function applyLayout() {
+  const skillMode = !!activeSkillId;
+  // Exactly one pane at a time: a fixed view, a skill conversation, or the new
+  // tab page.
+  leftEl.hidden = skillMode || newTabOpen;
+  newTabEl.hidden = !newTabOpen;
+  aiEl.classList.toggle("skill-mode", skillMode);
+  aiEl.hidden = !skillMode;
+  if (skillMode) aiResizeInput();
+  graph?.updateSize();
+}
+
+// openSkillTab opens a tab for a skill instance: `fresh` marks a session that was
+// just created by /ai/skill/run (nothing rendered yet), otherwise the session is
+// loaded like a resumed history session.
+async function openSkillTab({ skillId, sessionId, name, text, fresh }) {
+  let tab = skillTabs.find((t) => t.sessionId === sessionId);
+  if (!tab) {
+    tab = {
+      id: `tab_${Math.random().toString(36).slice(2, 10)}`,
+      skillId: skillId || "",
+      sessionId,
+      name: name || "skill",
+      text: text || "",
+    };
+    if (fresh) tab.fresh = true;
+    skillTabs.push(tab);
+  }
+  saveSkillTabs();
+  renderSkillTabs();
+  await activateSkillTab(tab.id);
+}
+
+async function activateSkillTab(id) {
+  const tab = skillTabs.find((t) => t.id === id);
+  if (!tab) return;
+  activeSkillId = id;
+  newTabOpen = false;
+  try {
+    localStorage.setItem(TAB_ACTIVE_KEY, id);
+  } catch (e) {}
+  applyLayout();
+  syncTabActive();
+  // Still rendered from this very tab: nothing to redraw.
+  if (renderedTabId === id && aiSession === tab.sessionId) {
+    aiInputEl.focus();
+    return;
+  }
+  aiDrawerHide();
+  aiInputEl.disabled = false;
+  renderedTabId = id;
+  try {
+    if (tab.fresh) {
+      // A session created for this skill: the stream carries no user message, so
+      // the skill text is drawn locally, then the run is replayed from the start.
+      delete tab.fresh;
+      saveSkillTabs();
+      aiCancelStream();
+      aiMessagesEl.innerHTML = "";
+      if (tab.text) aiAppend("user", tab.text);
+      aiSession = tab.sessionId;
+      aiSeenSeq = 0;
+      await aiStream();
+    } else {
+      await aiLoadSession(tab.sessionId);
+    }
+  } catch (err) {
+    aiMessagesEl.innerHTML = "";
+    aiAppend("assistant", `[error] ${err.message}`);
+  }
+  aiInputEl.focus();
+}
+
+function closeSkillTab(id) {
+  const idx = skillTabs.findIndex((t) => t.id === id);
+  if (idx < 0) return;
+  skillTabs.splice(idx, 1);
+  saveSkillTabs();
+  renderSkillTabs();
+  if (activeSkillId !== id) return;
+  // The closed tab owned the message area: fall back to the neighbour, or to
+  // the graph when it was the last one.
+  aiCancelStream();
+  renderedTabId = null;
+  activeSkillId = null;
+  const next = skillTabs[Math.max(0, idx - 1)];
+  if (next) activateSkillTab(next.id);
+  else navigate("/");
+}
+
+// ---------- new tab page ----------
+//
+// `+` turns the content area into the skill picker — a page, not a dialog (the
+// browser new-tab analogy): pick a skill to open as a tab, or describe a new
+// one below. Any tab click leaves the page.
+
+let newTabEl = null;
+let newTabOpen = false;
+let newTabSkills = new Map(); // skill id -> { name, text }
+let newTabSessions = new Map(); // session id -> tab label
+
+function newTabInit() {
+  newTabEl = document.getElementById("newtab");
+  newTabEl.addEventListener("click", newTabClick);
+}
+
+function openNewTab() {
+  newTabOpen = true;
+  activeSkillId = null;
+  applyLayout();
+  syncTabActive();
+  newTabEl.innerHTML = `<div class="newtab-body"><div class="empty-hint">loading…</div></div>`;
+  newTabReload();
+}
+
+// closeNewTab returns to the current fixed view (the page Esc leads to).
+function closeNewTab() {
+  if (!newTabOpen) return;
+  newTabOpen = false;
+  applyLayout();
+  syncTabActive();
+  showView(parseRoute());
+}
+
+function newTabItemHtml(t, suggested) {
+  const actions = suggested
+    ? `<button type="button" data-action="save" data-id="${t.id}">save</button>
+       <button type="button" data-action="ignore" data-id="${t.id}">ignore</button>`
+    : `<button type="button" data-action="delete" data-id="${t.id}">delete</button>`;
+  return `<div class="skill-item" data-action="run" data-id="${t.id}">
+    <div class="skill-main">
+      <div class="skill-name">${escapeHtml(t.name)}</div>
+      <div class="skill-text">${escapeHtml(t.text)}</div>
+    </div>
+    <div class="skill-actions">${actions}</div>
+  </div>`;
+}
+
+function newTabError(message) {  const body = newTabEl?.querySelector(".newtab-body");
+  if (!body) return;
+  const note = document.createElement("div");
+  note.className = "empty-hint";
+  note.textContent = message;
+  body.prepend(note);
+}
+
+async function newTabReload() {
+  const body = newTabEl?.querySelector(".newtab-body");
+  if (!body) return;
+  let skills = [];
+  try {
+    const res = await fetch(`${AI_BASE}/ai/skill/list`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: "{}",
+    });
+    const data = yaml.load(await res.text()) || {};
+    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+    skills = data.skills || [];
+  } catch (err) {
+    body.innerHTML = `<div class="empty-hint">${escapeHtml(String(err.message || err))}</div>`;
+    return;
+  }
+  newTabSkills = new Map(skills.map((t) => [t.id, t]));
+  const mine = skills.filter((t) => t.source === "custom" && t.status === "active");
+  const suggested = skills.filter((t) => t.source === "suggested" && t.status === "active");
+  const { recent, sessions } = await recentSessions();
+  newTabSessions = sessions;
+  const none = `<div class="empty-hint">nothing here yet</div>`;
+  body.innerHTML = `
+    <h3>built-in</h3>
+    <div class="skill-item" data-action="newchat">
+      <div class="skill-main">
+        <div class="skill-name">Chat</div>
+        <div class="skill-text">a blank conversation — no skill behind it</div>
+      </div>
+    </div>
+    <h3>my skills</h3>
+    ${mine.length ? mine.map((t) => newTabItemHtml(t, false)).join("") : none}
+    <h3>suggested <button type="button" class="skill-refresh" data-action="refresh">refresh</button></h3>
+    ${suggested.length ? suggested.map((t) => newTabItemHtml(t, true)).join("") : none}
+    <h3>recent</h3>
+    ${recent.length ? recent.map((s) => newTabSessionHtml(s)).join("") : none}
+  `;
+}
+
+// recentSessions lists past conversations that are not already open as tabs.
+// Closing a tab only forgets the tab, so this is how a closed conversation is
+// found again — both a skill run and a blank chat end up here. The log service
+// is not required for the rest of the page.
+async function recentSessions(limit = 10) {
+  let sessions = [];
+  try {
+    const res = await fetch(`${LOG_BASE}/log/list`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml.dump({ pageNum: 1 }),
+    });
+    const data = yaml.load(await res.text()) || {};
+    if (res.ok) sessions = data.sessions || [];
+  } catch (e) {
+    sessions = [];
+  }
+  const open = new Set(skillTabs.map((t) => t.sessionId));
+  const list = sessions.filter((s) => s.sessionId && !open.has(s.sessionId)).slice(0, limit);
+  const labels = new Map(
+    list.map((s) => [s.sessionId, aiOneLine(s.preview || "").slice(0, 60) || s.sessionId]),
+  );
+  return { recent: list, sessions: labels };
+}
+
+function newTabSessionHtml(s) {
+  const name = newTabSessions.get(s.sessionId) || s.sessionId;
+  return `<div class="skill-item" data-action="resume" data-id="${s.sessionId}">
+    <div class="skill-main">
+      <div class="skill-name">${escapeHtml(name)}</div>
+      <div class="skill-text">${s.count} messages · ${escapeHtml(String(s.lastAt || ""))}</div>
+    </div>
+  </div>`;
+}
+
+// newTabSend posts one skill API call and re-renders the page on success.
+async function newTabSend(path, body) {
+  try {
+    const res = await fetch(`${AI_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml.dump(body),
+    });
+    const data = yaml.load(await res.text()) || {};
+    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+    await newTabReload();
+    return data;
+  } catch (err) {
+    newTabError(String(err.message || err));
+  }
+}
+
+async function newTabRun(skillId) {
+  try {
+    const res = await fetch(`${AI_BASE}/ai/skill/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml.dump({ skillId }),
+    });
+    const data = yaml.load(await res.text()) || {};
+    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+    const name = newTabSkills.get(skillId)?.name || skillId;
+    const text = newTabSkills.get(skillId)?.text || "";
+    await openSkillTab({ skillId, sessionId: data.sessionId, name, text, fresh: true });
+  } catch (err) {
+    newTabError(String(err.message || err));
+  }
+}
+
+// newTabBlankChat starts a conversation with no skill behind it — a skill tab
+// whose text is empty, so the panel opens ready for input.
+async function newBlankChat() {
+  try {
+    const res = await fetch(`${AI_BASE}/ai/new`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: "{}",
+    });
+    const data = yaml.load(await res.text()) || {};
+    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+    await openSkillTab({
+      skillId: "",
+      sessionId: data.sessionId,
+      name: "new chat",
+      text: "",
+      fresh: true,
+    });
+  } catch (err) {
+    newTabError(String(err.message || err));
+  }
+}
+
+// newTabResume reopens a past conversation as a tab: openSkillTab loads it
+// through /ai/resume + log replay, exactly like reopening a closed tab.
+async function newTabResume(sessionId) {
+  const name = newTabSessions.get(sessionId) || "chat";
+  await openSkillTab({ skillId: "", sessionId, name, text: "" });
+}
+
+function newTabClick(event) {
+  const hit = event.target.closest("[data-action]");
+  if (!hit) return;
+  const action = hit.dataset.action;
+  const id = hit.dataset.id;
+  if (action === "newchat") newBlankChat();
+  else if (action === "resume") newTabResume(id);
+  else if (action === "run") newTabRun(id);
+  else if (action === "delete") newTabSend("/ai/skill/delete", { id });
+  else if (action === "ignore") newTabSend("/ai/skill/ignore", { id, ignored: true });
+  else if (action === "save") {
+    const t = newTabSkills.get(id);
+    if (t) newTabSend("/ai/skill/save", { id, name: t.name, text: t.text });
+  } else if (action === "refresh") newTabSend("/ai/skill/refresh", {});
+}
+
+tabAddEl.addEventListener("click", openNewTab);
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && newTabOpen) {
+    event.preventDefault();
+    closeNewTab();
+  }
+});
 
 // ---------- command system ----------
 
@@ -1796,7 +2196,6 @@ async function aiLoadSession(id) {
   // in-memory session does not replay old ones.
   aiSession = id;
   aiSeenSeq = Number(data.lastSeq) || 0;
-  aiRememberSession(id);
   aiScrollToBottom();
   // The run may still be executing server-side (our stream was cut); reattach so
   // the events emitted while we were away are replayed from lastSeq.
@@ -1851,52 +2250,6 @@ window.addEventListener("click", (event) => {
   if (!themeMenuEl.contains(event.target) && event.target !== themeToggleEl) {
     themeMenuHide();
   }
-});
-
-const AI_OPEN_KEY = "engineer.ai.open";
-
-// Open/close state is persisted so a refresh keeps the panel where it was.
-function aiSetOpen(open) {
-  aiEl.hidden = !open;
-  aiToggleEl.classList.toggle("active", open);
-  // A hidden element has no layout, so the height has to be recomputed once
-  // the panel is actually visible again.
-  if (open) aiResizeInput();
-  try {
-    localStorage.setItem(AI_OPEN_KEY, open ? "1" : "0");
-  } catch (e) {}
-  graph?.updateSize();
-}
-
-async function aiOpen() {
-  aiSetOpen(true);
-  if (!aiSession) {
-    // A reload should pick up where the user left off: resume the remembered
-    // session (replaying its history) instead of starting a new one.
-    const last = aiStoredSession();
-    let resumed = false;
-    if (last) {
-      try {
-        await aiLoadSession(last);
-        resumed = true;
-      } catch (err) {
-        // stale id or history gone — fall back to a fresh session below
-      }
-    }
-    if (!resumed) {
-      try {
-        await aiNew();
-      } catch (err) {
-        aiAppend("assistant", `[error] ${err.message}`);
-      }
-    }
-  }
-  aiInputEl.focus();
-}
-
-aiToggleEl.addEventListener("click", () => {
-  if (aiEl.hidden) aiOpen();
-  else aiSetOpen(false);
 });
 
 aiSendEl.addEventListener("click", aiSend);
@@ -2062,11 +2415,15 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("popstate", route);
 
-try {
-  if (localStorage.getItem(AI_OPEN_KEY) === "1") aiOpen();
-} catch (e) {}
+renderSkillTabs();
+newTabInit();
 
 route();
+let lastTab = "";
+try {
+  lastTab = localStorage.getItem(TAB_ACTIVE_KEY) || "";
+} catch (e) {}
+if (lastTab && skillTabs.some((t) => t.id === lastTab)) activateSkillTab(lastTab);
 refresh();
 subscribeSchemaStream();
 

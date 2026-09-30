@@ -24,7 +24,13 @@ export interface ImageRefBlock {
 }
 
 // record writes a conversation record to the log service (fire-and-forget;
-// logging must never block or break the chat flow).
+// logging must never block or break the chat flow). Writes are still strictly
+// ordered: record() is called in program order (a user message before the
+// assistant reply it triggered), and the log stores rows in arrival order while
+// session-detail reads them back ORDER BY rowid. Letting two requests race would
+// persist the reply first and replay a session out of order.
+let writeTail: Promise<unknown> = Promise.resolve();
+
 export function record(
   logBase: string,
   sessionId: string,
@@ -42,13 +48,15 @@ export function record(
     sessionId,
     payload,
   });
-  fetch(`${logBase}/log/mutation`, {
-    method: "POST",
-    headers: { "Content-Type": "application/yaml" },
-    body,
-  })
-    .then((r) => r.text())
-    .catch(() => {});
+  writeTail = writeTail.then(() =>
+    fetch(`${logBase}/log/mutation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body,
+    })
+      .then((r) => r.text())
+      .catch(() => {}),
+  );
 }
 
 // fetchRecords reads a session's conversation records in order. New rows carry

@@ -149,21 +149,35 @@ git describe --tags --exact-match    # must print exactly $TAG (off-tag it error
 ls dist/engineer-"$TAG"-*.tar.gz      # nothing to release if this is empty
 ```
 
-**Upload to the release server, clearing its previous packages first.** `dist/` is git-ignored, so the tarballs travel by `scp`, not git. Wipe the server's `dist/` so a stale tarball can never be attached to the new release.
+**Upload to the release server, clearing its previous packages first.** `dist/` is git-ignored, so the tarballs and the notes file travel by `scp`, not git. Wipe the server's `dist/` so a stale tarball can never be attached to the new release.
 
 ```bash
 ssh "$SRV" "rm -rf $REPO/dist && mkdir -p $REPO/dist"
-scp dist/engineer-"$TAG"-*.tar.gz "$SRV:$REPO/dist/"
+scp dist/engineer-"$TAG"-*.tar.gz dist/$TAG-notes.md "$SRV:$REPO/dist/"
 
 # verify integrity end to end before publishing
 shasum -a 256 dist/engineer-"$TAG"-*.tar.gz
 ssh "$SRV" "cd $REPO/dist && sha256sum engineer-$TAG-*.tar.gz"
 ```
 
+**Release notes are two parts, nothing else** — the core change in a sentence or two, then the other changes by name. Write them on the build machine, ship the file with the tarballs, and pass `--notes-file` (`--generate-notes` prints the commit log instead — not this):
+
+```markdown
+## Core change
+
+<one or two sentences: what this release is>
+
+## Other changes
+
+<one line naming what moved — no detail, no rationale; that lives in the commits and the code>
+```
+
+No design prose, no platform / sha256 / install boilerplate: the release lists the assets, and `README.md` carries the install line.
+
 **Publish from the release server** — the build machine never does this:
 
 ```bash
-ssh "$SRV" "cd $REPO && gh release create '$TAG' dist/engineer-$TAG-*.tar.gz --title 'Corazon Engineer $TAG' --generate-notes"
+ssh "$SRV" "cd $REPO && gh release create '$TAG' dist/engineer-$TAG-*.tar.gz --title 'Corazon Engineer $TAG' --notes-file dist/$TAG-notes.md"
 ```
 
 - **One release, many platforms**: every tarball built for the same commit attaches to the same release — `dist/engineer-"$TAG"-*.tar.gz` matches them all. A platform is not a separate machine: one host can build them all (Go via `GOOS`/`GOARCH`, Bun via `--target` — verified from darwin-arm64 to linux-amd64 and linux-arm64). What is macOS-specific is *codesigning* (Bun's `codesign`, ≥ 1.2.4), which avoids Gatekeeper warnings on the mac packages — not the build host. Watch the mixed-tarball trap in Build & pack.

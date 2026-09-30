@@ -1,0 +1,3 @@
+id: core-skill-crud
+description: skill CRUD — create / list / update / ignore / delete, filters, and error codes
+atoms: [ai]

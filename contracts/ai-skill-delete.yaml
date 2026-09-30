@@ -1,0 +1,22 @@
+id: ai-skill-delete
+description: Delete a custom skill
+
+request:
+  body:
+    id: string  # skill id
+
+response:
+  status: 200
+  body:
+    skillId: string
+
+errors:
+  - status: 400
+    code: bad_request
+    description: id missing
+  - status: 404
+    code: not_found
+    description: skill does not exist
+  - status: 500
+    code: internal
+    description: server error

@@ -57,6 +57,48 @@ atoms:
           extend:
             path: /ai/resume
             method: POST
+        - id: ai-skill-list
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-list.yaml
+          extend:
+            path: /ai/skill/list
+            method: POST
+        - id: ai-skill-save
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-save.yaml
+          extend:
+            path: /ai/skill/save
+            method: POST
+        - id: ai-skill-delete
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-delete.yaml
+          extend:
+            path: /ai/skill/delete
+            method: POST
+        - id: ai-skill-ignore
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-ignore.yaml
+          extend:
+            path: /ai/skill/ignore
+            method: POST
+        - id: ai-skill-run
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-run.yaml
+          extend:
+            path: /ai/skill/run
+            method: POST
+        - id: ai-skill-refresh
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-skill-refresh.yaml
+          extend:
+            path: /ai/skill/refresh
+            method: POST
         - id: log-list
           channel: network
           protocol: http

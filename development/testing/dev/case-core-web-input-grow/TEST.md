@@ -13,16 +13,32 @@ layout, so it is driven through a real browser (`ego-browser`) instead of curl:
 
 Prerequisite: `ego-browser` on `PATH` (`ego-browser --version`).
 
-Serve the web assets alone — the AI service is not needed: the panel opens and
-the textarea stays editable even when `/ai/new` fails.
+The chat panel is the content of a skill tab (there is no side panel and no `ai`
+toggle any more), so the ai service is needed to open one — in stub mode, so the
+run is deterministic and offline.
 
 ```bash
-cd workspace/web/server && go build -o /tmp/engineer-web . && /tmp/engineer-web 8610 \
-  --root "$(cd .. && pwd)" \
-  --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
+ROOTDIR="$PWD"
+ROOT="$ROOTDIR/.engineer/.skill-test"
+rm -rf "$ROOT" && mkdir -p "$ROOT"
+printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
+
+(cd workspace/ai && bun run src/main.ts --addr :8511 --root "$ROOT" --stub \
+  --agents "$ROOTDIR/agents/AGENTS.md" >/tmp/input-grow-ai.log 2>&1 &)
+sleep 2
+# one skill, so the new tab page has something to open
+curl -s -o /dev/null -X POST http://localhost:8511/ai/skill/save \
+  -d 'name: Input grow
+text: placeholder skill'
+
+(cd workspace/web/server && go build -o /tmp/engineer-web .)
+/tmp/engineer-web 8610 --root "$ROOTDIR/workspace/web" \
+  --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8503 \
+  >/tmp/input-grow-web.log 2>&1 &
 ```
 
-Expected on startup: `engineer web: http://localhost:8610`.
+Expected on startup: `engineer web: http://localhost:8610` (the recorded
+conversation is not read back here, so `--log` only needs to point anywhere).
 
 ## Run
 
@@ -32,10 +48,11 @@ const WEB = process.env.WEB_URL || "http://localhost:8610";
 const task = await taskSpace("core-web-input-grow");
 const page = task.page("p1");
 await page.goto(`${WEB}/`);
-await page.waitForSelector("#ai-toggle", { state: "visible" });
-if (await page.evaluate(() => document.getElementById("ai").hidden)) {
-  await page.click("#ai-toggle");
-}
+await page.waitForSelector("#tabs", { state: "visible" });
+// Open a skill: + gives the new tab page, running an entry shows the chat.
+await page.click("#tab-add");
+await page.waitForSelector("#newtab .skill-item", { state: "visible" });
+await page.click("loc=css:#newtab .skill-item >> nth=0");
 await page.waitForSelector("#ai-input-field", { state: "visible" });
 
 // Rendered metrics of the textarea, plus the styles that define its limits.
@@ -92,13 +109,18 @@ const mid = await measure();
 check("3 lines sit between 2 and 10 rows", mid.height > rows(2) && mid.height < rows(10) &&
   mid.overflowY === "hidden", { height: mid.height, overflowY: mid.overflowY });
 
-// Soft wrapping depends on width: narrowing the window must re-measure. The
-// CDP override fires resize on the way in; clearing it does not, so the
-// listener is dispatched manually to stand in for the user's window resize.
-await setText("the quick brown fox jumps over the lazy dog and keeps running on");
+// Soft wrapping depends on width: narrowing the window must re-measure. A CDP
+// viewport override does not reliably deliver a resize event to the page (and
+// firing one before the new layout settles would measure the old width), so the
+// event is dispatched explicitly once the viewport has changed — standing in
+// for the user resizing their window.
+// Long enough to stay on one line at the full page width, and to wrap past
+// two rows once the window is narrow.
+await setText("the quick brown fox jumps over the lazy dog and keeps running on".repeat(3));
 const wide = await measure();
 await page.cdp("Emulation.setDeviceMetricsOverride", { width: 600, height: 900, deviceScaleFactor: 1, mobile: false });
 await page.waitForTimeout(200);
+await page.evaluate(() => window.dispatchEvent(new Event("resize")));
 const narrow = await measure();
 await page.cdp("Emulation.clearDeviceMetricsOverride", {});
 await page.waitForTimeout(200);
@@ -131,4 +153,5 @@ clearing returns to 2 rows. Exit code `0`.
 
 ```bash
 pkill -f 'engineer-web 8610'
+pkill -f 'main.ts --addr :8511'
 ```

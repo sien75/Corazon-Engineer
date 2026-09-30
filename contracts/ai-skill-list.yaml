@@ -1,0 +1,28 @@
+id: ai-skill-list
+description: List skills (custom / suggested) owned by the ai service
+
+request:
+  body:
+    source?: custom | suggested  # filter by skill source
+    status?: active | ignored  # filter by skill status
+
+response:
+  status: 200
+  body:
+    skills:  # newest updated first
+      - id: string
+        name: string  # skill display name
+        text: string  # the skill itself: one piece of text
+        source: custom | suggested
+        status: active | ignored  # ignored only applies to suggested
+        createdAt: string  # RFC3339
+        updatedAt: string  # RFC3339
+        evidence?: object  # suggested only: where the candidate came from
+
+errors:
+  - status: 400
+    code: bad_request
+    description: unknown source or status filter
+  - status: 500
+    code: internal
+    description: server error

@@ -1,0 +1,31 @@
+id: ai-skill-save
+description: Create or update a custom skill; the AI creates skills through this interface too
+
+request:
+  body:
+    id?: string  # present = update that skill, absent = create a new one
+    name: string  # skill display name
+    text: string  # the skill itself: one piece of text handed to the model on run
+
+response:
+  status: 200
+  body:
+    skill:
+      id: string
+      name: string
+      text: string
+      source: custom  # saving always produces a custom skill
+      status: active
+      createdAt: string  # RFC3339
+      updatedAt: string  # RFC3339
+
+errors:
+  - status: 400
+    code: bad_request
+    description: name or text missing or empty
+  - status: 404
+    code: not_found
+    description: skill to update does not exist
+  - status: 500
+    code: internal
+    description: server error

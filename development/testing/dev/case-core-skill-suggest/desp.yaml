@@ -1,0 +1,3 @@
+id: core-skill-suggest
+description: suggested-skill scan — 10-run threshold, batch marking, ignore and de-duplication
+atoms: [ai]

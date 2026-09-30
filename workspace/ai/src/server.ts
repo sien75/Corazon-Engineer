@@ -1,6 +1,7 @@
 import YAML from "yaml";
 import type { Registry, EngineerEvent, IncomingBlock } from "./registry.ts";
 import { readBlob } from "./blobs.ts";
+import type { Skill, SkillFilter } from "./skill/store.ts";
 
 // The ai API speaks YAML on the wire (application/yaml), like static / log.
 // JSON request bodies still parse, since JSON is a subset of YAML.
@@ -42,6 +43,22 @@ function encodeSSE(ev: EngineerEvent): Uint8Array {
       .map((l) => `data: ${l}`)
       .join("\n") + "\n\n";
   return new TextEncoder().encode(payload);
+}
+
+// skillWire projects a stored skill onto the wire shape: camelCase fields, and
+// `evidence` present only for suggested candidates.
+function skillWire(t: Skill): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    id: t.id,
+    name: t.name,
+    text: t.text,
+    source: t.source,
+    status: t.status,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
+  if (t.evidence !== undefined) out.evidence = t.evidence;
+  return out;
 }
 
 export function serve(registry: Registry, addr: string): void {
@@ -208,6 +225,80 @@ export function serve(registry: Registry, addr: string): void {
             return errRes(404, "not_found", "session not found");
           }
           return yamlRes({ sessionId: id });
+        }
+
+        case "/ai/skill/list": {
+          const filter: SkillFilter = {};
+          const source = String(body.source ?? "");
+          const status = String(body.status ?? "");
+          if (source) {
+            if (source !== "custom" && source !== "suggested") {
+              return errRes(400, "bad_request", "unknown source filter");
+            }
+            filter.source = source;
+          }
+          if (status) {
+            if (status !== "active" && status !== "ignored") {
+              return errRes(400, "bad_request", "unknown status filter");
+            }
+            filter.status = status;
+          }
+          return yamlRes({ skills: registry.skills.list(filter).map(skillWire) });
+        }
+
+        case "/ai/skill/save": {
+          const name = String(body.name ?? "").trim();
+          const text = String(body.text ?? "").trim();
+          if (!name || !text) {
+            return errRes(400, "bad_request", "name and text required");
+          }
+          const id =
+            body.id === undefined || body.id === null || body.id === ""
+              ? undefined
+              : String(body.id);
+          const skill = registry.skills.save({ id, name, text });
+          if (!skill) return errRes(404, "not_found", "skill not found");
+          return yamlRes({ skill: skillWire(skill) });
+        }
+
+        case "/ai/skill/delete": {
+          const id = String(body.id ?? "");
+          if (!id) return errRes(400, "bad_request", "id missing");
+          if (!registry.skills.remove(id)) {
+            return errRes(404, "not_found", "skill not found");
+          }
+          return yamlRes({ skillId: id });
+        }
+
+        case "/ai/skill/ignore": {
+          const id = String(body.id ?? "");
+          if (!id) return errRes(400, "bad_request", "id missing");
+          const ignored = !(body.ignored === false || body.ignored === "false");
+          const skill = registry.skills.setIgnored(id, ignored);
+          if (!skill) return errRes(404, "not_found", "skill not found");
+          return yamlRes({ skill: skillWire(skill) });
+        }
+
+        case "/ai/skill/run": {
+          const skillId = String(body.skillId ?? "");
+          let text = String(body.text ?? "").trim();
+          if (skillId) {
+            const skill = registry.skills.get(skillId);
+            if (!skill) return errRes(404, "not_found", "skill not found");
+            text = skill.text;
+          } else if (!text) {
+            return errRes(400, "bad_request", "skillId or text required");
+          }
+          const sess = await registry.new();
+          registry.ask(sess, [{ type: "text", text }]);
+          registry.skills.linkSession(sess.id, skillId || undefined);
+          return yamlRes(
+            skillId ? { sessionId: sess.id, skillId } : { sessionId: sess.id },
+          );
+        }
+
+        case "/ai/skill/refresh": {
+          return yamlRes(await registry.scanSkills(true));
         }
 
         default:

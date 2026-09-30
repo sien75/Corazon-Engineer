@@ -1,0 +1,3 @@
+id: core-skill-run
+description: skill instantiation — run a saved or ad-hoc skill, stream the session it opens
+atoms: [ai]

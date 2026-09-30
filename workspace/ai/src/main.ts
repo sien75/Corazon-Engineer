@@ -25,14 +25,19 @@ process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 
 // usage: bun run src/main.ts [--addr :7501] [--root <project dir>]
 //        [--log http://localhost:7503] [--static http://localhost:7502]
-//        [--agents <AGENTS.md>] [--model provider/model-id]
+//        [--agents <AGENTS.md>] [--model provider/model-id] [--stub]
 
 function parseFlags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith("--") && i + 1 < argv.length) {
-      out[argv[i].slice(2)] = argv[++i];
+    if (!argv[i].startsWith("--")) continue;
+    const key = argv[i].slice(2);
+    // Boolean flags take no value, so they never swallow the next argument.
+    if (key === "stub") {
+      out[key] = "1";
+      continue;
     }
+    if (i + 1 < argv.length) out[key] = argv[++i];
   }
   return out;
 }
@@ -55,6 +60,7 @@ function findRoot(): string {
 }
 
 const flags = parseFlags(process.argv.slice(2));
+const forceStub = flags.stub === "1";
 const root = flags.root || findRoot();
 const addr = flags.addr || ":7501";
 const logBase = flags.log || "http://localhost:7503";
@@ -93,12 +99,15 @@ const registry = new Registry({
   logBase,
   systemPrompt,
   model: flags.model, // e.g. "deepseek/deepseek-chat", "anthropic/claude-sonnet-4-6"
+  forceStub,
 });
 await registry.init();
 if (registry.stub) {
   console.error(
-    "warning: no authenticated LLM provider found (env vars or " +
-      "pi's auth.json); ai falls back to echo stub",
+    forceStub
+      ? "engineer ai: --stub: model calls disabled (echo stub)"
+      : "warning: no authenticated LLM provider found (env vars or " +
+          "pi's auth.json); ai falls back to echo stub",
   );
 } else {
   console.log(`engineer ai: model=${registry.modelInfo}`);

@@ -1,0 +1,15 @@
+id: ai-skill-refresh
+description: Manually trigger one suggested-skill scan over pending conversation runs
+
+request: {}
+
+response:
+  status: 200
+  body:
+    triggered: boolean  # false when a scan is already running or nothing is pending
+    scanned: number  # runs included in this scan, 0 when nothing was triggered
+
+errors:
+  - status: 500
+    code: internal
+    description: server error
