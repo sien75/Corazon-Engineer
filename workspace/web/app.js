@@ -439,17 +439,31 @@ const SECTION_DETAIL_TYPE = {
   notes: "notes",
 };
 
+// The route table: `/` graph, `/new` the new tab page, `/chat/<sessionId>` the
+// tab holding that conversation, `/<section>[/<id>]` a fixed view. Anything else
+// falls back to the graph. The web server already answers an unknown path with
+// index.html, so a chat URL survives a reload and can be shared.
+const CHAT_PREFIX = "chat";
+const NEW_TAB_PATH = "/new";
+
 function parseRoute() {
   const parts = location.pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (!parts.length) return { view: "graph" };
   const [section, ...rest] = parts;
+  if (section === CHAT_PREFIX && rest.length) return { view: "chat", sessionId: rest.join("/") };
+  if (section === "new" && !rest.length) return { view: "newtab" };
   if (!SECTIONS.includes(section)) return { view: "graph" };
   if (!rest.length) return { view: section };
   return { view: section, id: `${section}/${rest.join("/")}` };
 }
 
-function navigate(path) {
-  history.pushState(null, "", path);
+// navigate writes a path and renders it. "push" is an explicit move to a view
+// (a tab click, a link); "replace" rewrites the current entry when the view
+// changes in place — a tab closing onto its neighbour, /new replacing an
+// instance, Esc leaving the new tab page.
+function navigate(path, mode = "push") {
+  if (mode === "replace") history.replaceState(null, "", path);
+  else history.pushState(null, "", path);
   route();
 }
 
@@ -459,6 +473,16 @@ function entryHref(id) {
 
 function route() {
   const r = parseRoute();
+  // A conversation and the new tab page own the layout themselves; currentView
+  // (the fixed view to fall back to) stays as it was.
+  if (r.view === "chat") {
+    routeChat(r.sessionId);
+    return;
+  }
+  if (r.view === "newtab") {
+    openNewTab({ push: false });
+    return;
+  }
   currentView = r.view;
   // A fixed view leaves skill mode and the new tab page; the skill's session
   // stays in its tab, so the user can come back to it.
@@ -474,6 +498,7 @@ function route() {
 // is active — a schema push must not kick the user out of a skill tab.
 function showView(r) {
   hidePanel();
+  if (r.view === "chat" || r.view === "newtab") return;
   if (r.view === "graph") {
     contentEl.hidden = true;
     graphEl.hidden = false;
@@ -1594,7 +1619,6 @@ async function aiAnswer(answer) {
 // they are part of the shell and can never be closed.
 
 const TABS_KEY = "engineer.skill.tabs";
-const TAB_ACTIVE_KEY = "engineer.skill.active";
 const tabsEl = document.getElementById("tabs");
 const tabAddEl = document.getElementById("tab-add");
 // The skill whose conversation is currently rendered into #ai-messages. Null
@@ -1602,6 +1626,53 @@ const tabAddEl = document.getElementById("tab-add");
 let renderedTabId = null;
 let skillTabs = loadSkillTabs(); // [{ id, skillId, sessionId, name, fresh }]
 let activeSkillId = null; // skill tab on screen, null while a fixed view is active
+
+// The address bar follows the tabs: while a conversation is on screen the URL is
+// /chat/<sessionId>, so a reload, a back step or a shared link lands on the same
+// one. The mode names how the URL got there: "push" (an explicit move to the
+// tab), "replace" (the tab changed session in place) or null (the URL drove the
+// render — popstate, a deep link — so there is nothing to write).
+function chatPath(sessionId) {
+  return `/${CHAT_PREFIX}/${encodeURIComponent(sessionId)}`;
+}
+
+function syncChatUrl(sessionId, mode) {
+  if (!mode) return;
+  const path = chatPath(sessionId);
+  if (location.pathname === path) return;
+  if (mode === "replace") history.replaceState(null, "", path);
+  else history.pushState(null, "", path);
+}
+
+// routeChat renders the conversation a /chat/<sessionId> URL names: the tab that
+// already holds it, or a tab opened for it (a deep link or a back/forward step).
+// A session that cannot be loaded is left on screen with its error — the address
+// is the truth and the tab is the user's to close.
+async function routeChat(sessionId) {
+  const tab = skillTabs.find((t) => t.sessionId === sessionId);
+  if (tab) {
+    await activateSkillTab(tab.id, null);
+    return;
+  }
+  await openSkillTab({ skillId: "", sessionId, name: "chat", text: "" }, null);
+}
+
+// rebindActiveTab points the tab on screen at the session it now shows. /resume
+// loads another conversation into the current tab, so the tab — and the URL that
+// names it — has to follow: otherwise switching away and back would replay the
+// old conversation, and the address would name a session no longer displayed.
+function rebindActiveTab(sessionId, name) {
+  const tab = skillTabs.find((t) => t.id === renderedTabId);
+  if (!tab || tab.sessionId === sessionId) return;
+  aiDrafts.delete(tab.id);
+  tab.sessionId = sessionId;
+  tab.skillId = "";
+  tab.name = name || "chat";
+  tab.text = "";
+  saveSkillTabs();
+  renderSkillTabs();
+  syncChatUrl(sessionId, "replace");
+}
 
 // The composer is a single DOM node shared by every instance, so each tab keeps
 // its own unsent draft here — text plus the queued pasted images — and switching
@@ -1709,7 +1780,7 @@ function applyLayout() {
 // openSkillTab opens a tab for a skill instance: `fresh` marks a session that was
 // just created by /ai/skill/run (nothing rendered yet), otherwise the session is
 // loaded like a resumed history session.
-async function openSkillTab({ skillId, sessionId, name, text, fresh }) {
+async function openSkillTab({ skillId, sessionId, name, text, fresh }, mode = "push") {
   let tab = skillTabs.find((t) => t.sessionId === sessionId);
   if (!tab) {
     tab = {
@@ -1724,19 +1795,17 @@ async function openSkillTab({ skillId, sessionId, name, text, fresh }) {
   }
   saveSkillTabs();
   renderSkillTabs();
-  await activateSkillTab(tab.id);
+  await activateSkillTab(tab.id, mode);
 }
 
-async function activateSkillTab(id) {
+async function activateSkillTab(id, mode = "push") {
   const tab = skillTabs.find((t) => t.id === id);
   if (!tab) return;
   activeSkillId = id;
   newTabOpen = false;
-  try {
-    localStorage.setItem(TAB_ACTIVE_KEY, id);
-  } catch (e) {}
   applyLayout();
   syncTabActive();
+  syncChatUrl(tab.sessionId, mode);
   // Still rendered from this very tab: nothing to redraw.
   if (renderedTabId === id && aiSession === tab.sessionId) {
     aiInputEl.focus();
@@ -1782,8 +1851,8 @@ function closeSkillTab(id) {
   renderedTabId = null;
   activeSkillId = null;
   const next = skillTabs[Math.max(0, idx - 1)];
-  if (next) activateSkillTab(next.id);
-  else navigate("/");
+  if (next) activateSkillTab(next.id, "replace");
+  else navigate("/", "replace");
 }
 
 // ---------- new tab page ----------
@@ -1794,6 +1863,7 @@ function closeSkillTab(id) {
 
 let newTabEl = null;
 let newTabOpen = false;
+let newTabReturn = "/"; // the path Esc leaves the new tab page for
 let newTabSkills = new Map(); // skill id -> { name, text }
 let newTabSessions = new Map(); // session id -> tab label
 
@@ -1802,7 +1872,14 @@ function newTabInit() {
   newTabEl.addEventListener("click", newTabClick);
 }
 
-function openNewTab() {
+// openNewTab shows the skill picker at /new. `push` is false when the URL
+// already says /new (a back/forward step re-renders the page); a second `+`
+// click just refreshes the list instead of stacking another entry.
+function openNewTab({ push = true } = {}) {
+  if (push && !newTabOpen) {
+    newTabReturn = location.pathname;
+    history.pushState(null, "", NEW_TAB_PATH);
+  }
   newTabOpen = true;
   activeSkillId = null;
   applyLayout();
@@ -1811,13 +1888,12 @@ function openNewTab() {
   newTabReload();
 }
 
-// closeNewTab returns to the current fixed view (the page Esc leads to).
+// closeNewTab returns to the view the page was opened from (the page Esc leads
+// to). Replacing keeps the page out of history: back must not reopen it.
 function closeNewTab() {
   if (!newTabOpen) return;
   newTabOpen = false;
-  applyLayout();
-  syncTabActive();
-  showView(parseRoute());
+  navigate(newTabReturn, "replace");
 }
 
 function newTabItemHtml(t, suggested) {
@@ -1945,7 +2021,7 @@ async function newTabRun(skillId) {
     if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
     const name = newTabSkills.get(skillId)?.name || skillId;
     const text = newTabSkills.get(skillId)?.text || "";
-    await openSkillTab({ skillId, sessionId: data.sessionId, name, text, fresh: true });
+    await openSkillTab({ skillId, sessionId: data.sessionId, name, text, fresh: true }, "replace");
   } catch (err) {
     newTabError(String(err.message || err));
   }
@@ -1956,7 +2032,7 @@ async function newTabRun(skillId) {
 async function newBlankChat() {
   try {
     const sessionId = await aiNewSession();
-    await openSkillTab({ skillId: "", sessionId, name: "new chat", text: "", fresh: true });
+    await openSkillTab({ skillId: "", sessionId, name: "new chat", text: "", fresh: true }, "replace");
   } catch (err) {
     newTabError(String(err.message || err));
   }
@@ -1966,7 +2042,7 @@ async function newBlankChat() {
 // through /ai/resume + log replay, exactly like reopening a closed tab.
 async function newTabResume(sessionId) {
   const name = newTabSessions.get(sessionId) || "chat";
-  await openSkillTab({ skillId: "", sessionId, name, text: "" });
+  await openSkillTab({ skillId: "", sessionId, name, text: "" }, "replace");
 }
 
 function newTabClick(event) {
@@ -1985,7 +2061,7 @@ function newTabClick(event) {
   } else if (action === "refresh") newTabSend("/ai/skill/refresh", {});
 }
 
-tabAddEl.addEventListener("click", openNewTab);
+tabAddEl.addEventListener("click", () => openNewTab());
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && newTabOpen) {
     event.preventDefault();
@@ -2219,6 +2295,9 @@ async function aiConfirmAccept() {
         saveSkillTabs();
         renderSkillTabs();
         renderedTabId = tab.id;
+        // The tab was rebound to a fresh session: the address must not keep
+        // naming the deleted one.
+        syncChatUrl(tab.sessionId, "replace");
       }
       aiCancelResume();
       return;
@@ -2315,7 +2394,9 @@ async function aiCommandNew() {
     renderedTabId = null;
     saveSkillTabs();
     renderSkillTabs();
-    await activateSkillTab(tab.id);
+    // The instance changed session in place: the URL follows it without leaving
+    // the cancelled session behind in history.
+    await activateSkillTab(tab.id, "replace");
   } catch (err) {
     aiAppend("assistant", `[error] ${err.message}`);
   }
@@ -2347,7 +2428,7 @@ async function aiCommandResume() {
         count: s.count,
         time: s.lastAt,
         sessionId: s.sessionId,
-        run: () => aiResumeSession(s.sessionId),
+        run: () => aiResumeSession(s.sessionId, aiOneLine(s.preview).slice(0, 80)),
       })),
       "session",
     );
@@ -2483,10 +2564,11 @@ async function aiLoadSession(id) {
   if (data.active) await aiStream();
 }
 
-async function aiResumeSession(id) {
+async function aiResumeSession(id, name) {
   aiInputEl.disabled = true;
   try {
     await aiLoadSession(id);
+    rebindActiveTab(id, name);
   } catch (err) {
     aiAppend("assistant", `[error] ${err.message}`);
   } finally {
@@ -2699,12 +2781,10 @@ window.addEventListener("popstate", route);
 renderSkillTabs();
 newTabInit();
 
+// The URL decides which view is on screen — including which conversation tab —
+// so nothing here restores an active tab from storage: route() renders
+// /chat/<sessionId> by itself, and every other path is a fixed view.
 route();
-let lastTab = "";
-try {
-  lastTab = localStorage.getItem(TAB_ACTIVE_KEY) || "";
-} catch (e) {}
-if (lastTab && skillTabs.some((t) => t.id === lastTab)) activateSkillTab(lastTab);
 refresh();
 subscribeSchemaStream();
 
