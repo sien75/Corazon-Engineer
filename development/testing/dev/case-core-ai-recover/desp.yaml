@@ -1,0 +1,3 @@
+id: core-ai-recover
+description: ai session recovery — malformed conversation history (orphan tool results, tool calls without a result, duplicate seq, seq holes) is repaired on resume instead of wedging the session, and a failed record write is detected, retried and reported instead of being swallowed
+atoms: [ai, log]

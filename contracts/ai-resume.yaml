@@ -1,5 +1,5 @@
 id: ai-resume
-description: Resume an existing conversation session, rebuilding its text context from log records
+description: Resume an existing conversation session, rebuilding its text context from log records; malformed history (orphan tool results, tool calls without a result, duplicate seq) is repaired in memory before it is replayed
 
 request:
   body:

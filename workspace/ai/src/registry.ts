@@ -343,7 +343,12 @@ export class Registry {
       const sessionManager = SessionManager.inMemory(this.opts.root);
       // Rebuild context compaction-aware: the latest compaction summary plus the
       // records after it. Summarized history is not re-sent to the provider.
-      const context = history.slice(lastCompactionIndex(history));
+      // Repair runs *after* the slice: the cut is an index, so it can land
+      // between an assistant and the tool results it asked for, and repairing
+      // before it would leave the orphans the cut just made. A damaged history
+      // that is replayed as-is is fatal rather than cosmetic — the provider
+      // rejects the whole request, and every later prompt replays it again.
+      const context = sanitizeHistory(id, history.slice(lastCompactionIndex(history)));
       for (const m of context) {
         const msg = this.toAgentMessage(m);
         if (msg) sessionManager.appendMessage(msg);
@@ -702,6 +707,137 @@ export class Registry {
       raw,
     );
   }
+}
+
+// The text that stands in for a tool result whose record never made it to the
+// log. It is replayed to the model but never written back: the real output is
+// gone, and a fabricated row in the log would outlive the repair.
+const LOST_RESULT_TEXT =
+  "[record lost: this tool call's result was never persisted]";
+
+// sanitizeHistory makes a stored conversation safe to replay to a provider.
+//
+// A record can go missing (a write that failed while seq was already handed out,
+// see recorder.record), and what survives is then malformed: a `toolResult` whose
+// assistant is gone, or an assistant `toolCall` with no result. Providers reject
+// both — DeepSeek: `An assistant message with 'tool_calls' must be followed by
+// tool messages responding to each 'tool_call_id'` — and because a session
+// replays its whole history on every prompt, one bad record wedges that
+// conversation forever. Rather than trusting the log, the replay rebuilds a shape
+// the provider accepts:
+//
+//   - the same `seq` twice (a retried write landing twice) keeps its first row;
+//   - an assistant's tool calls are answered in call order, in a placeholder
+//     when the result is missing;
+//   - a `toolResult` nobody asked for is dropped.
+//
+// It also counts the `seq` numbers that are missing from what is stored, which
+// reports how many records were lost. Nothing is written back; the repair is a
+// memory-side view of the same records.
+function sanitizeHistory(
+  sessionId: string,
+  history: StoredRecord[],
+): StoredRecord[] {
+  let duplicates = 0;
+  let filled = 0;
+  let orphans = 0;
+
+  // 1. Keep the first row per seq (a retried write can insert the same seq
+  // twice), and collect the seq numbers actually present. Rows with no seq are
+  // legacy and carry no ordering information to de-duplicate on.
+  const deduped: StoredRecord[] = [];
+  const seqs = new Set<number>();
+  for (const r of history) {
+    if (r.seq > 0) {
+      if (seqs.has(r.seq)) {
+        duplicates++;
+        dbg(sessionId, "repair", "drop-duplicate", `seq=${r.seq}`);
+        continue;
+      }
+      seqs.add(r.seq);
+    }
+    deduped.push(r);
+  }
+  // A hole is a number no row ever claimed: a write that was lost for good.
+  const ordered = [...seqs].sort((a, b) => a - b);
+  let holes = 0;
+  for (let i = 1; i < ordered.length; i++) {
+    holes += Math.max(0, ordered[i] - ordered[i - 1] - 1);
+  }
+
+  // 2. Rebuild tool-call pairing. The window for an assistant's results is the
+  // run of `toolResult` rows right after it — exactly the shape providers
+  // require, and the only window in which a result can be matched.
+  const out: StoredRecord[] = [];
+  for (let i = 0; i < deduped.length; i++) {
+    const r = deduped[i];
+    const calls = toolCallsOf(r);
+    if (calls.length) {
+      out.push(r);
+      const results = new Map<string, StoredRecord>();
+      let j = i + 1;
+      while (j < deduped.length && deduped[j].role === "toolResult") {
+        const id = String((deduped[j].raw as any)?.toolCallId ?? "");
+        if (!calls.some((c) => c.id === id) || results.has(id)) break;
+        results.set(id, deduped[j]);
+        j++;
+      }
+      i = j - 1;
+      for (const call of calls) {
+        const hit = results.get(call.id);
+        if (hit) {
+          out.push(hit);
+          continue;
+        }
+        filled++;
+        dbg(sessionId, "repair", "fill", `seq=${r.seq}`, `toolCallId=${call.id}`);
+        out.push({
+          seq: r.seq,
+          role: "toolResult",
+          content: "",
+          raw: {
+            role: "toolResult",
+            toolCallId: call.id,
+            toolName: call.name,
+            content: [{ type: "text", text: LOST_RESULT_TEXT }],
+            isError: false,
+            timestamp: Date.now(),
+          },
+        });
+      }
+      continue;
+    }
+    if (r.role === "toolResult") {
+      orphans++;
+      dbg(
+        sessionId,
+        "repair",
+        "drop-orphan",
+        `seq=${r.seq}`,
+        `toolCallId=${String((r.raw as any)?.toolCallId ?? "")}`,
+      );
+      continue;
+    }
+    out.push(r);
+  }
+
+  if (duplicates || filled || orphans || holes) {
+    console.error(
+      `engineer ai: history repair ${sessionId}: filled=${filled}` +
+        ` orphans=${orphans} duplicates=${duplicates} holes=${holes}`,
+    );
+  }
+  return out;
+}
+
+// toolCallsOf returns the tool calls a stored record makes, in call order. Only
+// assistant records carrying a raw pi message with a content array have them;
+// legacy rows (text/image blocks) and compaction entries make none.
+function toolCallsOf(r: StoredRecord): { id: string; name: string }[] {
+  if (r.role !== "assistant" || !Array.isArray(r.raw?.content)) return [];
+  return r.raw.content
+    .filter((b: any) => b?.type === "toolCall" && b.id)
+    .map((b: any) => ({ id: String(b.id), name: String(b.name ?? "") }));
 }
 
 // lastCompactionIndex returns the index of the latest compaction record, or 0

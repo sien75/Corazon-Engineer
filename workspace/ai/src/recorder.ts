@@ -31,6 +31,49 @@ export interface ImageRefBlock {
 // persist the reply first and replay a session out of order.
 let writeTail: Promise<unknown> = Promise.resolve();
 
+// A record is the only copy of that turn, and seq is handed out before the write
+// (registry.recordRaw), so a dropped write is a permanent hole — the number is
+// never reused. That makes a transient log outage (the service restarting, a
+// connection reset) worth retrying: attempt every write this many times before
+// reporting it lost, spacing attempts by RETRY_BACKOFF_MS doubling each time.
+// Retries happen inside the tail, not beside it, so ordering is preserved; the
+// cost is that the records behind a slow write wait up to ~600ms.
+const RECORD_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = 200;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+// postRecord sends one record, retrying transient failures. Resolves on success,
+// or with the reason it gave up plus how many attempts that took. 4xx is the
+// sender's fault (bad payload / bad contract) and is not worth retrying; 5xx and
+// transport errors are.
+async function postRecord(
+  logBase: string,
+  body: string,
+): Promise<{ reason: string; attempts: number } | undefined> {
+  let reason = "unknown";
+  for (let attempt = 1; attempt <= RECORD_ATTEMPTS; attempt++) {
+    if (attempt > 1) await sleep(RETRY_BACKOFF_MS * 2 ** (attempt - 2));
+    try {
+      const res = await fetch(`${logBase}/log/mutation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/yaml" },
+        body,
+      });
+      // Read the body either way: an unread response holds its connection.
+      const text = await res.text();
+      if (res.ok) return undefined;
+      const detail = text.replace(/\s+/g, " ").trim().slice(0, 200);
+      reason = `log http ${res.status}: ${detail}`;
+      if (res.status < 500) return { reason, attempts: attempt };
+    } catch (err) {
+      reason = `log unreachable: ${String(err)}`;
+    }
+  }
+  return { reason, attempts: RECORD_ATTEMPTS };
+}
+
 export function record(
   logBase: string,
   sessionId: string,
@@ -48,15 +91,24 @@ export function record(
     sessionId,
     payload,
   });
-  writeTail = writeTail.then(() =>
-    fetch(`${logBase}/log/mutation`, {
-      method: "POST",
-      headers: { "Content-Type": "application/yaml" },
-      body,
-    })
-      .then((r) => r.text())
-      .catch(() => {}),
-  );
+  // Never let this stage reject: writeTail is a promise chain, so one rejection
+  // would skip every later write and silently end the record stream.
+  writeTail = writeTail.then(async () => {
+    try {
+      const failed = await postRecord(logBase, body);
+      if (failed) {
+        console.error(
+          `engineer ai: conversation record write failed sessionId=${sessionId}` +
+            ` seq=${seq} attempts=${failed.attempts}: ${failed.reason}`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        `engineer ai: conversation record write failed sessionId=${sessionId}` +
+          ` seq=${seq}: ${String(err)}`,
+      );
+    }
+  });
 }
 
 // fetchRecords reads a session's conversation records in order. New rows carry
