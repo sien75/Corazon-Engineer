@@ -4,7 +4,8 @@ The tab bar and the new tab page. A skill is one piece of text; opening it runs
 it (the ai service creates a session and hands the text to the model) and shows
 that conversation in a closable tab. The fixed views (graph / how-to /
 development / contracts / docs / notes) are tabs too, but they can never be
-closed.
+closed. `/new` cancels the active instance and opens a fresh generic chat, and
+each instance keeps its own unsent composer draft.
 
 Source of truth: `workspace/web/index.html` (`#tabs`), `workspace/web/app.js`
 (`openSkillTab` / `activateSkillTab` / `closeSkillTab` / the new tab page) and
@@ -229,11 +230,10 @@ await page.waitForFunction(() => document.getElementById("ai").classList.contain
   undefined, { timeout: 10_000 });
 check("open tabs and the active tab survive a reload", true);
 
-// 10. tool / thinking blocks are narrow chips next to the reply, not full-width
-// bars (a pure layout rule, so it is measured directly — the stub never emits a
-// tool call).
-// Nothing hugs the right edge: with classic scrollbars the message list's
-// scrollbar would otherwise sit on top of the bubbles.
+// 10. Nothing hugs the right edge: with classic scrollbars the message list's
+// scrollbar would otherwise sit on top of the bubbles. (The chip shapes
+// themselves — 120px, icons, per-row details — have their own case,
+// `case-core-web-tool-chips`.)
 check("bubbles keep clear of the scrollbar",
   await page.evaluate(() => {
     const list = document.getElementById("ai-messages");
@@ -245,20 +245,73 @@ check("bubbles keep clear of the scrollbar",
       getComputedStyle(list).scrollbarGutter === "stable";
   }));
 
-check("tool and thinking blocks are 300px chips, wider when opened",
-  await page.evaluate(() => {
-    const host = document.getElementById("ai-messages");
-    const measure = (cls) => {
-      const el = document.createElement("div");
-      el.className = cls;
-      host.appendChild(el);
-      const w = Math.round(el.getBoundingClientRect().width);
-      el.remove();
-      return w;
-    };
-    return ["ai-collapse ai-tool", "ai-collapse ai-thinking"]
-      .every((cls) => measure(cls) === 300 && measure(`${cls} open`) > 600);
-  }));
+// 11. /new cancels the instance: the active tab becomes a fresh generic chat,
+// and reopening it must not bring the old conversation back. Before the fix
+// the tab kept its old sessionId, so switching away and back replayed it.
+const beforeNew = await page.evaluate(() => ({
+  label: document.querySelector("#tabs .tab.skill.active")?.textContent.trim(),
+  messages: document.querySelectorAll("#ai-messages .ai-msg").length,
+}));
+check("the tab has a conversation before /new",
+  !!beforeNew.label && beforeNew.label.startsWith("Seeded skill") && beforeNew.messages > 0,
+  beforeNew);
+await page.fill("#ai-input-field", "/new");
+await page.waitForSelector("#ai-cmd:not([hidden])", { state: "visible", timeout: 5_000 });
+await page.press("#ai-input-field", "Enter");
+await page.waitForFunction(
+  () => document.querySelector("#tabs .tab.skill.active")?.textContent.trim().startsWith("new chat"),
+  undefined, { timeout: 10_000 });
+await page.waitForFunction(
+  () => document.querySelectorAll("#ai-messages .ai-msg").length === 0,
+  undefined, { timeout: 10_000 });
+const afterNew = await page.evaluate(() => ({
+  label: document.querySelector("#tabs .tab.skill.active")?.textContent.trim(),
+  messages: document.querySelectorAll("#ai-messages .ai-msg").length,
+  input: document.getElementById("ai-input-field").value,
+  tabs: document.querySelectorAll("#tabs .tab.skill").length,
+}));
+check("/new replaces the tab with a fresh generic chat",
+  afterNew.label.startsWith("new chat") && afterNew.messages === 0 &&
+  afterNew.input === "" && afterNew.tabs === 1, afterNew);
+
+// Open a second tab, then reopen the replaced one: the old conversation must
+// not reappear.
+await page.click("#tab-add");
+await page.waitForSelector("#newtab .skill-item", { state: "visible" });
+await page.click("loc=css:#newtab [data-action=newchat]");
+await page.waitForFunction(() => document.getElementById("ai").classList.contains("skill-mode"),
+  undefined, { timeout: 10_000 });
+await page.click("loc=css:#tabs .tab.skill >> nth=0");
+await page.waitForFunction(() => document.getElementById("ai").classList.contains("skill-mode"),
+  undefined, { timeout: 10_000 });
+await page.waitForFunction(
+  () => document.querySelectorAll("#ai-messages .ai-msg").length === 0,
+  undefined, { timeout: 10_000 });
+const reopened = await page.evaluate(() => ({
+  label: document.querySelector("#tabs .tab.skill.active")?.textContent.trim(),
+  messages: document.querySelectorAll("#ai-messages .ai-msg").length,
+}));
+check("the /new'd tab stays empty when reopened",
+  reopened.label.startsWith("new chat") && reopened.messages === 0, reopened);
+
+// 12. the unsent draft is per instance: switching tabs swaps the composer.
+await page.fill("#ai-input-field", "draft-A");
+await page.click("loc=css:#tabs .tab.skill >> nth=1");
+await page.waitForFunction(() => document.getElementById("ai-input-field").value === "",
+  undefined, { timeout: 5_000 });
+const otherDraft = await page.evaluate(() => document.getElementById("ai-input-field").value);
+check("another instance starts with an empty composer", otherDraft === "", { draft: otherDraft });
+await page.fill("#ai-input-field", "draft-B");
+await page.click("loc=css:#tabs .tab.skill >> nth=0");
+await page.waitForFunction(() => document.getElementById("ai-input-field").value === "draft-A",
+  undefined, { timeout: 5_000 });
+const draftA = await page.evaluate(() => document.getElementById("ai-input-field").value);
+check("switching back restores the first instance's draft", draftA === "draft-A", { draft: draftA });
+await page.click("loc=css:#tabs .tab.skill >> nth=1");
+await page.waitForFunction(() => document.getElementById("ai-input-field").value === "draft-B",
+  undefined, { timeout: 5_000 });
+const draftB = await page.evaluate(() => document.getElementById("ai-input-field").value);
+check("the second instance's draft is intact", draftB === "draft-B", { draft: draftB });
 
 const ok = checks.every((c) => c.pass);
 console.log(JSON.stringify({ ok, checks }, null, 2));
@@ -280,7 +333,10 @@ widen when opened, and no bubble touching the scrollbar — shows
 the skill text as the first message and streams the reply); a fixed tab leaves skill mode without losing the
 skill tab; reopening the tab re-renders the conversation; closing the last tab
 falls back to the graph and the conversation can be reopened from `recent`; open
-tabs survive a reload. Exit code `0`.
+tabs survive a reload; `/new` replaces the active tab with a fresh generic chat
+and the old conversation never returns when the tab is reopened; and the unsent
+draft is per instance, so typing in one tab never shows up in another. Exit
+code `0`.
 
 ## Teardown
 

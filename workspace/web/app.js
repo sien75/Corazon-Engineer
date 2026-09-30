@@ -795,13 +795,16 @@ function aiInsertImageToken() {
 }
 
 function aiAddPastedImage(file) {
-  const idx = aiImages.length;
-  aiImages.push(undefined); // reserve the slot so order survives async decode
+  // Capture the queue: the user may switch tabs before compression finishes, and
+  // the module-level aiImages then points at the other tab's draft.
+  const queue = aiImages;
+  const idx = queue.length;
+  queue.push(undefined); // reserve the slot so order survives async decode
   aiInsertImageToken();
   aiImageTasks.push(
     aiCompressImage(file)
       .then((img) => {
-        aiImages[idx] = img;
+        queue[idx] = img;
       })
       .catch(() => {}),
   );
@@ -933,8 +936,10 @@ function aiAppendUserParts(parts) {
   return div;
 }
 
-async function aiNew() {
-  aiCancelStream();
+// aiNewSession creates a fresh ai session on the server and returns its id. The
+// caller decides what to bind it to: aiNew() below adopts it as the current
+// conversation, /new replaces a tab with it, the launcher opens a new one.
+async function aiNewSession() {
   const res = await fetch(`${AI_BASE}/ai/new`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
@@ -942,7 +947,12 @@ async function aiNew() {
   });
   const data = yaml.load(await res.text());
   if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-  aiSession = data.sessionId;
+  return data.sessionId;
+}
+
+async function aiNew() {
+  aiCancelStream();
+  aiSession = await aiNewSession();
   aiSeenSeq = 0;
   renderedTabId = null;
 }
@@ -1593,6 +1603,31 @@ let renderedTabId = null;
 let skillTabs = loadSkillTabs(); // [{ id, skillId, sessionId, name, fresh }]
 let activeSkillId = null; // skill tab on screen, null while a fixed view is active
 
+// The composer is a single DOM node shared by every instance, so each tab keeps
+// its own unsent draft here — text plus the queued pasted images — and switching
+// tabs swaps it. In memory only: a reload starts every instance with a clean
+// input (pasted image bytes are far too large for localStorage).
+const aiDrafts = new Map(); // tab id -> { text, images, tasks }
+
+function aiSnapshotDraft(tabId) {
+  if (!tabId) return;
+  aiDrafts.set(tabId, { text: aiInputEl.value, images: aiImages, tasks: aiImageTasks });
+}
+
+function aiRestoreDraft(tabId) {
+  const d = aiDrafts.get(tabId);
+  aiInputEl.value = d ? d.text : "";
+  aiImages = d ? d.images : [];
+  aiImageTasks = d ? d.tasks : [];
+  aiResizeInput();
+}
+
+// aiSwitchDraft stashes the instance being left and restores the target's.
+function aiSwitchDraft(tabId) {
+  if (renderedTabId && renderedTabId !== tabId) aiSnapshotDraft(renderedTabId);
+  aiRestoreDraft(tabId);
+}
+
 function loadSkillTabs() {
   try {
     const raw = JSON.parse(localStorage.getItem(TABS_KEY) || "[]");
@@ -1707,6 +1742,7 @@ async function activateSkillTab(id) {
     aiInputEl.focus();
     return;
   }
+  aiSwitchDraft(id);
   aiDrawerHide();
   aiInputEl.disabled = false;
   renderedTabId = id;
@@ -1736,6 +1772,7 @@ function closeSkillTab(id) {
   const idx = skillTabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
   skillTabs.splice(idx, 1);
+  aiDrafts.delete(id); // a closed instance keeps no draft
   saveSkillTabs();
   renderSkillTabs();
   if (activeSkillId !== id) return;
@@ -1918,20 +1955,8 @@ async function newTabRun(skillId) {
 // whose text is empty, so the panel opens ready for input.
 async function newBlankChat() {
   try {
-    const res = await fetch(`${AI_BASE}/ai/new`, {
-      method: "POST",
-      headers: { "Content-Type": "application/yaml" },
-      body: "{}",
-    });
-    const data = yaml.load(await res.text()) || {};
-    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-    await openSkillTab({
-      skillId: "",
-      sessionId: data.sessionId,
-      name: "new chat",
-      text: "",
-      fresh: true,
-    });
+    const sessionId = await aiNewSession();
+    await openSkillTab({ skillId: "", sessionId, name: "new chat", text: "", fresh: true });
   } catch (err) {
     newTabError(String(err.message || err));
   }
@@ -2178,10 +2203,23 @@ async function aiConfirmAccept() {
     const data = yaml.load(await res.text()) || {};
     if (!res.ok) throw new Error(data.error?.message || res.status);
     if (aiSession === sessionId) {
-      // The open conversation is gone; start a fresh one and leave the picker.
+      // The open conversation is gone; start a fresh one in its tab (a rebind —
+      // leaving the tab on the deleted session would 404 when reopened) and
+      // leave the picker.
+      const tab = skillTabs.find((t) => t.sessionId === sessionId);
       aiMessagesEl.innerHTML = "";
       aiClearImages();
       await aiNew();
+      if (tab) {
+        aiDrafts.delete(tab.id);
+        tab.sessionId = aiSession;
+        tab.skillId = "";
+        tab.name = "new chat";
+        tab.text = "";
+        saveSkillTabs();
+        renderSkillTabs();
+        renderedTabId = tab.id;
+      }
       aiCancelResume();
       return;
     }
@@ -2250,11 +2288,34 @@ function aiSyncCommandDrawer() {
   aiDrawerRender(items, "command");
 }
 
+// aiCommandNew implements /new: it cancels the current chat instance (its tab)
+// and opens a fresh generic chat in the same slot. Clearing the view alone
+// would leave the tab bound to the old session, which reappears the next time
+// the tab is reopened.
 async function aiCommandNew() {
-  aiMessagesEl.innerHTML = "";
-  aiClearImages();
+  aiDrawerHide();
+  const idx = skillTabs.findIndex((t) => t.id === activeSkillId);
   try {
-    await aiNew();
+    const sessionId = await aiNewSession();
+    const tab = {
+      id: `tab_${Math.random().toString(36).slice(2, 10)}`,
+      skillId: "",
+      sessionId,
+      name: "new chat",
+      text: "",
+      fresh: true,
+    };
+    if (idx < 0) {
+      skillTabs.push(tab);
+    } else {
+      aiDrafts.delete(skillTabs[idx].id);
+      skillTabs[idx] = tab; // the slot now owns the fresh instance
+    }
+    // The slot's old conversation is gone from the DOM; force a redraw.
+    renderedTabId = null;
+    saveSkillTabs();
+    renderSkillTabs();
+    await activateSkillTab(tab.id);
   } catch (err) {
     aiAppend("assistant", `[error] ${err.message}`);
   }
