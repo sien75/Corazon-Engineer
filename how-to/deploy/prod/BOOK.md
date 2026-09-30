@@ -1,17 +1,19 @@
 # prod deploy cookbook
 
-Package Corazon Engineer as a one-click tarball and install it on a fresh machine. The target needs no runtime (no Go / Bun / Node): the four Go programs (`engineer` launcher, log, static, web) build to static binaries, and ai to a self-contained Bun binary. Docker is optional — one-click comes from the `engineer` launcher, not a container.
+Package Corazon Engineer as a one-click tarball and install it on a fresh machine. The target needs no runtime (no Go / Bun / Node): the Go side builds to a single static binary — `engineer`, a multi-call binary carrying the launcher plus the log/static/web services — and ai to a self-contained Bun binary. Docker is optional — one-click comes from the `engineer` launcher, not a container.
 
-**What ships** — five binaries (from `workspace/`) plus the published tool content (`agents/`, `docs/`). The package is the **tool**, not a project:
+**What ships** — two binaries plus the published tool content (`agents/`, `docs/`). The package is the **tool**, not a project:
 
 ```
 engineer-<version>-<os>-<arch>/
-├── bin/          engineer  engineer-log  engineer-static  engineer-ai  engineer-web
+├── bin/          engineer  engineer-ai
 ├── web/          index.html  app.js  style.css  vendor/
 ├── agents/       the AI capability description shipped with the tool
 ├── docs/         published documentation
 └── install.sh    install / upgrade
 ```
+
+`bin/engineer` carries the three Go services too — the launcher starts them by re-running *itself* with `serve-log` / `serve-static` / `serve-web` (a multi-call binary). That is deliberate: every distinct executable path costs one entry in a corporate EDR's process whitelist and one "allow this program?" prompt per machine for a new user.
 
 The installed layout (under `~/.engineer/`) is software only — **upgrades only ever touch `apps/`**:
 
@@ -58,15 +60,12 @@ VER=$(git describe --tags --always 2>/dev/null || echo dev)
 OUT=dist/engineer-$VER-$OS-$ARCH
 mkdir -p "$OUT"/{bin,web}
 
-# 1. Go programs — CGO off, fully static (log's sqlite driver is pure Go).
-#    `-s -w` drops debug/symbol tables: ~1/3 off each binary (static 8.8 → 6.0 MB,
-#    log 14.8 → 9.9 MB) with no runtime effect.
-#    launcher (the `engineer` command) first — one file, built straight from the
-#    runtime tree — then the three services
-CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OUT/bin/engineer" how-to/deploy/prod/launch.go
-(cd workspace/log    && CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OLDPWD/$OUT/bin/engineer-log" .)
-(cd workspace/static && CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OLDPWD/$OUT/bin/engineer-static" .)
-(cd workspace/web/server && CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OLDPWD/$OUT/bin/engineer-web" .)
+# 1. Go binary — CGO off, fully static (log's sqlite driver is pure Go).
+#    `-s -w` drops debug/symbol tables: ~1/3 off the binary with no runtime
+#    effect. ONE file for the launcher *and* the three Go services: `engineer` is
+#    a multi-call binary (`engineer serve-log|serve-static|serve-web`), and its
+#    module (how-to/deploy/prod/go.mod) links the three local modules in.
+(cd how-to/deploy/prod && CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OLDPWD/$OUT/bin/engineer" .)
 
 # 2. ai service — Bun single-file binary (needs node_modules installed).
 #    `--target` is not optional: without it Bun builds for the host, so a package

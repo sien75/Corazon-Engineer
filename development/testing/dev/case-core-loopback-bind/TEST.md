@@ -8,7 +8,9 @@ it deliberately.
 
 Sources of truth: `how-to/deploy/prod/launch.go` (owns the bind host and hands
 it down), `how-to/deploy/dev/launch.sh` (same, for dev), and each service's own
-default (`workspace/*/main.go`, `workspace/ai/src/main.ts`).
+default (`workspace/log`, `workspace/static`, `workspace/web/server` — all three
+started as subcommands of the merged `engineer` binary — plus
+`workspace/ai/src/main.ts`).
 
 ## ⚠️ Open-up checks are opt-in
 
@@ -98,17 +100,19 @@ no launcher, no `--bind` → `127.0.0.1`.
 ```bash
 how-to/deploy/dev/stop.sh
 
-cd workspace/web/server && go build -o /tmp/engineer-web .
-/tmp/engineer-web 8600 --root "$(cd .. && pwd)" &
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-web 8600 --root "$(cd workspace/web && pwd)" &
 sleep 1; lsof -nP -iTCP:8600 -sTCP:LISTEN
 ```
 
-Expected: one line for `/tmp/engineer-web`, `TCP 127.0.0.1:8600 (LISTEN)`.
+Expected: one line for `/tmp/engineer`, `TCP 127.0.0.1:8600 (LISTEN)`. (The
+process name in `lsof` is the binary's basename: with the merged binary all four
+services report as `engineer`.)
 
 ## 3b. --bind 0.0.0.0 opens a single service  (opt-in, ⚠️ triggers the alarm)
 
 ```bash
-/tmp/engineer-web 8601 --root "$(cd .. && pwd)" --bind 0.0.0.0 &
+/tmp/engineer serve-web 8601 --root "$(cd workspace/web && pwd)" --bind 0.0.0.0 &
 sleep 1; lsof -nP -iTCP:8601 -sTCP:LISTEN
 ```
 
@@ -118,6 +122,6 @@ without the launcher.
 ## 4. teardown
 
 ```bash
-pkill -f '/tmp/engineer-web 86'
+pkill -f '/tmp/engineer serve-web 86'
 how-to/deploy/dev/stop.sh
 ```

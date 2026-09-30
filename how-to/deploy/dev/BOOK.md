@@ -1,6 +1,6 @@
 # dev environment cookbook
 
-Local development environment: builds and runs the Go services (static / log / web) and the ai Bun/TS service on this machine.
+Local development environment: builds and runs the whole stack — the Go side as a single binary, plus the ai Bun/TS service — on this machine.
 
 ## Prerequisites
 
@@ -17,7 +17,7 @@ how-to/deploy/dev/launch.sh    # build + start log → static → ai → web
 how-to/deploy/dev/stop.sh      # stop everything
 ```
 
-`launch.sh` owns port selection: defaults are 8500 web / 8501 ai / 8502 static / 8503 log, and a taken default advances to the next free port. It builds the Go services into `.engineer/dev/bin/` (including `engineer-web` from `workspace/web/server`, which serves the assets in `workspace/web/`), starts all four, hands each service the chosen addresses (ai gets `--log` / `--static`; web gets its port plus `--bind` / `--root` / `--static` / `--ai` / `--log`), and prints the port table and the bind host. There is **no port config file**.
+`launch.sh` owns port selection: defaults are 8500 web / 8501 ai / 8502 static / 8503 log, and a taken default advances to the next free port. It builds the Go side into `.engineer/dev/bin/engineer` — one multi-call binary that also carries the three services, started as `engineer serve-log` / `serve-static` / `serve-web` (the same binary the prod launcher ships; `serve-web` serves the assets in `workspace/web/`) — starts all four, hands each service the chosen addresses (ai gets `--log` / `--static`; web gets its port plus `--bind` / `--root` / `--static` / `--ai` / `--log`), and prints the port table and the bind host. There is **no port config file**.
 
 Services listen on `127.0.0.1` by default — this is a local tool, not a service on the office network. `ENGINEER_BIND` overrides the bind host: `ENGINEER_BIND=0.0.0.0 how-to/deploy/dev/launch.sh` opens the stack to the whole network, `ENGINEER_BIND=<this machine's IP>` binds one interface (that is also the form that makes the printed addresses usable from another machine).
 

@@ -3,6 +3,13 @@
 // terminal "engineer", holds the foreground until Ctrl-C, then tears the whole
 // stack down.
 //
+// It is a **multi-call binary**: log, static and web are not separate files but
+// this same executable re-run with a `serve-log` / `serve-static` / `serve-web`
+// subcommand. Only ai is a second file (`engineer-ai`). One executable path per
+// service would mean one extra entry in every EDR/security-tool process
+// whitelist (and one extra "allow this program?" prompt for every new user), so
+// the three Go services share this one.
+//
 // The services listen on loopback by default and are reached at the addresses
 // printed on startup. ENGINEER_BIND overrides the bind host — 0.0.0.0 to expose
 // the stack to the whole network, or this machine's IP to expose one interface;
@@ -25,6 +32,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	logsvc "engineer/log"
+	staticsvc "engineer/static"
+	websrv "engineer/web"
 )
 
 const usageText = "usage: engineer [start|status|version|uninstall [--purge]]"
@@ -46,6 +57,15 @@ func main() {
 		fmt.Println(versionName())
 	case "uninstall":
 		uninstall(len(os.Args) > 2 && os.Args[2] == "--purge")
+	// Internal, not part of the user-facing CLI: the launcher starts the three Go
+	// services by running this same binary again with one of these subcommands
+	// (see the multi-call note at the top). Each Serve never returns.
+	case "serve-log":
+		logsvc.Serve(os.Args[2:])
+	case "serve-static":
+		staticsvc.Serve(os.Args[2:])
+	case "serve-web":
+		websrv.Serve(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usageText)
 		os.Exit(1)
@@ -59,7 +79,7 @@ func launch() {
 	if err != nil {
 		fatal(err)
 	}
-	binDir, pkg := selfDirs()
+	self, binDir, pkg := selfDirs()
 
 	d := filepath.Join(root, ".engineer")
 	runDir := filepath.Join(d, "run")
@@ -96,16 +116,16 @@ func launch() {
 	}
 
 	specs := []*service{
-		{name: "log", bin: filepath.Join(binDir, "engineer-log"),
+		{name: "log", bin: self,
 			args: []string{"serve-log", "--root", root, "--addr", listenAddr("log")}},
-		{name: "static", bin: filepath.Join(binDir, "engineer-static"),
+		{name: "static", bin: self,
 			args: []string{"serve-static", "--root", root, "--addr", listenAddr("static")}},
 		{name: "ai", bin: filepath.Join(binDir, "engineer-ai"),
 			args: []string{"--root", root, "--addr", listenAddr("ai"),
 				"--agents", filepath.Join(pkg, "agents", "AGENTS.md"),
 				"--log", svcURL("log"), "--static", svcURL("static")}},
-		{name: "web", bin: filepath.Join(binDir, "engineer-web"),
-			args: []string{strconv.Itoa(ports["web"]), "--bind", bind, "--root", filepath.Join(pkg, "web"),
+		{name: "web", bin: self,
+			args: []string{"serve-web", strconv.Itoa(ports["web"]), "--bind", bind, "--root", filepath.Join(pkg, "web"),
 				"--static", svcURL("static"), "--ai", svcURL("ai"), "--log", svcURL("log")}},
 	}
 
@@ -183,7 +203,7 @@ func status() {
 // versionName is the installed package dir of the running binary, e.g.
 // "engineer-3a3eff8-darwin-arm64".
 func versionName() string {
-	_, pkg := selfDirs()
+	_, _, pkg := selfDirs()
 	return filepath.Base(pkg)
 }
 
@@ -200,7 +220,7 @@ func uninstall(purge bool) {
 
 	// stop every running service of the installed version, across projects
 	if realCur, err := filepath.EvalSymlinks(cur); err == nil {
-		killMatching(filepath.Join(realCur, "bin", "engineer-"))
+		killMatching(filepath.Join(realCur, "bin", "engineer"))
 	}
 	_ = os.RemoveAll(apps)
 	_ = os.RemoveAll(filepath.Join(home, "bin"))
@@ -436,14 +456,17 @@ func readPid(path string) (int, error) {
 
 // --- paths / misc --------------------------------------------------------
 
-// selfDirs returns the directory holding the sibling service binaries and the
-// package root holding web/, agents/, docs/.
-func selfDirs() (binDir, pkgDir string) {
-	exe, err := os.Executable()
+// selfDirs returns this executable's resolved path, the directory holding the
+// sibling service binaries (ai) and the package root holding web/, agents/,
+// docs/. The resolved path matters twice over: the installed command is a
+// symlink into apps/current, and the services are started by re-running this
+// same file.
+func selfDirs() (exe, binDir, pkgDir string) {
+	self, err := os.Executable()
 	if err != nil {
 		fatal(err)
 	}
-	real, err := filepath.EvalSymlinks(exe)
+	real, err := filepath.EvalSymlinks(self)
 	if err != nil {
 		fatal(err)
 	}
@@ -453,7 +476,7 @@ func selfDirs() (binDir, pkgDir string) {
 	} else {
 		pkgDir = binDir
 	}
-	return binDir, pkgDir
+	return real, binDir, pkgDir
 }
 
 func engineerHome() string {

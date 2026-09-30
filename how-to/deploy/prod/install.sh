@@ -14,7 +14,7 @@ mkdir -p "$APPS/versions" "$ENGINEER_HOME/bin"
 #    apps/versions/<ver>/ dir, not through the symlink.
 if [ -L "$APPS/current" ]; then
   CUR_REAL="$(cd "$APPS/current" 2>/dev/null && pwd -P || true)"
-  [ -n "$CUR_REAL" ] && pkill -f "$CUR_REAL/bin/engineer-" 2>/dev/null || true
+  [ -n "$CUR_REAL" ] && pkill -f "$CUR_REAL/bin/engineer" 2>/dev/null || true
 fi
 
 # 3. install this version (re-install of the same version replaces its own dir)

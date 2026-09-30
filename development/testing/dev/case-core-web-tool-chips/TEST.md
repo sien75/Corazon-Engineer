@@ -141,8 +141,8 @@ sleep 1
 curl -s -X POST http://localhost:8611/ai/new -d '{}'   # {"sessionId":"live-1"}
 echo
 
-(cd workspace/web/server && go build -o /tmp/engineer-web .)
-/tmp/engineer-web 8610 --root "$ROOTDIR/workspace/web" \
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-web 8610 --root "$ROOTDIR/workspace/web" \
   --static http://localhost:8699 --ai http://localhost:8611 --log http://localhost:8611 \
   >/tmp/tool-chips-web.log 2>&1 &
 sleep 1
@@ -432,6 +432,6 @@ becoming a chip. Exit code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'engineer-web 8610'
+pkill -f 'engineer serve-web 8610'
 pkill -f 'tool-chips-fake 127.0.0.1:8611'
 ```

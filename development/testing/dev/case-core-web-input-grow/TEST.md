@@ -31,8 +31,8 @@ curl -s -o /dev/null -X POST http://localhost:8511/ai/skill/save \
   -d 'name: Input grow
 text: placeholder skill'
 
-(cd workspace/web/server && go build -o /tmp/engineer-web .)
-/tmp/engineer-web 8610 --root "$ROOTDIR/workspace/web" \
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-web 8610 --root "$ROOTDIR/workspace/web" \
   --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8503 \
   >/tmp/input-grow-web.log 2>&1 &
 ```
@@ -152,6 +152,6 @@ clearing returns to 2 rows. Exit code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'engineer-web 8610'
+pkill -f 'engineer serve-web 8610'
 pkill -f 'main.ts --addr :8511'
 ```

@@ -25,8 +25,8 @@ rm -rf "$ROOT" && mkdir -p "$ROOT"
 printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
 
 # log + ai on their own ports; ai in stub mode, so skill runs are deterministic and offline
-(cd workspace/log && go build -o /tmp/engineer-log .)
-/tmp/engineer-log serve-log --root "$ROOT" --addr :8513 >/tmp/skill-tabs-log.log 2>&1 &
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-log --root "$ROOT" --addr :8513 >/tmp/skill-tabs-log.log 2>&1 &
 
 (cd workspace/ai && bun run src/main.ts --addr :8511 --root "$ROOT" --stub \
   --log http://localhost:8513 --agents "$ROOTDIR/agents/AGENTS.md" \
@@ -38,8 +38,7 @@ curl -s -X POST http://localhost:8511/ai/skill/save \
 text: seeded instruction'
 
 # web assets
-(cd workspace/web/server && go build -o /tmp/engineer-web .)
-/tmp/engineer-web 8610 --root "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web 8610 --root "$ROOTDIR/workspace/web" \
   --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8513 \
   >/tmp/skill-tabs-web.log 2>&1 &
 ```
@@ -341,7 +340,7 @@ code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'engineer-web 8610'
-pkill -f '/tmp/engineer-log serve-log --root .*skill-test'
+pkill -f 'engineer serve-web 8610'
+pkill -f '/tmp/engineer serve-log --root .*skill-test'
 pkill -f 'main.ts --addr :8511'
 ```

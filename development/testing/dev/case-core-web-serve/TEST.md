@@ -5,14 +5,16 @@ and generates `/config.js` with the addresses the launcher chose. This case cove
 from the user's point of view — the browser gets the app, and the app gets working
 addresses to call.
 
-Source of truth for behaviour and CLI: `workspace/web/server/main.go` (Go).
+Source of truth for behaviour and CLI: `workspace/web/server` (Go), started as the
+`serve-web` subcommand of the merged `engineer` binary.
 `atoms/web.yaml` declares the frontend; the server is its runtime part, same atom.
 
 ## Setup
 
 ```bash
-cd workspace/web/server && go build -o /tmp/engineer-web . && /tmp/engineer-web 8600 \
-  --root "$(cd .. && pwd)" \
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-web 8600 \
+  --root "$(cd workspace/web && pwd)" \
   --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
 ```
 
@@ -75,5 +77,5 @@ Expected: `403`, `403`, `404` — nothing outside `--root` is ever served.
 ## 6. teardown
 
 ```bash
-pkill -f 'engineer-web 8600'
+pkill -f 'engineer serve-web 8600'
 ```

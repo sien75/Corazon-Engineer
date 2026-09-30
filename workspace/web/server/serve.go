@@ -1,20 +1,25 @@
-// engineer web — the web frontend's file server.
+// Package server is the web frontend's file server.
 //
 // Serves the assets in workspace/web and generates /config.js carrying the
 // addresses the launcher picked. It replaces the Bun version (serve.js): same
 // CLI, same behaviour, minus the ~60 MB embedded JS runtime the old one paid
 // for a program with no JS in it.
 //
-// args: [port] [--bind <host>] [--root <dir>] [--static <url>] [--ai <url>] [--log <url>]
+// It is not a program of its own. The engineer binary is a multi-call binary —
+// one executable that the launcher also runs as each service, so that a machine
+// which whitelists process execution sees as few distinct paths as possible.
+// Serve is the entry point behind the `serve-web` subcommand:
+//
+//	engineer serve-web [port] [--bind <host>] [--root <dir>] [--static <url>] [--ai <url>] [--log <url>]
 //
 // --bind is the host the server listens on; it defaults to loopback, so the
 // server is local-only unless the launcher was told to open the stack up
 // (ENGINEER_BIND).
 //
-// --root defaults to the directory holding this binary. The three *-url flags
+// --root defaults to the directory holding the binary. The three *-url flags
 // are the runtime addresses the frontend should call; the launcher (which owns
 // port selection) hands them down here and they are served back as /config.js.
-package main
+package server
 
 import (
 	"encoding/json"
@@ -46,7 +51,9 @@ type runtimeConfig struct {
 	Log    string `json:"log"`
 }
 
-func main() {
+// Serve runs the web file server until it is killed. argv is the argument list
+// following the subcommand; on failure it prints to stderr and exits.
+func Serve(argv []string) {
 	port := 7500
 	bind := "127.0.0.1"
 	root := ""
@@ -56,26 +63,25 @@ func main() {
 		Log:    "http://localhost:7503",
 	}
 
-	args := os.Args[1:]
-	for i := 0; i < len(args); i++ {
+	for i := 0; i < len(argv); i++ {
 		switch {
-		case args[i] == "--bind" && i+1 < len(args):
+		case argv[i] == "--bind" && i+1 < len(argv):
 			i++
-			bind = args[i]
-		case args[i] == "--root" && i+1 < len(args):
+			bind = argv[i]
+		case argv[i] == "--root" && i+1 < len(argv):
 			i++
-			root = args[i]
-		case args[i] == "--static" && i+1 < len(args):
+			root = argv[i]
+		case argv[i] == "--static" && i+1 < len(argv):
 			i++
-			rt.Static = args[i]
-		case args[i] == "--ai" && i+1 < len(args):
+			rt.Static = argv[i]
+		case argv[i] == "--ai" && i+1 < len(argv):
 			i++
-			rt.AI = args[i]
-		case args[i] == "--log" && i+1 < len(args):
+			rt.AI = argv[i]
+		case argv[i] == "--log" && i+1 < len(argv):
 			i++
-			rt.Log = args[i]
-		case isDigits(args[i]):
-			port, _ = strconv.Atoi(args[i])
+			rt.Log = argv[i]
+		case isDigits(argv[i]):
+			port, _ = strconv.Atoi(argv[i])
 		}
 	}
 

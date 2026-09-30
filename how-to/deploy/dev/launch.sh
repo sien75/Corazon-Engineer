@@ -35,7 +35,7 @@ for s in web ai static log; do
     rm -f "$D/$s.pid"
   fi
 done
-pkill -f "$BIN/engineer-" 2>/dev/null || true
+pkill -f "$BIN/engineer" 2>/dev/null || true
 sleep 1
 
 # --- port selection -------------------------------------------------------
@@ -78,14 +78,16 @@ esac
 BASE=http://$URLHOST
 
 # --- build ----------------------------------------------------------------
-( cd "$ROOT/workspace/log"    && go build -o "$BIN/engineer-log" . )
-( cd "$ROOT/workspace/static" && go build -o "$BIN/engineer-static" . )
-( cd "$ROOT/workspace/web/server" && go build -o "$BIN/engineer-web" . )
+# One multi-call binary: log / static / web are this same file re-run with a
+# subcommand (see how-to/deploy/prod/launch.go), so the local stack has a single
+# executable path instead of one file per service.
+( cd "$ROOT/how-to/deploy/prod" && go build -o "$BIN/engineer" . )
+rm -f "$BIN/engineer-log" "$BIN/engineer-static" "$BIN/engineer-web"
 
 # --- start (order: log → static → ai → web) -------------------------------
-nohup "$BIN/engineer-log" serve-log --root "$ROOT" --addr "$BIND:$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
+nohup "$BIN/engineer" serve-log --root "$ROOT" --addr "$BIND:$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
 echo $! >"$D/log.pid"
-nohup "$BIN/engineer-static" serve-static --root "$ROOT" --addr "$BIND:$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
+nohup "$BIN/engineer" serve-static --root "$ROOT" --addr "$BIND:$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
 echo $! >"$D/static.pid"
 # exec so the recorded pid IS the server process (not a wrapper that outlives kill)
 ( cd "$ROOT/workspace/ai" && exec nohup bun src/main.ts \
@@ -93,7 +95,7 @@ echo $! >"$D/static.pid"
     --agents "$ROOT/agents/AGENTS.md" \
     --log "$BASE:$PORT_LOG" --static "$BASE:$PORT_STATIC" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
-nohup "$BIN/engineer-web" "$PORT_WEB" --bind "$BIND" \
+nohup "$BIN/engineer" serve-web "$PORT_WEB" --bind "$BIND" \
     --root "$ROOT/workspace/web" \
     --static "$BASE:$PORT_STATIC" --ai "$BASE:$PORT_AI" --log "$BASE:$PORT_LOG" >"$D/web.log" 2>&1 </dev/null &
 echo $! >"$D/web.pid"
