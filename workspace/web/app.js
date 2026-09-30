@@ -634,6 +634,7 @@ function renderMarkdown(src) {
 // aiMarkdown builds an assistant bubble that renders accumulated markdown
 // incrementally, coalescing writes to one render per animation frame.
 function aiMarkdown() {
+  aiChipRowEnd(); // text is not a chip: it ends the run's chip row
   const div = document.createElement("div");
   div.className = "ai-msg ai-assistant ai-markdown";
   const stick = aiAtBottom();
@@ -702,6 +703,7 @@ async function aiStop() {
 }
 
 function aiAppend(role, text) {
+  aiChipRowEnd(); // text is not a chip: it ends the run's chip row
   const div = document.createElement("div");
   div.className = `ai-msg ai-${role}`;
   div.textContent = text;
@@ -909,6 +911,7 @@ function aiSnapCaretOutOfToken() {
 // aiAppendUserParts renders a user bubble from ordered parts:
 //   { type: "text", text } | { type: "image", src }
 function aiAppendUserParts(parts) {
+  aiChipRowEnd(); // a message is not a chip: it ends the run's chip row
   const div = document.createElement("div");
   div.className = "ai-msg ai-user";
   for (const p of parts) {
@@ -944,40 +947,249 @@ async function aiNew() {
   renderedTabId = null;
 }
 
-// aiCollapse builds a block that is collapsed by default: a clickable header
-// with a title + loading indicator, and a fixed-height body that scrolls
-// internally once expanded.
-function aiCollapse(kind, title) {
+// ---------- chip rows ----------
+//
+// A chip is a side note about the run (a thought, a tool call), not content:
+// chips flow sideways in a 120px box each and wrap, so a run of calls reads as
+// one compact block. Anything that is not a chip ends the row, so the next
+// chip starts a new one.
+let aiChipRowEl = null;
+
+// aiChipRow returns the open chip row, opening one if needed. The row is
+// recreated lazily, so clearing #ai-messages needs no separate bookkeeping.
+function aiChipRow() {
+  if (aiChipRowEl && aiChipRowEl.isConnected) return aiChipRowEl;
+  const row = document.createElement("div");
+  row.className = "ai-msg ai-chip-row";
+  const stick = aiAtBottom();
+  aiMessagesEl.appendChild(row);
+  aiChipRowEl = row;
+  if (stick) aiScrollToBottom();
+  return row;
+}
+
+// aiChipRowEnd closes the current row; the next chip opens a new one.
+function aiChipRowEnd() {
+  aiChipRowEl = null;
+}
+
+// Chip icons: 24×24 line geometry rendered at 12px, stroked in currentColor.
+// A tool that is not named here is unknown, and gets the wrench.
+const AI_ICONS = {
+  thinking:
+    '<path d="M12 5v14M5.94 8.5l12.12 7M18.06 8.5 5.94 15.5"/>',
+  bash:
+    '<rect x="2.5" y="3.5" width="19" height="17" rx="2.5"/><path d="m6.5 9 3 3-3 3"/><path d="M13 15h5"/>',
+  read:
+    '<path d="M14.5 2.5H7a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z"/><path d="M14 2.5V7h4.5"/>',
+  write:
+    '<path d="M14.5 2.5H7a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z"/><path d="M14 2.5V7h4.5"/><path d="M12 11.5v6M9 14.5h6"/>',
+  edit:
+    '<path d="M20 4.6a2.1 2.1 0 0 0-3 0L5.6 16l-1.4 4.2 4.2-1.4L19.8 7.4a2.1 2.1 0 0 0 .2-2.8Z"/><path d="m15.2 6.4 2.6 2.6"/>',
+  grep: '<circle cx="11" cy="11" r="7.5"/><path d="m16.6 16.6 4.4 4.4"/>',
+  find:
+    '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><circle cx="11" cy="13.5" r="2.6"/><path d="m13 15.5 2.3 2.3"/>',
+  ls: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  save_skill: '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+  unknown:
+    '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+};
+
+function aiIcon(name) {
+  const span = document.createElement("span");
+  span.className = "ai-chip-icon";
+  span.innerHTML =
+    '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    `${AI_ICONS[name] || AI_ICONS.unknown}</svg>`;
+  return span;
+}
+
+// aiBaseName is path.basename without a path module: the browser has none, and
+// a chip label only ever needs the last segment.
+function aiBaseName(p) {
+  const s = String(p ?? "").trim().replace(/[/\\]+$/, "");
+  if (!s) return "";
+  const i = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
+  return i >= 0 ? s.slice(i + 1) : s;
+}
+
+// Wrappers that name the harness rather than the command being run.
+const AI_CMD_WRAPPERS = new Set(["sudo", "doas", "command", "exec", "env", "nohup", "time"]);
+
+// aiCommandName reduces a shell command to the program it runs, so
+// `cd /tmp && bun run src/main.ts` reads as `bun`. Assignments, wrappers and a
+// leading `cd …` segment say nothing about what was actually run. Options that
+// take a separate value (`sudo -u root cmd`) may still be misread as the
+// program; the expanded body and the tooltip keep the full command.
+function aiCommandName(command) {
+  for (const segment of String(command ?? "").split(/&&|\|\||;|\|/)) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    let i = 0;
+    let wrapper = false;
+    while (i < tokens.length) {
+      const t = tokens[i];
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || AI_CMD_WRAPPERS.has(t)) {
+        wrapper = true;
+        i++;
+        continue;
+      }
+      if (wrapper && t.startsWith("-")) {
+        i++;
+        continue;
+      }
+      break;
+    }
+    const program = tokens[i];
+    if (!program || program === "cd") continue;
+    return aiBaseName(program) || program;
+  }
+  return "";
+}
+
+// aiToolChip turns one tool call into its chip: the argument that identifies
+// the call — a file name, the program, the search pattern, the skill name —
+// never the tool's own name, which a 120px box cannot afford next to an icon.
+// `tip` carries what the ellipsis cuts off.
+function aiToolChip(name, args) {
+  const a = args && typeof args === "object" ? args : {};
+  const base = aiBaseName(a.path);
+  let label = "";
+  switch (name) {
+    case "read":
+    case "write":
+    case "edit":
+      label = base;
+      break;
+    case "ls":
+      label = base || ".";
+      break;
+    case "bash":
+      label = aiCommandName(a.command);
+      break;
+    case "grep":
+    case "find":
+      label = String(a.pattern ?? "").trim();
+      break;
+    case "save_skill":
+      label = String(a.name ?? "").trim();
+      break;
+    default:
+      label = name;
+  }
+  // The tip carries what the ellipsis cut off: the full path / command /
+  // pattern, or the whole argument object for a tool with no known shape.
+  const detail =
+    a.path ?? a.command ?? a.pattern ?? a.name ?? (Object.keys(a).length ? args : undefined);
+  return {
+    label: label || name,
+    icon: name,
+    name,
+    tip: detail === undefined ? name : `${name}: ${aiStringify(detail)}`,
+  };
+}
+
+// Details that are showing, so they can be laid out together: an open panel
+// spans the row and pushes the lines below it down, which moves the line the
+// next panel belongs to.
+const aiOpenPanels = new Set();
+
+// aiLayoutPanels puts every open detail under the *last* chip of the line its
+// chip sits on, so the chips of that line keep their places and the detail spans
+// the row between that line and the next. Measuring with every panel detached
+// keeps the line boundaries unaffected by the panels themselves; re-inserting
+// them in document order then makes each later chip's line the one it will
+// actually sit on.
+function aiLayoutPanels() {
+  const entries = [...aiOpenPanels].sort((a, b) =>
+    a.wrap.compareDocumentPosition(b.wrap) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+  );
+  for (const e of entries) {
+    if (!e.wrap.isConnected) aiOpenPanels.delete(e); // its row was cleared
+    else e.body.remove();
+  }
+  for (const e of entries) {
+    const row = e.wrap.parentElement;
+    if (!row) continue;
+    const top = Math.round(e.wrap.getBoundingClientRect().top);
+    let last = e.wrap;
+    for (const el of row.children) {
+      if (!el.classList.contains("ai-collapse")) continue;
+      if (Math.round(el.getBoundingClientRect().top) === top) last = el;
+    }
+    last.after(e.body);
+  }
+}
+
+// aiShowPanel opens or closes one chip's detail. Only one detail is open at a
+// time: a panel spans the row and pushes the lines below it down, so keeping
+// several open would just stack them.
+function aiShowPanel(entry, open) {
+  if (open) {
+    for (const other of [...aiOpenPanels]) {
+      if (other === entry) continue;
+      aiOpenPanels.delete(other);
+      aiSetPanelState(other, false);
+    }
+    aiOpenPanels.add(entry);
+  } else {
+    aiOpenPanels.delete(entry);
+  }
+  aiSetPanelState(entry, open);
+  aiLayoutPanels();
+}
+
+// aiSetPanelState shows or hides one panel without re-laying the row out.
+function aiSetPanelState(entry, open) {
+  entry.wrap.classList.toggle("open", open);
+  entry.body.hidden = !open;
+  if (open) {
+    // Reveal from the top, not the bottom: an expanded block should show the
+    // beginning of the thinking / tool output first.
+    entry.body.scrollTop = 0;
+  } else {
+    entry.body.remove();
+  }
+}
+
+// A resize re-wraps the row, so the lines the open details belong to change.
+window.addEventListener("resize", aiLayoutPanels);
+
+// aiCollapse builds a chip that is collapsed by default: a clickable 120px box
+// with an icon + title + loading indicator, and — once opened — a detail panel
+// that spans the row under the chip's line and scrolls internally.
+function aiCollapse(kind, label, opts = {}) {
   const wrap = document.createElement("div");
   wrap.className = `ai-msg ai-collapse ai-${kind}`;
   const head = document.createElement("button");
   head.type = "button";
   head.className = "ai-collapse-head";
+  if (opts.tip) head.title = opts.tip;
+  head.appendChild(aiIcon(opts.icon || kind));
   const titleEl = document.createElement("span");
   titleEl.className = "ai-collapse-title";
-  titleEl.textContent = title;
+  titleEl.textContent = label;
   const status = document.createElement("span");
   status.className = "ai-collapse-status ai-loading";
-  const caret = document.createElement("span");
-  caret.className = "ai-collapse-caret";
-  caret.textContent = "▸";
   head.appendChild(titleEl);
   head.appendChild(status);
-  head.appendChild(caret);
+  // The detail panel is not inside the chip: a 120px box cannot hold it, and
+  // only the chip's own line is where the panel belongs. It stays detached
+  // until opened. Its first line is the tool's own name — the chip had to drop
+  // it to show the argument instead, and here there is room for both.
   const body = document.createElement("div");
   body.className = "ai-collapse-body";
   body.hidden = true;
-  head.addEventListener("click", () => {
-    body.hidden = !body.hidden;
-    wrap.classList.toggle("open", !body.hidden);
-    // Reveal from the top, not the bottom: an expanded block should show the
-    // beginning of the thinking / tool output first.
-    if (!body.hidden) body.scrollTop = 0;
-  });
+  const bodyName = document.createElement("div");
+  bodyName.className = "ai-collapse-body-name";
+  bodyName.textContent = opts.name || label;
+  body.appendChild(bodyName);
+  const entry = { wrap, body };
+  head.addEventListener("click", () => aiShowPanel(entry, !wrap.classList.contains("open")));
   const stick = aiAtBottom();
   wrap.appendChild(head);
-  wrap.appendChild(body);
-  aiMessagesEl.appendChild(wrap);
+  aiChipRow().appendChild(wrap);
   if (stick) aiScrollToBottom();
   return { wrap, body, status };
 }
@@ -996,7 +1208,11 @@ function aiSettle(block, state) {
 }
 
 function aiThinking() {
-  const block = aiCollapse("thinking", "thinking");
+  const block = aiCollapse("thinking", "thinking", {
+    icon: "thinking",
+    name: "thinking",
+    tip: "thinking",
+  });
   const body = document.createElement("div");
   body.className = "ai-thinking-body";
   block.body.appendChild(body);
@@ -1014,7 +1230,8 @@ function aiStringify(v) {
 }
 
 function aiTool(toolName, args) {
-  const block = aiCollapse("tool", toolName);
+  const chip = aiToolChip(toolName, args);
+  const block = aiCollapse("tool", chip.label, chip);
   const body = document.createElement("pre");
   body.className = "ai-tool-body";
   body.textContent = aiStringify(args);
@@ -1024,6 +1241,7 @@ function aiTool(toolName, args) {
 
 // ask_user renders as a question card; picking an option calls onPick(value).
 function aiAskUser(args, onPick) {
+  aiChipRowEnd(); // a question is a card, not a chip
   const div = document.createElement("div");
   div.className = "ai-msg ai-question";
   const q = document.createElement("div");
@@ -2117,7 +2335,8 @@ function aiRenderRaw(raw, tools) {
         t.body.textContent = b.thinking;
         aiSettle(t.block, "done");
       } else if (b.type === "toolCall") {
-        tools.set(b.id, aiTool(b.name, b.arguments));
+        // A question is a card, not a chip — same as on the live path.
+        if (b.name !== "ask_user") tools.set(b.id, aiTool(b.name, b.arguments));
       }
     }
     return;
@@ -2135,6 +2354,7 @@ function aiRenderRaw(raw, tools) {
     return;
   }
   if (raw.role === "compaction") {
+    aiChipRowEnd(); // a note is not a chip: it ends the run's chip row
     const div = document.createElement("div");
     div.className = "ai-msg ai-compaction";
     div.textContent = "上下文已压缩";

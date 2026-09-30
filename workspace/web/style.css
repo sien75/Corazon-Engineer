@@ -764,32 +764,53 @@ canvas.layer {
   overflow: hidden;
 }
 
-/* A tool call or a thinking trace is a side note next to the reply, not content:
-   keep it a narrow chip instead of a bar as wide as the conversation. Opening one
-   gives its output room to breathe, so it widens back to the column. */
-.ai-collapse.ai-tool,
-.ai-collapse.ai-thinking {
-  width: 300px;
-  max-width: 300px;
-}
-
-.ai-collapse.ai-tool.open,
-.ai-collapse.ai-thinking.open {
+/* A chip row: the thinking traces and tool calls of one uninterrupted run,
+   side by side instead of one per line. Anything that is not a chip (assistant
+   text, a user message, a question card) ends the row, so the next chip opens
+   a new one. */
+.ai-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
   width: 100%;
   max-width: 100%;
+  padding: 0;
+  background: none;
+  white-space: normal;
+}
+
+/* A chip is a fixed 120px box: it shows an icon and one identifying argument,
+   and the rest of the label is ellipsized. */
+.ai-collapse.ai-tool,
+.ai-collapse.ai-thinking {
+  flex: 0 0 120px;
+  width: 120px;
+  max-width: 120px;
+}
+
+.ai-collapse.open {
+  background: var(--surface);
+}
+
+.ai-chip-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-dim);
 }
 
 .ai-collapse-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   width: 100%;
   background: none;
   border: none;
   color: inherit;
   font: inherit;
   font-size: 12px;
-  padding: 6px 10px;
+  padding: 6px 8px;
   cursor: pointer;
   text-align: left;
 }
@@ -799,8 +820,9 @@ canvas.layer {
 }
 
 .ai-collapse-title {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--fg-muted);
-  font-weight: 600;
   font-style: normal;
   white-space: nowrap;
   overflow: hidden;
@@ -810,8 +832,8 @@ canvas.layer {
 .ai-collapse-status {
   margin-left: auto;
   flex-shrink: 0;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -834,28 +856,35 @@ canvas.layer {
   color: var(--err);
 }
 
-.ai-collapse-caret {
-  flex-shrink: 0;
-  color: var(--fg-muted);
-  transition: transform 0.15s ease;
-}
-
-.ai-collapse.open .ai-collapse-caret {
-  transform: rotate(90deg);
-}
-
+/* An opened chip's detail, laid out as a full-width item in the chip row so it
+   spans the row under the line its chip is on (aiLayoutPanels places it). */
 .ai-collapse-body {
-  border-top: 1px solid var(--border);
+  flex: 0 0 100%;
+  width: 100%;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
   max-height: 200px;
   overflow-y: auto;
   padding: 8px 10px;
+}
+
+/* The panel's first line: the tool's own name, which the 120px chip had to give
+   up for the argument. Secondary information like the chip label, so no bold. */
+.ai-collapse-body-name {
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
 }
 
 .ai-collapse-body[hidden] {
   display: none;
 }
 
-.ai-thinking .ai-collapse-body {
+.ai-thinking-body {
   font-style: italic;
 }
 
