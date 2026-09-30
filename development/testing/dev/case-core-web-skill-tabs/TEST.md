@@ -229,19 +229,20 @@ await page.waitForFunction(() => document.getElementById("ai").classList.contain
   undefined, { timeout: 10_000 });
 check("open tabs and the active tab survive a reload", true);
 
-// 10. Nothing hugs the right edge: with classic scrollbars the message list's
-// scrollbar would otherwise sit on top of the bubbles. (The chip shapes
-// themselves — 120px, icons, per-row details — have their own case,
-// `case-core-web-tool-chips`.)
-check("bubbles keep clear of the scrollbar",
+// 10. Nothing hugs the edge: the conversation scrolls over the whole pane
+// (`#ai-scroll`), so the bubbles inside the capped column never reach the
+// scrollbar, which now rides the pane's edge. (The chip shapes themselves —
+// 120px, icons, per-row details — have their own case,
+// `case-core-web-tool-chips`; the scroll area itself has `case-core-web-chat-scroll`.)
+check("bubbles keep clear of the pane's scrollbar",
   await page.evaluate(() => {
-    const list = document.getElementById("ai-messages");
-    const box = list.getBoundingClientRect();
-    const bubbles = [...list.querySelectorAll(".ai-msg")];
+    const scroller = document.getElementById("ai-scroll");
+    const box = scroller.getBoundingClientRect();
+    const bubbles = [...document.querySelectorAll("#ai-messages .ai-msg")];
     if (!bubbles.length) return false;
     const right = Math.max(...bubbles.map((b) => b.getBoundingClientRect().right));
     return Math.round(box.right - right) >= 12 &&
-      getComputedStyle(list).scrollbarGutter === "stable";
+      getComputedStyle(scroller).scrollbarGutter.includes("stable");
   }));
 
 // 11. /new cancels the instance: the active tab becomes a fresh generic chat,
@@ -328,7 +329,8 @@ English
 blank conversation (a tab with no messages, ready for input) and run a
 saved skill (a closable tab that fills the page — with the conversation itself
 capped at 1000px and centred, tool / thinking blocks being 300px chips that
-widen when opened, and no bubble touching the scrollbar — shows
+widen when opened, and the scrolling spanning the whole pane with no bubble
+touching its scrollbar — shows
 the skill text as the first message and streams the reply); a fixed tab leaves skill mode without losing the
 skill tab; reopening the tab re-renders the conversation; closing the last tab
 falls back to the graph and the conversation can be reopened from `recent`; open

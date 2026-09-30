@@ -580,6 +580,9 @@ const aiEl = document.getElementById("ai");
 const themeToggleEl = document.getElementById("theme-toggle");
 const themeMenuEl = document.getElementById("theme-menu");
 const aiMessagesEl = document.getElementById("ai-messages");
+// The message list is only the content column; the scroll container behind it
+// spans the whole pane, so the wheel works outside the column too.
+const aiScrollEl = document.getElementById("ai-scroll");
 const aiInputEl = document.getElementById("ai-input-field");
 // The input grows with its content — soft-wrapped lines included — from the
 // 2-row minimum (the rows attribute) up to this many rendered lines, then it
@@ -617,7 +620,7 @@ const AI_STICK_THRESHOLD = 40;
 
 function aiAtBottom() {
   return (
-    aiMessagesEl.scrollHeight - aiMessagesEl.scrollTop - aiMessagesEl.clientHeight <=
+    aiScrollEl.scrollHeight - aiScrollEl.scrollTop - aiScrollEl.clientHeight <=
     AI_STICK_THRESHOLD
   );
 }
@@ -630,7 +633,7 @@ function aiBodyAtBottom(el, threshold = 24) {
 }
 
 function aiScrollToBottom() {
-  aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
+  aiScrollEl.scrollTop = aiScrollEl.scrollHeight;
 }
 
 // Assistant replies render as markdown; user messages stay plain text. Raw

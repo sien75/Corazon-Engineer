@@ -579,22 +579,31 @@ canvas.layer {
   border-color: var(--accent);
 }
 
+/* The conversation scrolls over the whole pane, not just over the centred
+   column: `#ai-scroll` spans the full width, so the wheel works wherever the
+   pointer is, while the messages inside stay a capped column. */
+#ai-scroll {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
+  /* Reserve the track on both sides, so the centred column keeps the same
+     centre as the composer below it — with classic scrollbars a one-sided
+     gutter sits the column half a scrollbar to the left. */
+  scrollbar-gutter: stable both-edges;
+}
+
 /* A skill conversation reads better as a column: cap it and centre it. Applies to
    both the message list and the composer so they stay aligned. */
-#ai > * {
+#ai-messages,
+#ai-input {
   width: 100%;
   max-width: 1000px;
   margin-inline: auto;
 }
 
 #ai-messages {
-  flex: 1;
-  overflow-y: auto;
   padding: 12px;
-  /* Leave the scrollbar room of its own: with classic scrollbars it would
-     otherwise sit on top of the bubbles (they fill the content box). */
-  padding-right: 18px;
-  scrollbar-gutter: stable;
   font-size: 13px;
   line-height: 1.5;
   display: flex;
