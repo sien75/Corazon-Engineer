@@ -3,6 +3,11 @@
 // terminal "engineer", holds the foreground until Ctrl-C, then tears the whole
 // stack down.
 //
+// The services listen on loopback by default and are reached at the addresses
+// printed on startup. ENGINEER_BIND overrides the bind host — 0.0.0.0 to expose
+// the stack to the whole network, or this machine's IP to expose one interface;
+// the launcher then also prints an address another machine can use.
+//
 // It is a native binary on purpose: the terminal's foreground process is named
 // "engineer" (not the shell running a start.sh script), so terminals that title
 // tabs from the process name — VS Code, notably — show "engineer" with no
@@ -69,28 +74,39 @@ func launch() {
 
 	reclaim(runDir, root)
 
+	// Where the four services bind. Loopback by default, so a local tool is
+	// not a service on the office network; ENGINEER_BIND opens the stack
+	// deliberately (e.g. 0.0.0.0), which is the only way another machine can
+	// reach it.
+	bind := bindHost()
 	ports := map[string]int{}
 	used := map[int]bool{}
 	for _, name := range []string{"web", "ai", "static", "log"} {
-		p := pickPort(defaultPorts[name], used)
+		p := pickPort(defaultPorts[name], used, bind)
 		used[p] = true
 		ports[name] = p
 	}
-	base := "http://localhost"
-	addr := func(name string) string { return ":" + strconv.Itoa(ports[name]) }
+	// Two different addresses per service: the one it listens on (bind host) and
+	// the one everyone else reaches it by (url host — loopback reads as
+	// "localhost", a wildcard bind as this machine's outward IP).
+	host := urlHost(bind)
+	listenAddr := func(name string) string { return net.JoinHostPort(bind, strconv.Itoa(ports[name])) }
+	svcURL := func(name string) string {
+		return "http://" + net.JoinHostPort(host, strconv.Itoa(ports[name]))
+	}
 
 	specs := []*service{
 		{name: "log", bin: filepath.Join(binDir, "engineer-log"),
-			args: []string{"serve-log", "--root", root, "--addr", addr("log")}},
+			args: []string{"serve-log", "--root", root, "--addr", listenAddr("log")}},
 		{name: "static", bin: filepath.Join(binDir, "engineer-static"),
-			args: []string{"serve-static", "--root", root, "--addr", addr("static")}},
+			args: []string{"serve-static", "--root", root, "--addr", listenAddr("static")}},
 		{name: "ai", bin: filepath.Join(binDir, "engineer-ai"),
-			args: []string{"--root", root, "--addr", addr("ai"),
+			args: []string{"--root", root, "--addr", listenAddr("ai"),
 				"--agents", filepath.Join(pkg, "agents", "AGENTS.md"),
-				"--log", base + addr("log"), "--static", base + addr("static")}},
+				"--log", svcURL("log"), "--static", svcURL("static")}},
 		{name: "web", bin: filepath.Join(binDir, "engineer-web"),
-			args: []string{strconv.Itoa(ports["web"]), "--root", filepath.Join(pkg, "web"),
-				"--static", base + addr("static"), "--ai", base + addr("ai"), "--log", base + addr("log")}},
+			args: []string{strconv.Itoa(ports["web"]), "--bind", bind, "--root", filepath.Join(pkg, "web"),
+				"--static", svcURL("static"), "--ai", svcURL("ai"), "--log", svcURL("log")}},
 	}
 
 	started := make([]*service, 0, len(specs))
@@ -106,10 +122,15 @@ func launch() {
 	}
 
 	fmt.Printf("engineer up — project: %s\n", root)
-	fmt.Printf("  web     %s:%d\n", base, ports["web"])
-	fmt.Printf("  ai      %s:%d\n", base, ports["ai"])
-	fmt.Printf("  static  %s:%d\n", base, ports["static"])
-	fmt.Printf("  log     %s:%d\n", base, ports["log"])
+	fmt.Printf("  web     %s\n", svcURL("web"))
+	fmt.Printf("  ai      %s\n", svcURL("ai"))
+	fmt.Printf("  static  %s\n", svcURL("static"))
+	fmt.Printf("  log     %s\n", svcURL("log"))
+	if isWildcard(bind) {
+		fmt.Printf("bind: %s — open to the whole network; reachable at %s\n", bind, urlHost(bind))
+	} else {
+		fmt.Printf("bind: %s\n", bind)
+	}
 	fmt.Printf("logs: %s/    stop: Ctrl-C\n", logDir)
 
 	// Hold the foreground until Ctrl-C (or until every service has exited).
@@ -253,18 +274,94 @@ func reclaim(runDir, root string) {
 
 // --- ports ---------------------------------------------------------------
 
+// bindHost is the host the services listen on. Loopback by default — the stack
+// is a local tool; ENGINEER_BIND is the opt-in that exposes it, e.g.
+// ENGINEER_BIND=0.0.0.0 for the whole network or =<this machine's IP> for one
+// interface.
+func bindHost() string {
+	if h := os.Getenv("ENGINEER_BIND"); h != "" {
+		return h
+	}
+	return "127.0.0.1"
+}
+
+// isWildcard reports whether a bind host means "every interface".
+func isWildcard(h string) bool { return h == "" || h == "0.0.0.0" || h == "::" }
+
+// isLoopback reports whether a bind host is this machine itself — such a bind
+// is reached as "localhost" from here, and from nowhere else.
+func isLoopback(h string) bool {
+	return h == "localhost" || h == "::1" || strings.HasPrefix(h, "127.")
+}
+
+// urlHost is the host the services address each other by, and the one the web
+// UI hands to the browser. Loopback stays "localhost"; a wildcard bind needs
+// this machine's outward IPv4 instead, or a browser on another machine would
+// be told to call its own localhost.
+func urlHost(bind string) string {
+	switch {
+	case isLoopback(bind):
+		return "localhost"
+	case isWildcard(bind):
+		if ip := outwardIPv4(); ip != "" {
+			return ip
+		}
+		return "localhost"
+	default:
+		return bind
+	}
+}
+
+// probeHost is what to dial when asking whether a port is taken: a wildcard
+// address is not dialable, so probe loopback.
+func probeHost(bind string) string {
+	if isWildcard(bind) {
+		return "127.0.0.1"
+	}
+	return bind
+}
+
+// outwardIPv4 returns the first global unicast IPv4 on an up, non-loopback
+// interface — the address another machine on the same network would use. Empty
+// when the machine is offline.
+func outwardIPv4() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if ip := ipnet.IP.To4(); ip != nil && ip.IsGlobalUnicast() {
+				return ip.String()
+			}
+		}
+	}
+	return ""
+}
+
 // pickPort returns the first port >= p that is free and not already chosen.
-func pickPort(p int, used map[int]bool) int {
+func pickPort(p int, used map[int]bool, bind string) int {
 	for {
-		if !used[p] && portFree(p) {
+		if !used[p] && portFree(p, bind) {
 			return p
 		}
 		p++
 	}
 }
 
-func portFree(p int) bool {
-	l, err := net.Listen("tcp", ":"+strconv.Itoa(p))
+func portFree(p int, bind string) bool {
+	l, err := net.Listen("tcp", net.JoinHostPort(bind, strconv.Itoa(p)))
 	if err != nil {
 		return false
 	}
@@ -275,7 +372,7 @@ func portFree(p int) bool {
 	// macOS, so this probe would call an occupied port free; the launcher then
 	// prints an address whose traffic goes to the other process. Ask the port
 	// directly as well: if anything answers, it is taken.
-	c, err := net.DialTimeout("tcp", "localhost:"+strconv.Itoa(p), 300*time.Millisecond)
+	c, err := net.DialTimeout("tcp", net.JoinHostPort(probeHost(bind), strconv.Itoa(p)), 300*time.Millisecond)
 	if err == nil {
 		_ = c.Close()
 		return false

@@ -41,6 +41,8 @@ engineer status      # per-service state for the current directory
 Open the web address it prints and talk to the agent.
 The current working directory **is** the project — it may be empty, and the agent will initialize it; all data stays in that directory's `.engineer/`.
 
+The services listen on `127.0.0.1` only: nothing is reachable from the network. Set `ENGINEER_BIND` to open the stack up — `ENGINEER_BIND=0.0.0.0 engineer` for the whole network (e.g. to use the UI from another machine), or `ENGINEER_BIND=<this machine's IP>` for one interface. The launcher then prints the address to use.
+
 ### Uninstall
 
 ```bash

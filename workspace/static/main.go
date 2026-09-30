@@ -15,7 +15,7 @@ func main() {
 		os.Exit(1)
 	}
 	fs := flag.NewFlagSet("serve-static", flag.ExitOnError)
-	addr := fs.String("addr", ":7502", "listen address")
+	addr := fs.String("addr", "127.0.0.1:7502", "listen address (address the launcher chose; loopback by default)")
 	root := fs.String("root", "", "engineer project root (auto-detected from cwd if empty)")
 	_ = fs.Parse(os.Args[2:])
 	r := *root
@@ -31,7 +31,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: engineer serve-static [--addr :7502] [--root <project dir>]")
+	fmt.Fprintln(os.Stderr, "usage: engineer serve-static [--addr 127.0.0.1:7502] [--root <project dir>]")
 }
 
 func findRoot() string {

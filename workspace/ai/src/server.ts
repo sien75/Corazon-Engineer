@@ -62,6 +62,9 @@ function skillWire(t: Skill): Record<string, unknown> {
 }
 
 export function serve(registry: Registry, addr: string): void {
+  // A bare ":port" means every interface — the launcher passes an explicit
+  // host (loopback unless ENGINEER_BIND opened the stack up), so this only
+  // applies when someone asks for it directly.
   const [host, portStr] = addr.startsWith(":")
     ? ["0.0.0.0", addr.slice(1)]
     : addr.split(":");

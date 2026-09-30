@@ -62,7 +62,7 @@ function findRoot(): string {
 const flags = parseFlags(process.argv.slice(2));
 const forceStub = flags.stub === "1";
 const root = flags.root || findRoot();
-const addr = flags.addr || ":7501";
+const addr = flags.addr || "127.0.0.1:7501";
 const logBase = flags.log || "http://localhost:7503";
 const staticBase = flags.static || "http://localhost:7502";
 
@@ -83,6 +83,18 @@ function resolveAgentsFile(explicit?: string): string {
 }
 
 const agentsFile = resolveAgentsFile(flags.agents);
+// The address the model should call this service by: a wildcard or loopback
+// bind is reached as localhost; anything else (the launcher opened the stack to
+// a specific interface) keeps its host.
+function aiBaseURL(a: string): string {
+  const i = a.lastIndexOf(":");
+  const host = i < 0 ? a : a.slice(0, i);
+  const port = i < 0 ? "" : a.slice(i + 1);
+  const local = host === "" || host === "0.0.0.0" || host === "::" ||
+    host === "::1" || host === "localhost" || host.startsWith("127.");
+  return `http://${local ? "localhost" : host}:${port}`;
+}
+
 // The launcher owns port selection and passes the actual addresses down; append
 // them so the model always calls the services on this run's ports rather than
 // any address hard-coded in the prose.
@@ -91,7 +103,7 @@ const runtimeEndpoints =
   "These services were started for this run; use exactly these addresses:\n" +
   `- static (schema): ${staticBase}\n` +
   `- log (records): ${logBase}\n` +
-  `- ai (this service): http://localhost${addr}\n`;
+  `- ai (this service): ${aiBaseURL(addr)}\n`;
 const systemPrompt = readFileSync(agentsFile, "utf8") + runtimeEndpoints;
 
 const registry = new Registry({

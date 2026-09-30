@@ -41,6 +41,8 @@ engineer status      # 查看当前目录各服务状态
 打开它打印出的 web 地址即可与 Agent 对话。
 当前工作目录**就是**项目 —— 可以是空目录，Agent 会把它初始化；所有数据都存在该目录下的 `.engineer/`。
 
+服务默认只监听 `127.0.0.1`，网络上访问不到。需要开放时设置 `ENGINEER_BIND`：`ENGINEER_BIND=0.0.0.0 engineer` 对整个网络开放（例如从另一台机器使用 UI），`ENGINEER_BIND=<本机 IP>` 只绑某张网卡；此时启动器会打印出可直接使用的地址。
+
 ### 卸载
 
 ```bash

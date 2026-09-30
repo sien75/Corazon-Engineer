@@ -9,6 +9,10 @@
 # default is already in use the launcher advances to the next free port. The
 # chosen ports are handed to each service as arguments and printed at the end,
 # so there is no port config file to keep in sync.
+#
+# Services listen on loopback by default. Set ENGINEER_BIND to open the stack
+# up — 0.0.0.0 for the whole network, or this machine's IP for one interface
+# (the latter is what makes the printed addresses usable from another machine).
 set -e
 ROOT="$PWD"
 [ -f "$ROOT/engineer.yaml" ] || {
@@ -63,7 +67,15 @@ PORT_WEB=$(pick_port 8500)
 PORT_AI=$(pick_port 8501 "$PORT_WEB")
 PORT_STATIC=$(pick_port 8502 "$PORT_WEB" "$PORT_AI")
 PORT_LOG=$(pick_port 8503 "$PORT_WEB" "$PORT_AI" "$PORT_STATIC")
-BASE=http://localhost
+
+# bind host: loopback unless ENGINEER_BIND opens the stack up
+BIND=${ENGINEER_BIND:-127.0.0.1}
+case "$BIND" in
+  "" | 0.0.0.0 | "::") URLHOST=localhost ;;
+  127.0.0.1 | localhost | "::1") URLHOST=localhost ;;
+  *) URLHOST=$BIND ;;
+esac
+BASE=http://$URLHOST
 
 # --- build ----------------------------------------------------------------
 ( cd "$ROOT/workspace/log"    && go build -o "$BIN/engineer-log" . )
@@ -71,17 +83,17 @@ BASE=http://localhost
 ( cd "$ROOT/workspace/web/server" && go build -o "$BIN/engineer-web" . )
 
 # --- start (order: log → static → ai → web) -------------------------------
-nohup "$BIN/engineer-log" serve-log --root "$ROOT" --addr ":$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
+nohup "$BIN/engineer-log" serve-log --root "$ROOT" --addr "$BIND:$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
 echo $! >"$D/log.pid"
-nohup "$BIN/engineer-static" serve-static --root "$ROOT" --addr ":$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
+nohup "$BIN/engineer-static" serve-static --root "$ROOT" --addr "$BIND:$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
 echo $! >"$D/static.pid"
 # exec so the recorded pid IS the server process (not a wrapper that outlives kill)
 ( cd "$ROOT/workspace/ai" && exec nohup bun src/main.ts \
-    --root "$ROOT" --addr ":$PORT_AI" \
+    --root "$ROOT" --addr "$BIND:$PORT_AI" \
     --agents "$ROOT/agents/AGENTS.md" \
     --log "$BASE:$PORT_LOG" --static "$BASE:$PORT_STATIC" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
-nohup "$BIN/engineer-web" "$PORT_WEB" \
+nohup "$BIN/engineer-web" "$PORT_WEB" --bind "$BIND" \
     --root "$ROOT/workspace/web" \
     --static "$BASE:$PORT_STATIC" --ai "$BASE:$PORT_AI" --log "$BASE:$PORT_LOG" >"$D/web.log" 2>&1 </dev/null &
 echo $! >"$D/web.pid"
@@ -91,4 +103,5 @@ printf '  web     %s\n' "$BASE:$PORT_WEB"
 printf '  ai      %s\n' "$BASE:$PORT_AI"
 printf '  static  %s\n' "$BASE:$PORT_STATIC"
 printf '  log     %s\n' "$BASE:$PORT_LOG"
+printf '  bind    %s\n' "$BIND"
 echo "logs: $D/*.log    stop: how-to/deploy/dev/stop.sh"

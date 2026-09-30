@@ -1,0 +1,3 @@
+id: core-loopback-bind
+description: services listen on loopback by default; ENGINEER_BIND opens them to the network
+atoms: [web, ai, static, log]
