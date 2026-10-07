@@ -560,25 +560,6 @@ canvas.layer {
   border-color: var(--accent);
 }
 
-.skill-refresh {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  color: var(--fg-muted);
-  font: inherit;
-  font-size: 11px;
-  padding: 1px 6px;
-  margin-left: 6px;
-  cursor: pointer;
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.skill-refresh:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
 /* The conversation scrolls over the whole pane, not just over the centred
    column: `#ai-scroll` spans the full width, so the wheel works wherever the
    pointer is, while the messages inside stay a capped column. */

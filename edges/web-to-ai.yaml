@@ -71,11 +71,3 @@ edges:
     channel: network
     protocol: http
     description: Web frontend instantiates a skill by opening a session with the skill text
-  - id: web-to-ai-skill-refresh
-    from: web
-    from_interface: ai-skill-refresh
-    to: ai
-    to_interface: ai-skill-refresh
-    channel: network
-    protocol: http
-    description: Web frontend manually triggers a suggested-skill scan

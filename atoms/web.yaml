@@ -92,13 +92,6 @@ atoms:
           extend:
             path: /ai/skill/run
             method: POST
-        - id: ai-skill-refresh
-          channel: network
-          protocol: http
-          contract: ./contracts/ai-skill-refresh.yaml
-          extend:
-            path: /ai/skill/refresh
-            method: POST
         - id: log-list
           channel: network
           protocol: http

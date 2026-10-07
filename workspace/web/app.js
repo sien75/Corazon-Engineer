@@ -1954,7 +1954,7 @@ async function newTabReload() {
     </div>
     <h3>my skills</h3>
     ${mine.length ? mine.map((t) => newTabItemHtml(t, false)).join("") : none}
-    <h3>suggested <button type="button" class="skill-refresh" data-action="refresh">refresh</button></h3>
+    <h3>suggested</h3>
     ${suggested.length ? suggested.map((t) => newTabItemHtml(t, true)).join("") : none}
     <h3>recent</h3>
     ${recent.length ? recent.map((s) => newTabSessionHtml(s)).join("") : none}
@@ -2061,7 +2061,7 @@ function newTabClick(event) {
   else if (action === "save") {
     const t = newTabSkills.get(id);
     if (t) newTabSend("/ai/skill/save", { id, name: t.name, text: t.text });
-  } else if (action === "refresh") newTabSend("/ai/skill/refresh", {});
+  }
 }
 
 tabAddEl.addEventListener("click", () => openNewTab());

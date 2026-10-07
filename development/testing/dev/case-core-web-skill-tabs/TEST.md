@@ -83,6 +83,15 @@ await page.waitForSelector("#newtab .skill-item", { state: "visible" });
 check("the page shows the four parts in order",
   await page.evaluate(() => [...document.querySelectorAll("#newtab h3")]
     .map((e) => e.textContent.trim().split(" ")[0]).join(",") === "built-in,my,suggested,recent"));
+// The suggested section is a plain heading: discovery is automatic (the ai
+// service scans once 10 runs pile up), so the page offers no manual trigger.
+check("the suggested section has no refresh button",
+  await page.evaluate(() => {
+    const h3 = [...document.querySelectorAll("#newtab h3")]
+      .find((e) => e.textContent.trim().startsWith("suggested"));
+    return h3?.textContent.trim() === "suggested" &&
+      document.querySelectorAll("#newtab .skill-refresh, #newtab [data-action=refresh]").length === 0;
+  }));
 check("built-in offers a blank Chat",
   await page.evaluate(() => [...document.querySelectorAll("#newtab .skill-name")].some((e) => e.textContent === "Chat")));
 check("the new tab page lists saved skills",
@@ -323,7 +332,9 @@ EOF
 Expected: `"ok": true` and every check `"pass": true` — six fixed, unclosable
 tabs and no `ai` toggle in the topbar; `+` opens an inline, centred page (not a
 dialog) with `+` itself as the only active tab, showing the four parts
-(`built-in` / `my skills` / `suggested` / `recent`, the first offering `Chat`), an
+(`built-in` / `my skills` / `suggested` / `recent`, the first offering `Chat`; the
+`suggested` heading carrying no refresh button — discovery is automatic),
+an
 English
 `nothing here yet` for empty sections and no create form; the page can start a
 blank conversation (a tab with no messages, ready for input) and run a
