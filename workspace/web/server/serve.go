@@ -10,15 +10,17 @@
 // which whitelists process execution sees as few distinct paths as possible.
 // Serve is the entry point behind the `serve-web` subcommand:
 //
-//	engineer serve-web [port] [--bind <host>] [--root <dir>] [--static <url>] [--ai <url>] [--log <url>]
+//	engineer serve-web --bind <host> --port <n> --assets <dir> --static <url> --ai <url> --log <url>
 //
-// --bind is the host the server listens on; it defaults to loopback, so the
-// server is local-only unless the launcher was told to open the stack up
-// (ENGINEER_BIND).
+// Every flag is required and there is no fallback. The launcher owns the bind
+// host (loopback unless ENGINEER_BIND opened the stack up), the port and the
+// three runtime addresses; the frontend only ever reaches a service through the
+// URLs served back as /config.js, so an invented default would point the page
+// at a port nobody chose.
 //
-// --root defaults to the directory holding the binary. The three *-url flags
-// are the runtime addresses the frontend should call; the launcher (which owns
-// port selection) hands them down here and they are served back as /config.js.
+// --assets is the directory holding the frontend files (index.html, app.js,
+// style.css). It is deliberately not called --root: the other three services
+// take --root meaning the user's project, which is a different thing entirely.
 package server
 
 import (
@@ -51,24 +53,26 @@ type runtimeConfig struct {
 	Log    string `json:"log"`
 }
 
+const usage = "usage: engineer serve-web --bind <host> --port <n> --assets <dir> " +
+	"--static <url> --ai <url> --log <url>"
+
 // Serve runs the web file server until it is killed. argv is the argument list
 // following the subcommand; on failure it prints to stderr and exits.
 func Serve(argv []string) {
-	port := 7500
-	bind := "127.0.0.1"
+	bind := ""
+	port := 0
 	root := ""
-	rt := runtimeConfig{
-		Static: "http://localhost:7502",
-		AI:     "http://localhost:7501",
-		Log:    "http://localhost:7503",
-	}
+	rt := runtimeConfig{}
 
 	for i := 0; i < len(argv); i++ {
 		switch {
 		case argv[i] == "--bind" && i+1 < len(argv):
 			i++
 			bind = argv[i]
-		case argv[i] == "--root" && i+1 < len(argv):
+		case argv[i] == "--port" && i+1 < len(argv):
+			i++
+			port, _ = strconv.Atoi(argv[i])
+		case argv[i] == "--assets" && i+1 < len(argv):
 			i++
 			root = argv[i]
 		case argv[i] == "--static" && i+1 < len(argv):
@@ -80,21 +84,17 @@ func Serve(argv []string) {
 		case argv[i] == "--log" && i+1 < len(argv):
 			i++
 			rt.Log = argv[i]
-		case isDigits(argv[i]):
-			port, _ = strconv.Atoi(argv[i])
 		}
 	}
 
-	if root == "" {
-		exe, err := os.Executable()
-		if err != nil {
-			log.Fatalf("engineer web: cannot locate the binary: %v", err)
-		}
-		root = filepath.Dir(exe)
+	if bind == "" || port == 0 || root == "" || rt.Static == "" || rt.AI == "" || rt.Log == "" {
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
 	}
+
 	abs, err := filepath.Abs(root)
 	if err != nil {
-		log.Fatalf("engineer web: bad --root %q: %v", root, err)
+		log.Fatalf("engineer web: bad --assets %q: %v", root, err)
 	}
 
 	addr := net.JoinHostPort(bind, strconv.Itoa(port))
@@ -118,18 +118,6 @@ func displayHost(bind string) string {
 		return "localhost"
 	}
 	return bind
-}
-
-func isDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 func handler(root string, rt runtimeConfig) http.Handler {

@@ -13,6 +13,7 @@ General rules:
 - Clarify first: never code from assumptions — confirm goal, scope, and acceptance criteria (and what is **out of scope**) before acting. Below 80% confidence, keep asking.
 - Keep changes minimal and limited to the current phase; no drive-by refactors.
 - Test each step immediately. If the same failure repeats **3 times in a row**, stop and report the error, what you tried, and the suspected blocker, with alternatives.
+- Run E2E test cases with **no proxy** (`NO_PROXY='*' no_proxy='*'`, and clear `http_proxy` / `https_proxy`): the local proxy may be unreachable, which makes ai's model init spin at 100% CPU instead of failing.
 - Commit & push go through `my-server` (`ssh my-server`), not the local machine: locate this project's clone on `my-server` (search by repo name) → send the changes as a patch → commit & push on `my-server` → delete the local working-tree changes and pull. **Never push directly from the local machine.**
 
 ### Type 1 — Normal requirement development

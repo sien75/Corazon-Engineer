@@ -9,8 +9,17 @@ Note: the static API speaks YAML (`application/yaml`) — request and response b
 ```bash
 # Prepare the mock project: development/testing/.playground is a minimal mock unrelated to the real project; place it at .engineer/.playground/
 rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/.playground .engineer/.playground
-# Start the server under test with .engineer/.playground as project root
-cd workspace/static && go build -o engineer . && ./engineer serve-static --root ../../.engineer/.playground --addr :7502 &
+# Start the server under test with .engineer/.playground as project root — with the
+# same binary the launcher runs. `workspace/static` has no main package, so building
+# inside it yields an archive, not a runnable ./engineer.
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-static --root "$PWD/.engineer/.playground" --bind 127.0.0.1 --port 8514 &
+
+# wait for it before streaming: the blocks below run back to back
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8514/static/query -d '{}' && break
+  sleep 1
+done
 ```
 
 ## 1. add / update / remove events from file changes
@@ -18,7 +27,7 @@ cd workspace/static && go build -o engineer . && ./engineer serve-static --root 
 Terminal A (subscribe):
 
 ```bash
-curl -N -X POST http://localhost:7502/static/stream \
+curl -N -X POST http://localhost:8514/static/stream \
   -H 'Content-Type: application/yaml' --data-binary ''
 ```
 
@@ -49,7 +58,7 @@ Expected: terminal A receives an `update` event with `payload.type: atom` and `p
 ## 3. event kinds filter
 
 ```bash
-curl -N -X POST http://localhost:7502/static/stream \
+curl -N -X POST http://localhost:8514/static/stream \
   -H 'Content-Type: application/yaml' --data-binary 'kinds: how-to'
 ```
 

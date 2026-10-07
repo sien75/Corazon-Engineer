@@ -5,14 +5,31 @@ AI session flow: new → ask → stream → delete.
 ## Setup
 
 ```bash
-# ai service is stateless; start it directly (no project root needed)
-cd workspace/ai && bun install && bun run src/main.ts --addr :7501 --agents ../../agents/AGENTS.md &
+# Ai is stateless, but it has no defaults: it must be told the project root (it
+# keeps its own skill db there) and the log address. Both are local to this case.
+ROOT="$PWD/.engineer/.ai-flow"
+rm -rf "$ROOT" && mkdir -p "$ROOT"
+printf 'project: ai-flow\n' > "$ROOT/engineer.yaml"
+
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8532 >/tmp/ai-flow-log.log 2>&1 &
+
+cd workspace/ai && bun install && bun run src/main.ts \
+  --bind 127.0.0.1 --port 8541 --root "$ROOT" \
+  --log http://localhost:8532 --static http://localhost:8502 \
+  --agents ../../agents/AGENTS.md &
+
+# wait for it before asking: the blocks below run back to back
+for i in $(seq 1 60); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8541/ai/skill/list -d '{}' && break
+  sleep 1
+done
 ```
 
 ## 1. ai-new creates a session
 
 ```bash
-SID=$(curl -s -X POST http://localhost:7501/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+SID=$(curl -s -X POST http://localhost:8541/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
 echo $SID
 ```
 
@@ -21,7 +38,7 @@ Expected: 200, returns a non-empty `sessionId`.
 ## 2. ai-ask
 
 ```bash
-curl -s -X POST http://localhost:7501/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
 blocks:
   - type: text
     text: show me the architecture"
@@ -32,14 +49,14 @@ Expected: 200, `sessionId` equals `$SID`.
 Error branches:
 
 ```bash
-curl -s -X POST http://localhost:7501/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
 blocks: []"
 ```
 
 Expected: 400, `error.code` is `bad_request`.
 
 ```bash
-curl -s -X POST http://localhost:7501/ai/ask -d "id: nope
+curl -s -X POST http://localhost:8541/ai/ask -d "id: nope
 blocks:
   - type: text
     text: hi"
@@ -50,7 +67,7 @@ Expected: 404, `error.code` is `not_found`.
 ## 3. ai-stream receives output
 
 ```bash
-curl -N -X POST http://localhost:7501/ai/stream -d "id: $SID"
+curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID"
 ```
 
 Expected: native pi events. `agent_start`; one or more `type=message_update`
@@ -70,7 +87,7 @@ the server closes the stream immediately.
 
 ```bash
 # replay only seq 5..end
-curl -N -X POST http://localhost:7501/ai/stream -d "id: $SID
+curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID
 since: 4"
 ```
 
@@ -79,7 +96,7 @@ ends with `agent_settled`.
 
 ```bash
 # caught up + idle: returns at once with no events
-time curl -N -X POST http://localhost:7501/ai/stream -d "id: $SID
+time curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID
 since: 9999"
 ```
 
@@ -91,12 +108,12 @@ the missed events are replayed):
 
 ```bash
 # in one shell: start a slow run
-curl -s -X POST http://localhost:7501/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
 blocks:
   - type: text
     text: 'Run the shell command \"sleep 5\" with the bash tool, then reply done'"
 # in another, while it runs:
-curl -s -X POST http://localhost:7501/ai/resume -d "id: $SID"
+curl -s -X POST http://localhost:8541/ai/resume -d "id: $SID"
 ```
 
 Expected: `active: true` while the run is in flight (`false` once it settles);
@@ -108,7 +125,7 @@ All tool calls run without approval; the agent runs shell commands and
 external CLIs through the built-in `bash` tool.
 
 ```bash
-curl -s -X POST http://localhost:7501/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
 blocks:
   - type: text
     text: run the date command in your shell"
@@ -117,7 +134,7 @@ blocks:
 In another terminal:
 
 ```bash
-curl -N -X POST http://localhost:7501/ai/stream -d "id: $SID"
+curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID"
 ```
 
 Expected: no approval event at all; tool calls surface as native pi
@@ -131,7 +148,7 @@ session replays tool calls and thinking, not just text. Images are stored as
 sha256 refs, never base64.
 
 ```bash
-curl -s -X POST http://localhost:7503/log/session-detail -d "sessionId: $SID"
+curl -s -X POST http://localhost:8532/log/session-detail -d "sessionId: $SID"
 ```
 
 Expected: each message carries `seq`, `role` (`user` | `assistant` | `toolResult`
@@ -148,7 +165,7 @@ messages already summarized away are not sent to the provider again.
 Force the agent to use the custom `ask_user` tool:
 
 ```bash
-curl -s -X POST http://localhost:7501/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
 blocks:
   - type: text
     text: use the ask_user tool to ask me to choose between A and B"
@@ -161,9 +178,9 @@ Then stream: expected `tool_execution_start` with `toolName: ask_user` (its
 Answer via the dedicated endpoint, then stream again:
 
 ```bash
-curl -s -X POST http://localhost:7501/ai/answer -d "id: $SID
+curl -s -X POST http://localhost:8541/ai/answer -d "id: $SID
 answer: A"
-curl -N -X POST http://localhost:7501/ai/stream -d "id: $SID"
+curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID"
 ```
 
 Expected: a new run whose user message text is `A`, then `agent_settled`.
@@ -172,13 +189,13 @@ An empty `answer` returns 400 `bad_request`.
 ## 5. ai-delete removes the session
 
 ```bash
-curl -s -X POST http://localhost:7501/ai/delete -d "id: $SID"
+curl -s -X POST http://localhost:8541/ai/delete -d "id: $SID"
 ```
 
 Expected: 200, `sessionId` equals `$SID`; afterwards:
 
 ```bash
-curl -s -X POST http://localhost:7501/ai/stream -d "id: $SID"
+curl -s -X POST http://localhost:8541/ai/stream -d "id: $SID"
 ```
 
 Expected: 404, `error.code` is `not_found`.
@@ -187,7 +204,7 @@ Expected: 404, `error.code` is `not_found`.
 stays in log. Purge it too with `log/delete`:
 
 ```bash
-curl -s -X POST http://localhost:7503/log/delete -d "sessionId: $SID"
+curl -s -X POST http://localhost:8532/log/delete -d "sessionId: $SID"
 ```
 
 Expected: 200, `sessionId` equals `$SID` and `deleted` counts the removed

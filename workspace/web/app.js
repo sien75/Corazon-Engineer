@@ -4,13 +4,16 @@ import MarkdownIt from "./vendor/markdown-it.js";
 import DOMPurify from "./vendor/dompurify.js";
 import hljs from "./vendor/highlight.js";
 
-// Runtime addresses are injected by the launcher and served as /config.js
-// (see serve.js). Fall back to the default ports when opened without it.
-const RUNTIME = window.ENGINEER ?? {
-  static: "http://localhost:7502",
-  ai: "http://localhost:7501",
-  log: "http://localhost:7503",
-};
+// Runtime addresses are injected by serve-web and served as /config.js. There is
+// no fallback: guessing a port would point the page at whatever happens to be
+// listening there. Without the config the page cannot reach any service, so say
+// so rather than pretending to work.
+const RUNTIME = window.ENGINEER;
+if (!RUNTIME?.static || !RUNTIME?.ai || !RUNTIME?.log) {
+  const message = "engineer web: /config.js did not provide static / ai / log";
+  document.body.innerHTML = `<div class="empty-hint">${message}</div>`;
+  throw new Error(message);
+}
 const STATIC_BASE = RUNTIME.static; // static: schema
 const AI_BASE = RUNTIME.ai;         // ai: conversation
 const LOG_BASE = RUNTIME.log;       // log: records

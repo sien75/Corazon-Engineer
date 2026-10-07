@@ -26,19 +26,25 @@ printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
 
 # log + ai on their own ports; ai in stub mode, so skill runs are deterministic and offline
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --addr :8513 >/tmp/skill-tabs-log.log 2>&1 &
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8513 >/tmp/skill-tabs-log.log 2>&1 &
 
-(cd workspace/ai && bun run src/main.ts --addr :8511 --root "$ROOT" --stub \
-  --log http://localhost:8513 --agents "$ROOTDIR/agents/AGENTS.md" \
+(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8511 --stub \
+  --log http://localhost:8513 --static http://localhost:8502 \
+  --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/skill-tabs-ai.log 2>&1 &)
 
 # one saved skill, so the new tab page's "my skills" section is not empty
+# wait for ai first: the save must not race the boot
+for i in $(seq 1 60); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8511/ai/skill/list -d '{}' && break
+  sleep 1
+done
 curl -s -X POST http://localhost:8511/ai/skill/save \
   -d 'name: Seeded skill
 text: seeded instruction'
 
 # web assets
-/tmp/engineer serve-web 8610 --root "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
   --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8513 \
   >/tmp/skill-tabs-web.log 2>&1 &
 ```
@@ -353,7 +359,7 @@ code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'engineer serve-web 8610'
+pkill -f 'serve-web.*--port 8610'
 pkill -f '/tmp/engineer serve-log --root .*skill-test'
-pkill -f 'main.ts --addr :8511'
+pkill -f 'main.ts.*--port 8511'
 ```

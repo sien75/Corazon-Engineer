@@ -25,14 +25,15 @@ printf 'project: chat-scroll-test\n' > "$ROOT/engineer.yaml"
 # log + ai on their own ports; ai in stub mode, so the run is deterministic and
 # offline. The conversation itself is seeded from the test (see Run).
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --addr :8533 >/tmp/chat-scroll-log.log 2>&1 &
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8533 >/tmp/chat-scroll-log.log 2>&1 &
 
-(cd workspace/ai && bun run src/main.ts --addr :8531 --root "$ROOT" --stub \
-  --log http://localhost:8533 --agents "$ROOTDIR/agents/AGENTS.md" \
+(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8531 --stub \
+  --log http://localhost:8533 --static http://localhost:8502 \
+  --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/chat-scroll-ai.log 2>&1 &)
 
 # web assets
-/tmp/engineer serve-web 8630 --root "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8630 --assets "$ROOTDIR/workspace/web" \
   --static http://localhost:8502 --ai http://localhost:8531 --log http://localhost:8533 \
   >/tmp/chat-scroll-web.log 2>&1 &
 ```
@@ -193,7 +194,7 @@ code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'engineer serve-web 8630'
+pkill -f 'serve-web.*--port 8630'
 pkill -f '/tmp/engineer serve-log --root .*chat-scroll-test'
-pkill -f 'main.ts --addr :8531'
+pkill -f 'main.ts.*--port 8531'
 ```

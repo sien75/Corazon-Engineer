@@ -9,14 +9,23 @@ Note: the static API speaks YAML (`application/yaml`) — request and response b
 ```bash
 # Prepare the mock project: development/testing/.playground is a minimal mock unrelated to the real project; place it at .engineer/.playground/
 rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/.playground .engineer/.playground
-# Start the server under test with .engineer/.playground as project root
-cd workspace/static && go build -o engineer . && ./engineer serve-static --root ../../.engineer/.playground --addr :7502 &
+# Start the server under test with .engineer/.playground as project root — with the
+# same binary the launcher runs. `workspace/static` has no main package, so building
+# inside it yields an archive, not a runnable ./engineer.
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-static --root "$PWD/.engineer/.playground" --bind 127.0.0.1 --port 8516 &
+
+# wait for it before validating: the blocks below run back to back
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8516/static/query -d '{}' && break
+  sleep 1
+done
 ```
 
 ## 1. the valid mock tree passes
 
 ```bash
-curl -s -X POST http://localhost:7502/static/validate \
+curl -s -X POST http://localhost:8516/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 ```
 
@@ -39,7 +48,7 @@ atoms:
           contract: ./contracts/missing.yaml
       consumes: []
 YAML
-curl -s -X POST http://localhost:7502/static/validate \
+curl -s -X POST http://localhost:8516/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 rm .engineer/.playground/atoms/bad.yaml
 ```
@@ -60,7 +69,7 @@ edges:
     protocol: http
     description: references do not resolve
 YAML
-curl -s -X POST http://localhost:7502/static/validate \
+curl -s -X POST http://localhost:8516/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 rm .engineer/.playground/edges/bad-edge.yaml
 ```
@@ -74,7 +83,7 @@ cat > .engineer/.playground/contracts/bad.yaml <<'YAML'
 id: bad-contract
 request: {}
 YAML
-curl -s -X POST http://localhost:7502/static/validate \
+curl -s -X POST http://localhost:8516/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 rm .engineer/.playground/contracts/bad.yaml
 ```
@@ -85,7 +94,7 @@ Expected: 200, `ok: false`; `errors` includes `file: contracts/bad.yaml`, `type:
 
 ```bash
 printf 'atoms: [\n' > .engineer/.playground/atoms/broken.yaml
-curl -s -X POST http://localhost:7502/static/validate \
+curl -s -X POST http://localhost:8516/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 rm .engineer/.playground/atoms/broken.yaml
 ```
@@ -137,9 +146,9 @@ edges:
     protocol: http
     description: nested edge to nested atom
 YAML
-curl -s -X POST http://localhost:7502/static/query \
+curl -s -X POST http://localhost:8516/static/query \
   -H 'Content-Type: application/yaml' --data-binary ''
-curl -s -X POST http://localhost:7502/static/validate \
+curl -s -X POST http://localhost:8516/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 rm -rf .engineer/.playground/atoms/nested .engineer/.playground/edges/nested .engineer/.playground/contracts/nested
 ```

@@ -33,15 +33,16 @@ printf 'project: recover-test\n' > "$ROOT/engineer.yaml"
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 
 # the log service the crafted history is written to
-/tmp/engineer serve-log --root "$ROOT" --addr :8521 >/tmp/recover-log.log 2>&1 &
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8521 >/tmp/recover-log.log 2>&1 &
 
 # ai A — the real thing, against the real log service. Not --stub: the provider
 # rejection this case is about can only happen with a real provider. Without one
 # the service falls back to the echo stub, and section 2's provider check is
 # reported as skipped instead (see the note at the end of Run).
 ENGINEER_AI_DEBUG=/tmp/recover-ai-debug.log \
-  bun run workspace/ai/src/main.ts --addr :8522 --root "$ROOT" \
-  --log http://localhost:8521 --agents "$ROOTDIR/agents/AGENTS.md" \
+  bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8522 --root "$ROOT" \
+  --log http://localhost:8521 --static http://localhost:8502 \
+  --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/recover-ai.log 2>&1 &
 
 # two fake log endpoints, so the writer can be driven off the happy path
@@ -73,13 +74,15 @@ python3 /tmp/recover-fake-log.py 8599 /tmp/recover-flaky-count.txt flaky &
 python3 /tmp/recover-fake-log.py 8597 /tmp/recover-reject-count.txt reject &
 
 # ai B — writes through the flaky endpoint (first two requests 500, then 200)
-bun run workspace/ai/src/main.ts --addr :8523 --root "$ROOT" --stub \
-  --log http://localhost:8599 --agents "$ROOTDIR/agents/AGENTS.md" \
+bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8523 --root "$ROOT" --stub \
+  --log http://localhost:8599 --static http://localhost:8502 \
+  --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/recover-retry.log 2>&1 &
 
 # ai C — writes through an endpoint that answers 400 to everything
-bun run workspace/ai/src/main.ts --addr :8524 --root "$ROOT" --stub \
-  --log http://localhost:8597 --agents "$ROOTDIR/agents/AGENTS.md" \
+bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8524 --root "$ROOT" --stub \
+  --log http://localhost:8597 --static http://localhost:8502 \
+  --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/recover-reject.log 2>&1 &
 
 sleep 2
@@ -556,9 +559,9 @@ never re-sent, and the intact pair after it is left untouched.
 
 ```bash
 pkill -f '/tmp/engineer serve-log --root .*recover-test'
-pkill -f 'main.ts --addr :8522'
-pkill -f 'main.ts --addr :8523'
-pkill -f 'main.ts --addr :8524'
+pkill -f 'main.ts.*--port 8522'
+pkill -f 'main.ts.*--port 8523'
+pkill -f 'main.ts.*--port 8524'
 pkill -f 'recover-fake-log.py'
 rm -rf .engineer/.recover-test
 ```

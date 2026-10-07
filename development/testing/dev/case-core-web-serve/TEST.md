@@ -13,8 +13,8 @@ Source of truth for behaviour and CLI: `workspace/web/server` (Go), started as t
 
 ```bash
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-web 8600 \
-  --root "$(cd workspace/web && pwd)" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8600 \
+  --assets "$(cd workspace/web && pwd)" \
   --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
 ```
 
@@ -77,5 +77,5 @@ Expected: `403`, `403`, `404` — nothing outside `--root` is ever served.
 ## 6. teardown
 
 ```bash
-pkill -f 'engineer serve-web 8600'
+pkill -f 'serve-web.*--port 8600'
 ```

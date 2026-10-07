@@ -85,18 +85,18 @@ BASE=http://$URLHOST
 rm -f "$BIN/engineer-log" "$BIN/engineer-static" "$BIN/engineer-web"
 
 # --- start (order: log → static → ai → web) -------------------------------
-nohup "$BIN/engineer" serve-log --root "$ROOT" --addr "$BIND:$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
+nohup "$BIN/engineer" serve-log --root "$ROOT" --bind "$BIND" --port "$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
 echo $! >"$D/log.pid"
-nohup "$BIN/engineer" serve-static --root "$ROOT" --addr "$BIND:$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
+nohup "$BIN/engineer" serve-static --root "$ROOT" --bind "$BIND" --port "$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
 echo $! >"$D/static.pid"
 # exec so the recorded pid IS the server process (not a wrapper that outlives kill)
 ( cd "$ROOT/workspace/ai" && exec nohup bun src/main.ts \
-    --root "$ROOT" --addr "$BIND:$PORT_AI" \
-    --agents "$ROOT/agents/AGENTS.md" \
+    --root "$ROOT" --agents "$ROOT/agents/AGENTS.md" \
+    --bind "$BIND" --port "$PORT_AI" \
     --log "$BASE:$PORT_LOG" --static "$BASE:$PORT_STATIC" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
-nohup "$BIN/engineer" serve-web "$PORT_WEB" --bind "$BIND" \
-    --root "$ROOT/workspace/web" \
+nohup "$BIN/engineer" serve-web --bind "$BIND" --port "$PORT_WEB" \
+    --assets "$ROOT/workspace/web" \
     --static "$BASE:$PORT_STATIC" --ai "$BASE:$PORT_AI" --log "$BASE:$PORT_LOG" >"$D/web.log" 2>&1 </dev/null &
 echo $! >"$D/web.pid"
 

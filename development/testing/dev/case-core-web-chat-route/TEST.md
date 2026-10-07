@@ -27,19 +27,25 @@ printf 'project: chat-route-test\n' > "$ROOT/engineer.yaml"
 # log + ai on their own ports (different from the other web cases, so this one
 # can run next to them); ai in stub mode, so the run is deterministic and offline
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --addr :8523 >/tmp/chat-route-log.log 2>&1 &
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8523 >/tmp/chat-route-log.log 2>&1 &
 
-(cd workspace/ai && bun run src/main.ts --addr :8521 --root "$ROOT" --stub \
-  --log http://localhost:8523 --agents "$ROOTDIR/agents/AGENTS.md" \
+(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8521 --stub \
+  --log http://localhost:8523 --static http://localhost:8502 \
+  --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/chat-route-ai.log 2>&1 &)
 
 # one saved skill, so the new tab page has something to run
+# wait for ai first: the save must not race the boot
+for i in $(seq 1 60); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8521/ai/skill/list -d '{}' && break
+  sleep 1
+done
 curl -s -X POST http://localhost:8521/ai/skill/save \
   -d 'name: Seeded skill
 text: seeded instruction'
 
 # web assets
-/tmp/engineer serve-web 8620 --root "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8620 --assets "$ROOTDIR/workspace/web" \
   --static http://localhost:8502 --ai http://localhost:8521 --log http://localhost:8523 \
   >/tmp/chat-route-web.log 2>&1 &
 ```
@@ -237,7 +243,7 @@ exist shows its error on screen. Exit code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'engineer serve-web 8620'
+pkill -f 'serve-web.*--port 8620'
 pkill -f '/tmp/engineer serve-log --root .*chat-route-test'
-pkill -f 'main.ts --addr :8521'
+pkill -f 'main.ts.*--port 8521'
 ```

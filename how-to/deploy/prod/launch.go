@@ -106,26 +106,31 @@ func launch() {
 		used[p] = true
 		ports[name] = p
 	}
-	// Two different addresses per service: the one it listens on (bind host) and
-	// the one everyone else reaches it by (url host — loopback reads as
-	// "localhost", a wildcard bind as this machine's outward IP).
+	// Two different addresses per service: the one it listens on (bind host +
+	// port, both passed down explicitly — a service never picks its own) and the
+	// one everyone else reaches it by (url host — loopback reads as "localhost",
+	// a wildcard bind as this machine's outward IP).
 	host := urlHost(bind)
-	listenAddr := func(name string) string { return net.JoinHostPort(bind, strconv.Itoa(ports[name])) }
 	svcURL := func(name string) string {
 		return "http://" + net.JoinHostPort(host, strconv.Itoa(ports[name]))
 	}
 
 	specs := []*service{
 		{name: "log", bin: self,
-			args: []string{"serve-log", "--root", root, "--addr", listenAddr("log")}},
+			args: []string{"serve-log", "--root", root,
+				"--bind", bind, "--port", strconv.Itoa(ports["log"])}},
 		{name: "static", bin: self,
-			args: []string{"serve-static", "--root", root, "--addr", listenAddr("static")}},
+			args: []string{"serve-static", "--root", root,
+				"--bind", bind, "--port", strconv.Itoa(ports["static"])}},
 		{name: "ai", bin: filepath.Join(binDir, "engineer-ai"),
-			args: []string{"--root", root, "--addr", listenAddr("ai"),
+			args: []string{"--root", root,
+				"--bind", bind, "--port", strconv.Itoa(ports["ai"]),
 				"--agents", filepath.Join(pkg, "agents", "AGENTS.md"),
 				"--log", svcURL("log"), "--static", svcURL("static")}},
 		{name: "web", bin: self,
-			args: []string{"serve-web", strconv.Itoa(ports["web"]), "--bind", bind, "--root", filepath.Join(pkg, "web"),
+			args: []string{"serve-web",
+				"--bind", bind, "--port", strconv.Itoa(ports["web"]),
+				"--assets", filepath.Join(pkg, "web"),
 				"--static", svcURL("static"), "--ai", svcURL("ai"), "--log", svcURL("log")}},
 	}
 

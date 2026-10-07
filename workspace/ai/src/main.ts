@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { Registry } from "./registry.ts";
 import { serve } from "./server.ts";
@@ -23,9 +22,17 @@ function withLocalNoProxy(value: string | undefined): string {
 process.env.no_proxy = withLocalNoProxy(process.env.no_proxy);
 process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 
-// usage: bun run src/main.ts [--addr :7501] [--root <project dir>]
-//        [--log http://localhost:7503] [--static http://localhost:7502]
-//        [--agents <AGENTS.md>] [--model provider/model-id] [--stub]
+// usage: bun run src/main.ts --bind <host> --port <n> --root <project dir>
+//        --log <url> --static <url> --agents <AGENTS.md>
+//        [--model provider/model-id] [--stub]
+//
+// Every flag above is required and there is no fallback. The launcher owns the
+// addresses, the project root and the spec file, and passes them all down; a
+// service that invents a default silently talks to a port nobody chose.
+const USAGE =
+  "usage: engineer-ai --bind <host> --port <n> --root <project dir> " +
+  "--log <url> --static <url> --agents <AGENTS.md> " +
+  "[--model provider/model-id] [--stub]";
 
 function parseFlags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -42,39 +49,34 @@ function parseFlags(argv: string[]): Record<string, string> {
   return out;
 }
 
-function findRoot(): string {
-  let dir = process.cwd();
-  for (;;) {
-    try {
-      readFileSync(path.join(dir, "engineer.yaml"));
-      return dir;
-    } catch {
-      const parent = path.dirname(dir);
-      if (parent === dir) {
-        console.error("engineer.yaml not found in any parent directory");
-        process.exit(1);
-      }
-      dir = parent;
-    }
+const flags = parseFlags(process.argv.slice(2));
+
+const REQUIRED = ["bind", "port", "root", "log", "static", "agents"];
+const missing = REQUIRED.filter((k) => !flags[k]);
+if (missing.length || !/^\d+$/.test(flags.port ?? "")) {
+  if (missing.length) {
+    console.error(
+      `engineer ai: missing required flag(s): ${missing.map((k) => `--${k}`).join(", ")}`,
+    );
+  } else {
+    console.error(`engineer ai: --port must be a number, got ${JSON.stringify(flags.port)}`);
   }
+  console.error(USAGE);
+  process.exit(2);
 }
 
-const flags = parseFlags(process.argv.slice(2));
 const forceStub = flags.stub === "1";
-const root = flags.root || findRoot();
-const addr = flags.addr || "127.0.0.1:7501";
-const logBase = flags.log || "http://localhost:7503";
-const staticBase = flags.static || "http://localhost:7502";
+const root = flags.root;
+const addr = `${flags.bind}:${flags.port}`;
+const logBase = flags.log;
+const staticBase = flags.static;
 
 // The system prompt is the tool's own spec — how the agent behaves (verbs). A
 // project's agents/ files describe that project (nouns); they are never read
-// here. Default: the installed tool's copy. Launchers pass --agents explicitly
-// instead, so the packaged case works from wherever the package sits and dev
-// runs from the checkout.
-function resolveAgentsFile(explicit?: string): string {
-  const file = explicit
-    ? path.resolve(explicit)
-    : path.join(homedir(), ".engineer", "apps", "current", "agents", "AGENTS.md");
+// here. --agents points at the file the launcher resolved, so the packaged case
+// works from wherever the package sits and dev runs from the checkout.
+function resolveAgentsFile(explicit: string): string {
+  const file = path.resolve(explicit);
   if (!existsSync(file)) {
     console.error(`engineer ai: agents/AGENTS.md not found at ${file}`);
     process.exit(1);

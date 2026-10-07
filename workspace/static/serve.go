@@ -6,52 +6,45 @@
 // which whitelists process execution sees as few distinct paths as possible.
 // Serve is the entry point behind the `serve-static` subcommand:
 //
-//	engineer serve-static [--addr 127.0.0.1:7502] [--root <project dir>]
+//	engineer serve-static --bind <host> --port <n> --root <project dir>
+//
+// Every flag is required and there is no fallback. A leaf service does not get
+// to guess its own address or which project it serves: the launcher owns both
+// decisions and passes them down. A default here silently binds a port nobody
+// asked for — which has already written test data into a real project.
 package static
 
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
-	"path/filepath"
+	"strconv"
 
 	"engineer/static/internal/server"
 )
+
+const usage = "usage: engineer serve-static --bind <host> --port <n> --root <project dir>"
 
 // Serve runs the static service until it is killed. argv is the argument list
 // following the subcommand; on failure it prints to stderr and exits.
 func Serve(argv []string) {
 	fs := flag.NewFlagSet("serve-static", flag.ExitOnError)
-	addr := fs.String("addr", "127.0.0.1:7502", "listen address (address the launcher chose; loopback by default)")
-	root := fs.String("root", "", "engineer project root (auto-detected from cwd if empty)")
+	bind := fs.String("bind", "", "listen host — required")
+	port := fs.Int("port", 0, "listen port — required")
+	root := fs.String("root", "", "engineer project root — required")
 	_ = fs.Parse(argv)
-	r := *root
-	if r == "" {
-		r = findRoot()
-	}
-	srv := server.New(r)
-	fmt.Printf("engineer static: serving schema for %s on %s\n", r, *addr)
-	if err := srv.Listen(*addr); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-}
 
-func findRoot() string {
-	dir, err := os.Getwd()
-	if err != nil {
+	if *bind == "" || *port == 0 || *root == "" {
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
+	}
+
+	addr := net.JoinHostPort(*bind, strconv.Itoa(*port))
+	srv := server.New(*root)
+	fmt.Printf("engineer static: serving schema for %s on %s\n", *root, addr)
+	if err := srv.Listen(addr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "engineer.yaml")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			fmt.Fprintln(os.Stderr, "engineer.yaml not found in any parent directory")
-			os.Exit(1)
-		}
-		dir = parent
 	}
 }

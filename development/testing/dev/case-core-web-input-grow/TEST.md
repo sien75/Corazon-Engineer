@@ -23,17 +23,25 @@ ROOT="$ROOTDIR/.engineer/.skill-test"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
 printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
 
-(cd workspace/ai && bun run src/main.ts --addr :8511 --root "$ROOT" --stub \
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8513 >/tmp/input-grow-log.log 2>&1 &
+
+(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8511 --stub \
+  --log http://localhost:8513 --static http://localhost:8502 \
   --agents "$ROOTDIR/agents/AGENTS.md" >/tmp/input-grow-ai.log 2>&1 &)
 sleep 2
 # one skill, so the new tab page has something to open
+for i in $(seq 1 60); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8511/ai/skill/list -d '{}' && break
+  sleep 1
+done
 curl -s -o /dev/null -X POST http://localhost:8511/ai/skill/save \
   -d 'name: Input grow
 text: placeholder skill'
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-web 8610 --root "$ROOTDIR/workspace/web" \
-  --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8503 \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
+  --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8513 \
   >/tmp/input-grow-web.log 2>&1 &
 ```
 
@@ -152,6 +160,7 @@ clearing returns to 2 rows. Exit code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'engineer serve-web 8610'
-pkill -f 'main.ts --addr :8511'
+pkill -f 'serve-web.*--port 8610'
+pkill -f 'main.ts.*--port 8511'
+pkill -f 'serve-log.*--port 8513'
 ```

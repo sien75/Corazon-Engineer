@@ -6,59 +6,53 @@
 // which whitelists process execution sees as few distinct paths as possible.
 // Serve is the entry point behind the `serve-log` subcommand:
 //
-//	engineer serve-log [--addr 127.0.0.1:7503] [--root <project dir>]
+//	engineer serve-log --bind <host> --port <n> --root <project dir>
+//
+// Every flag is required and there is no fallback. A leaf service does not get
+// to guess its own address or which project it serves: the launcher owns both
+// decisions and passes them down. A default here silently binds a port nobody
+// asked for — which has already written test data into a real project.
 package log
 
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
-	"path/filepath"
+	"strconv"
 
 	"engineer/log/internal/server"
 	"engineer/log/internal/store"
 )
 
+const usage = "usage: engineer serve-log --bind <host> --port <n> --root <project dir>"
+
 // Serve runs the log service until it is killed. argv is the argument list
 // following the subcommand; on failure it prints to stderr and exits.
 func Serve(argv []string) {
 	fs := flag.NewFlagSet("serve-log", flag.ExitOnError)
-	addr := fs.String("addr", "127.0.0.1:7503", "listen address (address the launcher chose; loopback by default)")
-	root := fs.String("root", "", "engineer project root (auto-detected from cwd if empty)")
+	bind := fs.String("bind", "", "listen host — required")
+	port := fs.Int("port", 0, "listen port — required")
+	root := fs.String("root", "", "engineer project root — required")
 	_ = fs.Parse(argv)
-	r := *root
-	if r == "" {
-		r = findRoot()
+
+	if *bind == "" || *port == 0 || *root == "" {
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
 	}
-	st, err := store.Open(r)
+
+	st, err := store.Open(*root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "open store: %v\n", err)
 		os.Exit(1)
 	}
 	defer st.Close()
-	srv := server.New(st)
-	fmt.Printf("engineer log: storing in %s/.engineer/engineer.db, serving on %s\n", r, *addr)
-	if err := srv.Listen(*addr); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-}
 
-func findRoot() string {
-	dir, err := os.Getwd()
-	if err != nil {
+	addr := net.JoinHostPort(*bind, strconv.Itoa(*port))
+	srv := server.New(st)
+	fmt.Printf("engineer log: storing in %s/.engineer/engineer.db, serving on %s\n", *root, addr)
+	if err := srv.Listen(addr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "engineer.yaml")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			fmt.Fprintln(os.Stderr, "engineer.yaml not found in any parent directory")
-			os.Exit(1)
-		}
-		dir = parent
 	}
 }

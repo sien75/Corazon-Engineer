@@ -8,16 +8,17 @@ it deliberately.
 
 Sources of truth: `how-to/deploy/prod/launch.go` (owns the bind host and hands
 it down), `how-to/deploy/dev/launch.sh` (same, for dev), and each service's own
-default (`workspace/log`, `workspace/static`, `workspace/web/server` — all three
-started as subcommands of the merged `engineer` binary — plus
-`workspace/ai/src/main.ts`).
+required `--bind` (`workspace/log`, `workspace/static`, `workspace/web/server` —
+all three started as subcommands of the merged `engineer` binary — plus
+`workspace/ai/src/main.ts`). No service defaults its bind host: loopback is the
+launcher's choice, made once and passed down.
 
 ## ⚠️ Open-up checks are opt-in
 
 Sections **2** and **3b** bind to `0.0.0.0`. That is exactly the behaviour a
 corporate endpoint agent flags: on an Ant-managed machine (Aspect/星点) it raises
-its alarm — observed, once per service, four in total. That is why the default
-is loopback.
+its alarm — observed, once per service, four in total. That is why the launcher's
+default bind host is loopback.
 
 **Do not run them as part of a routine pass.** Run one only when you
 deliberately need to re-verify the open path, and expect the alarm. Sections
@@ -91,37 +92,49 @@ that, pass the interface instead — `ENGINEER_BIND=0.0.0.0` is the whole-networ
 form, `ENGINEER_BIND=<this machine's IP>` the one-interface form; the **prod**
 launcher detects the outward IP itself and prints it.
 
-## 3a. a service run on its own defaults to loopback  (default run)
+## 3a. a service run on its own has no default address at all  (default run)
 
-Here nothing chooses a port for us — the test does, so 8600 is this test's own
-choice, not a default being asserted. The default under test is the **host**:
-no launcher, no `--bind` → `127.0.0.1`.
+Nothing is chosen for a hand-started service: no launcher, no defaults. Every
+flag is required, so a service given none refuses to start rather than binding a
+port somebody else may own.
 
 ```bash
 how-to/deploy/dev/stop.sh
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-web 8600 --root "$(cd workspace/web && pwd)" &
+
+# no flags at all: must refuse, and bind nothing
+/tmp/engineer serve-web; echo "exit=$?"
+lsof -nP -iTCP -sTCP:LISTEN | grep engineer || echo "(nothing listening)"
+
+# told the host explicitly, it listens exactly there
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8600 \
+  --assets "$(cd workspace/web && pwd)" \
+  --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
 sleep 1; lsof -nP -iTCP:8600 -sTCP:LISTEN
 ```
 
-Expected: one line for `/tmp/engineer`, `TCP 127.0.0.1:8600 (LISTEN)`. (The
-process name in `lsof` is the binary's basename: with the merged binary all four
-services report as `engineer`.)
+Expected: the bare run prints a usage line containing `--bind <host> --port <n>
+--assets <dir>` and exits non-zero, with nothing listening; the second run gives
+one `TCP 127.0.0.1:8600 (LISTEN)` line. (The process name in `lsof` is the
+binary's basename: with the merged binary all four services report as
+`engineer`.)
 
 ## 3b. --bind 0.0.0.0 opens a single service  (opt-in, ⚠️ triggers the alarm)
 
 ```bash
-/tmp/engineer serve-web 8601 --root "$(cd workspace/web && pwd)" --bind 0.0.0.0 &
+/tmp/engineer serve-web --bind 0.0.0.0 --port 8601 \
+  --assets "$(cd workspace/web && pwd)" \
+  --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
 sleep 1; lsof -nP -iTCP:8601 -sTCP:LISTEN
 ```
 
-Expected: `TCP *:8601 (LISTEN)` — `--bind` is how a single service is opened up
-without the launcher.
+Expected: `TCP *:8601 (LISTEN)` — `--bind 0.0.0.0` is how a single service is
+opened up without the launcher.
 
 ## 4. teardown
 
 ```bash
-pkill -f '/tmp/engineer serve-web 86'
+pkill -f 'serve-web.*--port 86'
 how-to/deploy/dev/stop.sh
 ```
