@@ -484,9 +484,46 @@ canvas.layer {
 }
 
 .newtab-body {
-  width: min(680px, 100%);
+  width: min(1040px, 100%);
   margin: auto;
   padding: 32px 16px;
+}
+
+/* Two columns, and the split is the page's whole idea: the *kinds* of
+   conversation you can start on the left (built-in / my skills / suggested),
+   the past conversations on the right. The line between them spans the content,
+   not the page — it divides the two lists, it does not cut the page in half. */
+.newtab-cols {
+  display: flex;
+  align-items: flex-start;
+  gap: 36px;
+}
+
+.newtab-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.newtab-divider {
+  align-self: stretch;
+  width: 1px;
+  background: var(--border);
+}
+
+/* Narrow window: the columns stack and the divider turns into a rule. The row's
+   `align-items: flex-start` must be undone here — in a column it would shrink
+   each column to its content and let a long skill text run off the page. */
+@media (max-width: 900px) {
+  .newtab-cols {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 24px;
+  }
+
+  .newtab-divider {
+    width: auto;
+    height: 1px;
+  }
 }
 
 .newtab-body h3 {
@@ -496,6 +533,12 @@ canvas.layer {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-muted);
+}
+
+/* The heading already separates a section from the one above it; the extra top
+   margin is for that, not for the top of the column. */
+.newtab-section:first-child h3 {
+  margin-top: 0;
 }
 
 /* The shared hint centres itself (it fills the graph area there); inside the
@@ -558,6 +601,61 @@ canvas.layer {
 .skill-actions button:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* Deleting a skill deletes a folder, so the delete button asks first: a small
+   popover next to it (the position is set from the button's box), where a second
+   click confirms and anything else backs out. */
+.skill-confirm {
+  position: fixed;
+  z-index: 100;
+  width: min(260px, calc(100vw - 16px));
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.skill-confirm-msg {
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+.skill-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.skill-confirm-actions button {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.skill-confirm-delete {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  color: var(--danger-fg);
+}
+
+.skill-confirm-delete:hover {
+  background: var(--danger-bg-hover);
+}
+
+.skill-confirm-cancel {
+  background: none;
+  border: 1px solid var(--border-strong);
+  color: var(--fg);
+}
+
+.skill-confirm-cancel:hover {
+  background: var(--surface-3);
 }
 
 /* The conversation scrolls over the whole pane, not just over the centred

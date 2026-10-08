@@ -1,9 +1,9 @@
 id: ai-skill-delete
-description: Delete a custom skill
+description: Delete a custom skill — its directory under .agents/skills/ is removed
 
 request:
   body:
-    id: string  # skill id
+    id: string  # skill id (a custom directory name, or a suggested candidate id)
 
 response:
   status: 200

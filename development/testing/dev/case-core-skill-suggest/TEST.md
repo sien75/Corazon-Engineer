@@ -135,13 +135,16 @@ name: Payment logs
 text: $TEXT"
 curl -s -X POST $AI/ai/skill/list -d 'source: suggested'
 curl -s -X POST $AI/ai/skill/list -d 'source: custom'
+ls .engineer/.skill-test/.agents/skills
 ```
 
 Expected: un-ignoring makes it active again; the save without `text` answers 400
 `bad_request` `name and text required`; the save with `id` + `name` + `text` moves
 the skill out of `source: suggested` into `source: custom` (status `active`) —
 that is how the user says "keep this one". The unfiltered suggested list no longer
-holds it, and the suggested filter is empty.
+holds it, and the suggested filter is empty. Accepting writes the skill into the
+project: `.agents/skills/payment-logs/SKILL.md` appears (the id becomes the
+directory name), with the candidate's text as its body.
 
 ## 6. a scan never blocks a conversation
 

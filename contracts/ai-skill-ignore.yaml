@@ -1,5 +1,5 @@
 id: ai-skill-ignore
-description: Ignore or restore a suggested skill; ignored skills are kept for de-duplication but never surfaced again
+description: Ignore or restore a suggested skill; ignored skills are kept for de-duplication but never surfaced again. A custom skill (a file) has no such state — its id gets a 404
 
 request:
   body:
@@ -24,7 +24,7 @@ errors:
     description: id missing
   - status: 404
     code: not_found
-    description: skill does not exist
+    description: skill does not exist, or it is a custom skill (only suggested skills can be ignored)
   - status: 500
     code: internal
     description: server error

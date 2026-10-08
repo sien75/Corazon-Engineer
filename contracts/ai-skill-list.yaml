@@ -10,11 +10,11 @@ response:
   status: 200
   body:
     skills:  # newest updated first
-      - id: string
+      - id: string  # custom: the skill's directory name under .agents/skills/; suggested: an opaque candidate id
         name: string  # skill display name
         text: string  # the skill itself: one piece of text
-        source: custom | suggested
-        status: active | ignored  # ignored only applies to suggested
+        source: custom | suggested  # custom skills are files under .agents/skills/<id>/SKILL.md; suggested are candidates held by the ai service
+        status: active | ignored  # ignored only applies to suggested (custom files are always active)
         createdAt: string  # RFC3339
         updatedAt: string  # RFC3339
         evidence?: object  # suggested only: where the candidate came from

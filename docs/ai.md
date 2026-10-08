@@ -2,7 +2,7 @@
 
 # ai
 
-Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash; also owns the skill system (a skill is one piece of text; running it opens a session with that text) in its own sqlite (.engineer/skill.db), including suggested-skill discovery over past conversation runs
+Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash; also owns the skill system (a skill is one piece of text; running it opens a session with that text) — custom skills are files at .agents/skills/<slug>/SKILL.md, while suggested candidates and the scan bookkeeping over past conversation runs live in its own sqlite (.engineer/skill.db)
 
 - runtime: bun 1.3
 
@@ -198,11 +198,11 @@ status?: active | ignored  # filter by skill status
 
 ```yaml
 skills:  # newest updated first
-    - id: string
+    - id: string  # custom: the skill's directory name under .agents/skills/; suggested: an opaque candidate id
       name: string  # skill display name
       text: string  # the skill itself: one piece of text
-      source: custom | suggested
-      status: active | ignored  # ignored only applies to suggested
+      source: custom | suggested  # custom skills are files under .agents/skills/<id>/SKILL.md; suggested are candidates held by the ai service
+      status: active | ignored  # ignored only applies to suggested (custom files are always active)
       createdAt: string  # RFC3339
       updatedAt: string  # RFC3339
       evidence?: object  # suggested only: where the candidate came from
@@ -227,12 +227,12 @@ YAML
 
 - `POST /ai/skill/save` (network / http)
 
-Create or update a custom skill; the AI creates skills through this interface too
+Create or update a custom skill — a file at <project>/.agents/skills/<id>/SKILL.md; the AI creates skills through this interface too. Saving a suggested candidate (its id) accepts it — the skill is written out as a file and the candidate is dropped
 
 ### Request body
 
 ```yaml
-id?: string  # present = update that skill, absent = create a new one
+id?: string  # present = update that skill (a custom directory name or a suggested candidate id), absent = create a new one (id = a slug derived from name)
 name: string  # skill display name
 text: string  # the skill itself: one piece of text handed to the model on run
 ```
@@ -241,7 +241,7 @@ text: string  # the skill itself: one piece of text handed to the model on run
 
 ```yaml
 skill:
-    id: string
+    id: string  # the custom skill's directory name under .agents/skills/
     name: string
     text: string
     source: custom  # saving always produces a custom skill
@@ -261,7 +261,7 @@ skill:
 ```bash
 curl -s -X POST <address>/ai/skill/save \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
-  id?: string  # present = update that skill, absent = create a new one
+  id?: string  # present = update that skill (a custom directory name or a suggested candidate id), absent = create a new one (id = a slug derived from name)
   name: string  # skill display name
   text: string  # the skill itself: one piece of text handed to the model on run
 YAML
@@ -271,12 +271,12 @@ YAML
 
 - `POST /ai/skill/delete` (network / http)
 
-Delete a custom skill
+Delete a custom skill — its directory under .agents/skills/ is removed
 
 ### Request body
 
 ```yaml
-id: string  # skill id
+id: string  # skill id (a custom directory name, or a suggested candidate id)
 ```
 
 ### Response (status 200)
@@ -296,7 +296,7 @@ skillId: string
 ```bash
 curl -s -X POST <address>/ai/skill/delete \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
-  id: string  # skill id
+  id: string  # skill id (a custom directory name, or a suggested candidate id)
 YAML
 ```
 
@@ -304,7 +304,7 @@ YAML
 
 - `POST /ai/skill/ignore` (network / http)
 
-Ignore or restore a suggested skill; ignored skills are kept for de-duplication but never surfaced again
+Ignore or restore a suggested skill; ignored skills are kept for de-duplication but never surfaced again. A custom skill (a file) has no such state — its id gets a 404
 
 ### Request body
 
@@ -329,7 +329,7 @@ skill:
 ### Errors
 
 - 400 `bad_request` — id missing
-- 404 `not_found` — skill does not exist
+- 404 `not_found` — skill does not exist, or it is a custom skill (only suggested skills can be ignored)
 - 500 `internal` — server error
 
 ### Example

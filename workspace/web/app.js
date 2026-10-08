@@ -1878,6 +1878,85 @@ function newTabInit() {
   newTabEl.addEventListener("click", newTabClick);
 }
 
+// Deleting a skill deletes a folder in the project, so the row's delete button
+// asks first — a small popover next to it, not a modal: the page stays visible
+// and one more click (or Esc, or a scroll, or clicking anywhere else) is all it
+// takes to back out. `skillConfirm` is the one that is open.
+let skillConfirm = null;
+
+function skillConfirmClose() {
+  if (!skillConfirm) return;
+  const { el, off } = skillConfirm;
+  skillConfirm = null;
+  off?.();
+  el?.remove();
+}
+
+function skillConfirmOpen(button, t) {
+  skillConfirmClose();
+  const pop = document.createElement("div");
+  pop.className = "skill-confirm";
+  const msg = document.createElement("div");
+  msg.className = "skill-confirm-msg";
+  msg.textContent = `Delete “${t.name}”? Its folder goes with it.`;
+  const actions = document.createElement("div");
+  actions.className = "skill-confirm-actions";
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "skill-confirm-delete";
+  del.textContent = "Delete";
+  del.addEventListener("click", () => {
+    const id = t.id;
+    skillConfirmClose();
+    newTabSend("/ai/skill/delete", { id });
+  });
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "skill-confirm-cancel";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => skillConfirmClose());
+  actions.appendChild(del);
+  actions.appendChild(cancel);
+  pop.appendChild(msg);
+  pop.appendChild(actions);
+  document.body.appendChild(pop);
+
+  // Anchored under the button that opened it, flipped above when it would fall
+  // off the bottom, and never past the right edge.
+  const anchor = button.getBoundingClientRect();
+  const box = pop.getBoundingClientRect();
+  let top = anchor.bottom + 6;
+  if (top + box.height > window.innerHeight - 8) top = anchor.top - box.height - 6;
+  const left = Math.min(anchor.right - box.width, window.innerWidth - box.width - 8);
+  pop.style.top = `${Math.max(8, top)}px`;
+  pop.style.left = `${Math.max(8, left)}px`;
+
+  // Esc must close the popover before it reaches the page (which would leave the
+  // new tab page altogether), hence the capture-phase listener.
+  const onKeyDown = (e) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    skillConfirmClose();
+  };
+  const onOutside = (e) => {
+    if (!skillConfirm) return;
+    if (e.target.closest?.(".skill-confirm") || e.target.closest?.("[data-action=delete]")) return;
+    skillConfirmClose();
+  };
+  const onScroll = () => skillConfirmClose();
+  window.addEventListener("keydown", onKeyDown, true);
+  document.addEventListener("mousedown", onOutside, true);
+  window.addEventListener("scroll", onScroll, true);
+  const off = () => {
+    window.removeEventListener("keydown", onKeyDown, true);
+    document.removeEventListener("mousedown", onOutside, true);
+    window.removeEventListener("scroll", onScroll, true);
+  };
+  skillConfirm = { id: t.id, el: pop, off };
+  del.focus();
+}
+
 // openNewTab shows the skill picker at /new. `push` is false when the URL
 // already says /new (a back/forward step re-renders the page); a second `+`
 // click just refreshes the list instead of stacking another entry.
@@ -1898,15 +1977,21 @@ function openNewTab({ push = true } = {}) {
 // to). Replacing keeps the page out of history: back must not reopen it.
 function closeNewTab() {
   if (!newTabOpen) return;
+  skillConfirmClose();
   newTabOpen = false;
   navigate(newTabReturn, "replace");
 }
 
 function newTabItemHtml(t, suggested) {
+  // Every row can be chatted with; the buttons spell it out next to the list of
+  // things you can do to the skill itself (suggestions: keep it or drop it;
+  // saved skills: delete).
   const actions = suggested
-    ? `<button type="button" data-action="save" data-id="${t.id}">save</button>
+    ? `<button type="button" data-action="run" data-id="${t.id}">chat</button>
+       <button type="button" data-action="save" data-id="${t.id}">save</button>
        <button type="button" data-action="ignore" data-id="${t.id}">ignore</button>`
-    : `<button type="button" data-action="delete" data-id="${t.id}">delete</button>`;
+    : `<button type="button" data-action="run" data-id="${t.id}">chat</button>
+       <button type="button" data-action="delete" data-id="${t.id}">delete</button>`;
   return `<div class="skill-item" data-action="run" data-id="${t.id}">
     <div class="skill-main">
       <div class="skill-name">${escapeHtml(t.name)}</div>
@@ -1924,9 +2009,17 @@ function newTabError(message) {  const body = newTabEl?.querySelector(".newtab-b
   body.prepend(note);
 }
 
+// The new tab page is two columns: the **kinds** of conversation you can start
+// on the left (built-in / my skills / suggested — all "classes"), the
+// **instances** you already had on the right (past conversations). They come
+// from two different services (ai owns skills, log owns conversations), which is
+// exactly why they do not belong in one list.
+const SUGGESTED_SHOWN = 10;
+
 async function newTabReload() {
   const body = newTabEl?.querySelector(".newtab-body");
   if (!body) return;
+  skillConfirmClose();
   let skills = [];
   try {
     const res = await fetch(`${AI_BASE}/ai/skill/list`, {
@@ -1942,33 +2035,56 @@ async function newTabReload() {
     return;
   }
   newTabSkills = new Map(skills.map((t) => [t.id, t]));
+  // my skills are the ones you kept: files in the project. Suggested is a
+  // sample, not an archive — the newest few, the rest stays for later.
   const mine = skills.filter((t) => t.source === "custom" && t.status === "active");
-  const suggested = skills.filter((t) => t.source === "suggested" && t.status === "active");
+  const suggested = skills
+    .filter((t) => t.source === "suggested" && t.status === "active")
+    .slice(0, SUGGESTED_SHOWN);
   const { recent, sessions } = await recentSessions();
   newTabSessions = sessions;
   const none = `<div class="empty-hint">nothing here yet</div>`;
   body.innerHTML = `
-    <h3>built-in</h3>
-    <div class="skill-item" data-action="newchat">
-      <div class="skill-main">
-        <div class="skill-name">Chat</div>
-        <div class="skill-text">a blank conversation — no skill behind it</div>
+    <div class="newtab-cols">
+      <div class="newtab-col">
+        <div class="newtab-section" data-section="built-in">
+          <h3>built-in</h3>
+          <div class="skill-item" data-action="newchat">
+            <div class="skill-main">
+              <div class="skill-name">Chat</div>
+              <div class="skill-text">a blank conversation — no skill behind it</div>
+            </div>
+          </div>
+        </div>
+        <div class="newtab-section" data-section="mine">
+          <h3>my skills</h3>
+          ${mine.length ? mine.map((t) => newTabItemHtml(t, false)).join("") : none}
+        </div>
+        <div class="newtab-section" data-section="suggested">
+          <h3>suggested</h3>
+          ${suggested.length ? suggested.map((t) => newTabItemHtml(t, true)).join("") : none}
+        </div>
+      </div>
+      <div class="newtab-divider"></div>
+      <div class="newtab-col">
+        <div class="newtab-section" data-section="recent">
+          <h3>recent</h3>
+          ${recent.length ? recent.map((s) => newTabSessionHtml(s)).join("") : none}
+        </div>
       </div>
     </div>
-    <h3>my skills</h3>
-    ${mine.length ? mine.map((t) => newTabItemHtml(t, false)).join("") : none}
-    <h3>suggested</h3>
-    ${suggested.length ? suggested.map((t) => newTabItemHtml(t, true)).join("") : none}
-    <h3>recent</h3>
-    ${recent.length ? recent.map((s) => newTabSessionHtml(s)).join("") : none}
   `;
 }
 
-// recentSessions lists past conversations that are not already open as tabs.
-// Closing a tab only forgets the tab, so this is how a closed conversation is
-// found again — both a skill run and a blank chat end up here. The log service
-// is not required for the rest of the page.
-async function recentSessions(limit = 10) {
+// recentSessions lists past conversations, most recently active first: the ones
+// you are not already looking at. An open conversation is a tab already — this
+// is how a *closed* one is found again — so the tabs are filtered out (a skill
+// run and a blank chat both end up here). Should one ever be listed anyway,
+// selecting it is harmless: openSkillTab switches to the tab that already holds
+// that session instead of opening a second one. One page of log/list is 100
+// sessions, and that is what the page shows; the log service is not required for
+// the rest of the new tab page.
+async function recentSessions() {
   let sessions = [];
   try {
     const res = await fetch(`${LOG_BASE}/log/list`, {
@@ -1982,7 +2098,7 @@ async function recentSessions(limit = 10) {
     sessions = [];
   }
   const open = new Set(skillTabs.map((t) => t.sessionId));
-  const list = sessions.filter((s) => s.sessionId && !open.has(s.sessionId)).slice(0, limit);
+  const list = sessions.filter((s) => s.sessionId && !open.has(s.sessionId));
   const labels = new Map(
     list.map((s) => [s.sessionId, aiOneLine(s.preview || "").slice(0, 60) || s.sessionId]),
   );
@@ -2059,8 +2175,10 @@ function newTabClick(event) {
   if (action === "newchat") newBlankChat();
   else if (action === "resume") newTabResume(id);
   else if (action === "run") newTabRun(id);
-  else if (action === "delete") newTabSend("/ai/skill/delete", { id });
-  else if (action === "ignore") newTabSend("/ai/skill/ignore", { id, ignored: true });
+  else if (action === "delete") {
+    const t = newTabSkills.get(id);
+    if (t) skillConfirmOpen(hit, t);
+  } else if (action === "ignore") newTabSend("/ai/skill/ignore", { id, ignored: true });
   else if (action === "save") {
     const t = newTabSkills.get(id);
     if (t) newTabSend("/ai/skill/save", { id, name: t.name, text: t.text });
@@ -2069,6 +2187,11 @@ function newTabClick(event) {
 
 tabAddEl.addEventListener("click", () => openNewTab());
 window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && skillConfirm) {
+    event.preventDefault();
+    skillConfirmClose();
+    return;
+  }
   if (event.key === "Escape" && newTabOpen) {
     event.preventDefault();
     closeNewTab();
