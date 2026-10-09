@@ -1,4 +1,4 @@
-# Test: core-web-skill-tabs
+# Test: core-web-tabs
 
 The tab bar and the new tab page. A skill is one piece of text; opening it runs
 it (the ai service creates a session and hands the text to the model) and shows
@@ -8,8 +8,8 @@ closed. `/new` cancels the active instance and opens a fresh generic chat, and
 each instance keeps its own unsent composer draft.
 
 Source of truth: `workspace/web/index.html` (`#tabs`), `workspace/web/app.js`
-(`openSkillTab` / `activateSkillTab` / `closeSkillTab` / the new tab page) and
-`workspace/web/style.css` (`#ai.skill-mode`). Tab switching, layout and the
+(`openTab` / `activateTab` / `closeTab` / the new tab page) and
+`workspace/web/style.css` (`#ai.tab-mode`). Tab switching, layout and the
 page are DOM behaviour, so this case runs through a real browser
 (`ego-browser`) rather than curl.
 
@@ -26,12 +26,12 @@ printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
 
 # log + ai on their own ports; ai in stub mode, so skill runs are deterministic and offline
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8513 >/tmp/skill-tabs-log.log 2>&1 &
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8513 >/tmp/tabs-log.log 2>&1 &
 
 (cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8511 --stub \
   --log http://localhost:8513 --static http://localhost:8502 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
-  >/tmp/skill-tabs-ai.log 2>&1 &)
+  >/tmp/tabs-ai.log 2>&1 &)
 
 # one saved skill, so the new tab page's "my skills" section is not empty
 # wait for ai first: the save must not race the boot
@@ -58,7 +58,7 @@ for (let i = 1; i <= 12; i++) {
 # web assets
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
   --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8513 \
-  >/tmp/skill-tabs-web.log 2>&1 &
+  >/tmp/tabs-web.log 2>&1 &
 ```
 
 Expected on startup: the ai service logs `--stub: model calls disabled`, the
@@ -71,7 +71,7 @@ frontend, never called here, so any address — or none — is fine.)
 ```bash
 WEB_URL=http://localhost:8610 ego-browser nodejs <<'EOF'
 const WEB = process.env.WEB_URL || "http://localhost:8610";
-const space = await taskSpace("core-web-skill-tabs");
+const space = await taskSpace("core-web-tabs");
 const page = space.page("p1");
 const checks = [];
 const check = (name, pass, info) => checks.push({ name, pass: !!pass, ...(info ? { info } : {}) });
@@ -80,8 +80,7 @@ await page.goto(`${WEB}/`);
 await page.waitForSelector("#tabs", { state: "visible" });
 // start from a clean browser state (tabs *and* the ad-hoc chat panel)
 await page.evaluate(() => {
-  localStorage.removeItem("engineer.skill.tabs");
-  localStorage.removeItem("engineer.skill.active");
+  localStorage.removeItem("engineer.tabs");
 });
 await page.reload();
 await page.waitForSelector("#tabs", { state: "visible" });
@@ -205,11 +204,11 @@ check("cancelling leaves the skill alone",
 // 3. the page can start a blank conversation (no skill behind it)
 await page.cdp("Emulation.clearDeviceMetricsOverride", {});
 await page.click("loc=css:#newtab [data-action=newchat]");
-await page.waitForSelector(".tab.skill.active", { state: "visible" });
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("skill-mode"),
+await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
+await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
 const blank = await page.evaluate(() => ({
-  tab: document.querySelector("#tabs .tab.skill.active")?.textContent.trim(),
+  tab: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
   messages: document.querySelectorAll("#ai-messages .ai-msg").length,
   inputVisible: !document.getElementById("ai-input").hidden,
   newTabHidden: document.getElementById("newtab").hidden,
@@ -218,23 +217,23 @@ check("built-in Chat opens a blank conversation tab",
   !!blank.tab && blank.tab.startsWith("new chat"), { tab: blank.tab });
 check("a blank chat starts empty and ready for input",
   blank.messages === 0 && blank.inputVisible === true && blank.newTabHidden === true, blank);
-await page.click("loc=css:.tab.skill .tab-close");
-await page.waitForFunction(() => document.querySelectorAll("#tabs .tab.skill").length === 0,
+await page.click("loc=css:.tab[data-tab-id] .tab-close");
+await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-id]").length === 0,
   undefined, { timeout: 5_000 });
 
-// 4. running a skill opens a skill tab and streams the run into it — through the
+// 4. running a skill opens a tab and streams the run into it — through the
 // row's own `chat` button.
 await page.click("#tab-add");
 await page.waitForSelector("#newtab .skill-item", { state: "visible" });
 await page.click("loc=css:#newtab .skill-actions button[data-action='run'][data-id='seeded-skill']");
-await page.waitForSelector(".tab.skill.active", { state: "visible" });
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("skill-mode"),
+await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
+await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
   undefined, { timeout: 30_000 });
 const run = await page.evaluate(() => ({
-  tab: document.querySelector("#tabs .tab.skill.active")?.textContent.trim(),
+  tab: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
   user: document.querySelector("#ai-messages .ai-user")?.textContent.trim(),
   assistant: document.querySelector("#ai-messages .ai-assistant")?.textContent.trim().slice(0, 40),
   leftHidden: document.getElementById("left").hidden,
@@ -242,11 +241,11 @@ const run = await page.evaluate(() => ({
   viewport: window.innerWidth,
   newTabHidden: document.getElementById("newtab").hidden,
 }));
-check("running a skill opens a skill tab", !!run.tab && run.tab.startsWith("Seeded skill"), { tab: run.tab });
+check("running a skill opens a tab", !!run.tab && run.tab.startsWith("Seeded skill"), { tab: run.tab });
 check("running leaves the new tab page", run.newTabHidden === true);
 check("the skill text is the first message", run.user === "seeded instruction", { user: run.user });
 check("the run streams into the tab", (run.assistant || "").includes("dev stub"), { assistant: run.assistant });
-check("a skill tab takes the whole page",
+check("a tab takes the whole page",
   run.leftHidden === true && run.width > run.viewport * 0.9,
   { leftHidden: run.leftHidden, width: run.width, viewport: run.viewport });
 // The conversation is a column inside that page: capped and centred, messages
@@ -269,70 +268,70 @@ check("recent does not list the conversation that is open as a tab",
   await page.evaluate(() =>
     document.querySelectorAll("#newtab [data-section=recent] .skill-item").length === 0 &&
     document.querySelector("#newtab [data-action=resume]") === null));
-await page.click("loc=css:#tabs .tab.skill");
+await page.click("loc=css:#tabs .tab[data-tab-id]");
 await page.waitForFunction(() => document.getElementById("newtab").hidden === true,
   undefined, { timeout: 5_000 });
 
-// 5. a fixed tab leaves skill mode but keeps the skill tab
+// 5. a fixed tab leaves tab mode but keeps the tab
 await page.click("loc=css:#tabs button[data-view='graph']");
-await page.waitForFunction(() => !document.getElementById("ai").classList.contains("skill-mode"),
+await page.waitForFunction(() => !document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 5_000 });
-await page.screenshot({ path: "/tmp/skill-tabs-graph.png" });
+await page.screenshot({ path: "/tmp/tabs-graph.png" });
 const back = await page.evaluate(() => ({
   leftHidden: document.getElementById("left").hidden,
-  skillTabs: document.querySelectorAll("#tabs .tab.skill").length,
+  tabs: document.querySelectorAll("#tabs .tab[data-tab-id]").length,
   active: document.querySelector("#tabs .tab.active")?.textContent.trim(),
 }));
-check("a fixed tab leaves skill mode and keeps the skill tab",
-  back.leftHidden === false && back.skillTabs === 1 && back.active === "graph", back);
+check("a fixed tab leaves tab mode and keeps the tab",
+  back.leftHidden === false && back.tabs === 1 && back.active === "graph", back);
 
 // 6. reopening the tab re-renders the conversation (from /ai/resume + log)
-await page.click("loc=css:.tab.skill");
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("skill-mode"),
+await page.click("loc=css:.tab[data-tab-id]");
+await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
   undefined, { timeout: 30_000 });
-await page.screenshot({ path: "/tmp/skill-tabs-skill.png" });
+await page.screenshot({ path: "/tmp/tabs-skill.png" });
 check("reopening the tab re-renders the conversation", true);
 
-// 7. closing the last skill tab falls back to the graph
-await page.click("loc=css:.tab.skill .tab-close");
-await page.waitForFunction(() => document.querySelectorAll("#tabs .tab.skill").length === 0,
+// 7. closing the last tab falls back to the graph
+await page.click("loc=css:.tab[data-tab-id] .tab-close");
+await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-id]").length === 0,
   undefined, { timeout: 5_000 });
 const closed = await page.evaluate(() => ({
-  skillTabs: document.querySelectorAll("#tabs .tab.skill").length,
+  tabs: document.querySelectorAll("#tabs .tab[data-tab-id]").length,
   active: document.querySelector("#tabs .tab.active")?.textContent.trim(),
-  skillMode: document.getElementById("ai").classList.contains("skill-mode"),
+  tabMode: document.getElementById("ai").classList.contains("tab-mode"),
 }));
-check("closing the last skill tab falls back to the graph",
-  closed.skillTabs === 0 && closed.skillMode === false && closed.active === "graph", closed);
+check("closing the last tab falls back to the graph",
+  closed.tabs === 0 && closed.tabMode === false && closed.active === "graph", closed);
 
 // 8. a closed conversation is reachable again from the recent list
 await page.click("#tab-add");
 await page.waitForSelector("#newtab [data-action=resume]", { state: "visible" });
 await page.click("loc=css:#newtab [data-action=resume]:has-text('seeded instruction') >> nth=0");
-await page.waitForSelector(".tab.skill.active", { state: "visible" });
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("skill-mode"),
+await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
+await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
   undefined, { timeout: 30_000 });
 check("a closed conversation reopens from the recent list", true);
-await page.click("loc=css:.tab.skill .tab-close");
-await page.waitForFunction(() => document.querySelectorAll("#tabs .tab.skill").length === 0,
+await page.click("loc=css:.tab[data-tab-id] .tab-close");
+await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-id]").length === 0,
   undefined, { timeout: 5_000 });
 
 // 9. open tabs survive a reload
 await page.click("#tab-add");
 await page.waitForSelector("#newtab .skill-item", { state: "visible" });
 await page.click("loc=css:#newtab .skill-item:has-text('Seeded skill') >> nth=0");
-await page.waitForSelector(".tab.skill.active", { state: "visible" });
+await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
 await page.reload();
 await page.waitForSelector("#tabs", { state: "visible" });
-await page.waitForFunction(() => document.querySelectorAll("#tabs .tab.skill").length === 1,
+await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-id]").length === 1,
   undefined, { timeout: 10_000 });
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("skill-mode"),
+await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
 check("open tabs and the active tab survive a reload", true);
 
@@ -356,7 +355,7 @@ check("bubbles keep clear of the pane's scrollbar",
 // and reopening it must not bring the old conversation back. Before the fix
 // the tab kept its old sessionId, so switching away and back replayed it.
 const beforeNew = await page.evaluate(() => ({
-  label: document.querySelector("#tabs .tab.skill.active")?.textContent.trim(),
+  label: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
   messages: document.querySelectorAll("#ai-messages .ai-msg").length,
 }));
 check("the tab has a conversation before /new",
@@ -366,16 +365,16 @@ await page.fill("#ai-input-field", "/new");
 await page.waitForSelector("#ai-cmd:not([hidden])", { state: "visible", timeout: 5_000 });
 await page.press("#ai-input-field", "Enter");
 await page.waitForFunction(
-  () => document.querySelector("#tabs .tab.skill.active")?.textContent.trim().startsWith("new chat"),
+  () => document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim().startsWith("new chat"),
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => document.querySelectorAll("#ai-messages .ai-msg").length === 0,
   undefined, { timeout: 10_000 });
 const afterNew = await page.evaluate(() => ({
-  label: document.querySelector("#tabs .tab.skill.active")?.textContent.trim(),
+  label: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
   messages: document.querySelectorAll("#ai-messages .ai-msg").length,
   input: document.getElementById("ai-input-field").value,
-  tabs: document.querySelectorAll("#tabs .tab.skill").length,
+  tabs: document.querySelectorAll("#tabs .tab[data-tab-id]").length,
 }));
 check("/new replaces the tab with a fresh generic chat",
   afterNew.label.startsWith("new chat") && afterNew.messages === 0 &&
@@ -386,16 +385,16 @@ check("/new replaces the tab with a fresh generic chat",
 await page.click("#tab-add");
 await page.waitForSelector("#newtab .skill-item", { state: "visible" });
 await page.click("loc=css:#newtab [data-action=newchat]");
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("skill-mode"),
+await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
-await page.click("loc=css:#tabs .tab.skill >> nth=0");
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("skill-mode"),
+await page.click("loc=css:#tabs .tab[data-tab-id] >> nth=0");
+await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => document.querySelectorAll("#ai-messages .ai-msg").length === 0,
   undefined, { timeout: 10_000 });
 const reopened = await page.evaluate(() => ({
-  label: document.querySelector("#tabs .tab.skill.active")?.textContent.trim(),
+  label: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
   messages: document.querySelectorAll("#ai-messages .ai-msg").length,
 }));
 check("the /new'd tab stays empty when reopened",
@@ -403,18 +402,18 @@ check("the /new'd tab stays empty when reopened",
 
 // 12. the unsent draft is per instance: switching tabs swaps the composer.
 await page.fill("#ai-input-field", "draft-A");
-await page.click("loc=css:#tabs .tab.skill >> nth=1");
+await page.click("loc=css:#tabs .tab[data-tab-id] >> nth=1");
 await page.waitForFunction(() => document.getElementById("ai-input-field").value === "",
   undefined, { timeout: 5_000 });
 const otherDraft = await page.evaluate(() => document.getElementById("ai-input-field").value);
 check("another instance starts with an empty composer", otherDraft === "", { draft: otherDraft });
 await page.fill("#ai-input-field", "draft-B");
-await page.click("loc=css:#tabs .tab.skill >> nth=0");
+await page.click("loc=css:#tabs .tab[data-tab-id] >> nth=0");
 await page.waitForFunction(() => document.getElementById("ai-input-field").value === "draft-A",
   undefined, { timeout: 5_000 });
 const draftA = await page.evaluate(() => document.getElementById("ai-input-field").value);
 check("switching back restores the first instance's draft", draftA === "draft-A", { draft: draftA });
-await page.click("loc=css:#tabs .tab.skill >> nth=1");
+await page.click("loc=css:#tabs .tab[data-tab-id] >> nth=1");
 await page.waitForFunction(() => document.getElementById("ai-input-field").value === "draft-B",
   undefined, { timeout: 5_000 });
 const draftB = await page.evaluate(() => document.getElementById("ai-input-field").value);
@@ -461,9 +460,9 @@ capped at 1000px and centred, tool / thinking blocks being 300px chips that
 widen when opened, and the scrolling spanning the whole pane with no bubble
 touching its scrollbar — shows
 the skill text as the first message and streams the reply); `recent` leaves out
-the conversation that is open as a tab; a fixed tab leaves skill mode without
+the conversation that is open as a tab; a fixed tab leaves tab mode without
 losing the
-skill tab; reopening the tab re-renders the conversation; closing the last tab
+tab; reopening the tab re-renders the conversation; closing the last tab
 falls back to the graph and the conversation can be reopened from `recent`; open
 tabs survive a reload; `/new` replaces the active tab with a fresh generic chat
 and the old conversation never returns when the tab is reopened; and the unsent

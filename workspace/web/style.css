@@ -149,12 +149,12 @@ body {
   border-bottom-color: var(--accent);
 }
 
-#tabs .tab.skill {
+#tabs .tab[data-tab-id] {
   max-width: 180px;
   padding-right: 4px;
 }
 
-#tabs .tab.skill .tab-label {
+#tabs .tab[data-tab-id] .tab-label {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -457,8 +457,8 @@ canvas.layer {
   display: none;
 }
 
-/* A skill tab shows its conversation as the page content, full width. */
-#ai.skill-mode {
+/* A conversation tab shows its conversation as the page content, full width. */
+#ai.tab-mode {
   width: auto;
   flex: 1;
   border-left: none;
@@ -672,7 +672,7 @@ canvas.layer {
   scrollbar-gutter: stable both-edges;
 }
 
-/* A skill conversation reads better as a column: cap it and centre it. Applies to
+/* A conversation reads better as a column: cap it and centre it. Applies to
    both the message list and the composer so they stay aligned. */
 #ai-messages,
 #ai-input {

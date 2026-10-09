@@ -18,7 +18,7 @@ General rules:
 
 ### Type 1 — Normal requirement development
 
-**Phase 1 — Design.** Scope: `development/` and `notes/`. Turn the requirement into a design record: the AI-generated plan is written under `development/iterations/` as one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created here and updated as the design evolves. `development/plans/<iteration-number>/` holds human discussion and raw notes only.
+**Phase 1 — Design.** Scope: `development/`. Turn the requirement into a design record: the AI-generated plan is written under `development/iterations/` as one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created here and updated as the design evolves. `development/plans/<iteration-number>/` holds human discussion and raw notes only.
 
 **Phase 2 — Contracts, tests, code.** Scope: `contracts/`, `atoms/` `edges/`, `development/testing/`, `workspace/`. Order matters: define the **contracts** first, then the static relations (`atoms/` `edges/`), then the tests (`development/testing/`), and only then develop the code (`workspace/`).
 
@@ -36,13 +36,13 @@ Change the system or its environment rather than its specified behavior: pack / 
 
 Currently only build & pack is wired: read `how-to/deploy/prod/BOOK.md` and follow it.
 
-### Type 3 — Change How-to content
+### Type 3 — Change the instructions themselves
 
-Change the instructions themselves — the content that tells a human or an agent how this project is developed and operated. Initialization is the first instance of this type, not a separate one: a project with no how-to yet simply has it still to be written, and keeping it in step with reality is the same work continued.
+Change the content that tells a human or an agent how this project is developed and operated: `how-to/`, `notes/`, this project's `AGENTS.md`, and the like. Initialization is the first instance of this type, not a separate one: a project with no how-to yet simply has it still to be written, and keeping it in step with reality is the same work continued.
 
-**Phase 1 — Edit as instructed.** Modify the files the user points to. If both an English file and its `_zh` mirror exist, update both. `development/plans/` and `development/iterations/` are always Chinese; elsewhere English takes priority. The scope is the how-to content: `how-to/` and `AGENTS.md`.
+Edit as instructed: modify the files the user points to. If both an English file and its `_zh` mirror exist, update both. The scope is the instruction content: `how-to/`, `notes/`, and this project's `AGENTS.md`.
 
-Initialization is this same type applied to a project that has no how-to yet: create the project marker `engineer.yaml`, lay down the how-to material (`how-to/`, with `how-to/README.md`, and the SOP) together with the user. The complete initialization steps live in `agents/how-to.md` — five steps, each saying what to work out, what to ask, and what to write: follow it end to end when initializing, and read the matching step when only one part of the material is being written or revised.
+Initialization is this same type applied to a project that has no how-to yet: create the project marker `engineer.yaml`, lay down the how-to material (`how-to/`, with `how-to/README.md`, and the SOP) together with the user.
 
 ## Repository layout
 

@@ -13,7 +13,7 @@ layout, so it is driven through a real browser (`ego-browser`) instead of curl:
 
 Prerequisite: `ego-browser` on `PATH` (`ego-browser --version`).
 
-The chat panel is the content of a skill tab (there is no side panel and no `ai`
+The chat panel is the content of a tab (there is no side panel and no `ai`
 toggle any more), so the ai service is needed to open one — in stub mode, so the
 run is deterministic and offline.
 

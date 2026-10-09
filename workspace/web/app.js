@@ -487,9 +487,9 @@ function route() {
     return;
   }
   currentView = r.view;
-  // A fixed view leaves skill mode and the new tab page; the skill's session
-  // stays in its tab, so the user can come back to it.
-  activeSkillId = null;
+  // A fixed view leaves tab mode and the new tab page; the conversation's
+  // session stays in its tab, so the user can come back to it.
+  activeTabId = null;
   newTabOpen = false;
   applyLayout();
   syncTabActive();
@@ -498,7 +498,7 @@ function route() {
 
 // showView renders one fixed view into the left area. It is separate from
 // route() because a data refresh re-renders the view without touching which tab
-// is active — a schema push must not kick the user out of a skill tab.
+// is active — a schema push must not kick the user out of a conversation tab.
 function showView(r) {
   hidePanel();
   if (r.view === "chat" || r.view === "newtab") return;
@@ -550,18 +550,18 @@ async function renderDetail(view, id) {
   }
 }
 
-// Tab clicks: a fixed view navigates, a skill tab shows its conversation, and a
-// skill tab's × closes it (fixed views have no ×).
+// Tab clicks: a fixed view navigates, a tab shows its conversation, and a tab's
+// × closes it (fixed views have no ×).
 document.getElementById("tabs").addEventListener("click", (event) => {
   const close = event.target.closest(".tab-close");
   if (close) {
     event.stopPropagation();
-    closeSkillTab(close.dataset.close);
+    closeTab(close.dataset.close);
     return;
   }
-  const skill = event.target.closest(".tab.skill");
-  if (skill) {
-    activateSkillTab(skill.dataset.skillTab);
+  const tab = event.target.closest(".tab[data-tab-id]");
+  if (tab) {
+    activateTab(tab.dataset.tabId);
     return;
   }
   const view = event.target.closest("button[data-view]");
@@ -605,7 +605,7 @@ let aiStreaming = false;
 let aiStreamCtl = null; // { id, ctrl } | null
 let aiStreamGen = 0;
 // The chat panel is no longer a side panel the user toggles: it is the content
-// of a skill tab, and nothing else opens it.
+// of a tab, and nothing else opens it.
 // A dropped SSE connection reconnects with capped exponential backoff; the
 // server replays only the events after the last seq this client rendered.
 const AI_STREAM_MAX_RETRIES = 6;
@@ -1617,21 +1617,22 @@ async function aiAnswer(answer) {
   await aiStream();
 }
 
-// ---------- skill tabs ----------
+// ---------- tabs ----------
 //
-// A skill is one piece of text. Opening it instantiates it: the ai service
-// creates a session and hands the text to the model as the first prompt. A tab
-// is the frontend form of that instance. The fixed views above are not skills —
-// they are part of the shell and can never be closed.
+// A tab carries one chat instance. Running a skill is how most of them start:
+// the skill is one piece of text, and the ai service creates a session and hands
+// that text to the model as the first prompt — the tab is the frontend form of
+// the instance that comes out of it. The fixed views above are not tabs of this
+// kind; they are part of the shell and can never be closed.
 
-const TABS_KEY = "engineer.skill.tabs";
+const TABS_KEY = "engineer.tabs";
 const tabsEl = document.getElementById("tabs");
 const tabAddEl = document.getElementById("tab-add");
-// The skill whose conversation is currently rendered into #ai-messages. Null
-// when something else (an ad-hoc chat) owns the message area.
+// The tab whose conversation is currently rendered into #ai-messages. Null when
+// something else (an ad-hoc chat) owns the message area.
 let renderedTabId = null;
-let skillTabs = loadSkillTabs(); // [{ id, skillId, sessionId, name, fresh }]
-let activeSkillId = null; // skill tab on screen, null while a fixed view is active
+let openTabs = loadTabs(); // [{ id, skillId, sessionId, name, fresh }]
+let activeTabId = null; // tab on screen, null while a fixed view is active
 
 // The address bar follows the tabs: while a conversation is on screen the URL is
 // /chat/<sessionId>, so a reload, a back step or a shared link lands on the same
@@ -1655,12 +1656,12 @@ function syncChatUrl(sessionId, mode) {
 // A session that cannot be loaded is left on screen with its error — the address
 // is the truth and the tab is the user's to close.
 async function routeChat(sessionId) {
-  const tab = skillTabs.find((t) => t.sessionId === sessionId);
+  const tab = openTabs.find((t) => t.sessionId === sessionId);
   if (tab) {
-    await activateSkillTab(tab.id, null);
+    await activateTab(tab.id, null);
     return;
   }
-  await openSkillTab({ skillId: "", sessionId, name: "chat", text: "" }, null);
+  await openTab({ skillId: "", sessionId, name: "chat", text: "" }, null);
 }
 
 // rebindActiveTab points the tab on screen at the session it now shows. /resume
@@ -1668,15 +1669,15 @@ async function routeChat(sessionId) {
 // names it — has to follow: otherwise switching away and back would replay the
 // old conversation, and the address would name a session no longer displayed.
 function rebindActiveTab(sessionId, name) {
-  const tab = skillTabs.find((t) => t.id === renderedTabId);
+  const tab = openTabs.find((t) => t.id === renderedTabId);
   if (!tab || tab.sessionId === sessionId) return;
   aiDrafts.delete(tab.id);
   tab.sessionId = sessionId;
   tab.skillId = "";
   tab.name = name || "chat";
   tab.text = "";
-  saveSkillTabs();
-  renderSkillTabs();
+  saveTabs();
+  renderTabs();
   syncChatUrl(sessionId, "replace");
 }
 
@@ -1705,7 +1706,7 @@ function aiSwitchDraft(tabId) {
   aiRestoreDraft(tabId);
 }
 
-function loadSkillTabs() {
+function loadTabs() {
   try {
     const raw = JSON.parse(localStorage.getItem(TABS_KEY) || "[]");
     if (!Array.isArray(raw)) return [];
@@ -1725,19 +1726,19 @@ function loadSkillTabs() {
   }
 }
 
-function saveSkillTabs() {
+function saveTabs() {
   try {
-    localStorage.setItem(TABS_KEY, JSON.stringify(skillTabs));
+    localStorage.setItem(TABS_KEY, JSON.stringify(openTabs));
   } catch (e) {}
 }
 
-function renderSkillTabs() {
-  for (const el of tabsEl.querySelectorAll(".tab.skill")) el.remove();
-  for (const t of skillTabs) {
+function renderTabs() {
+  for (const el of tabsEl.querySelectorAll(".tab[data-tab-id]")) el.remove();
+  for (const t of openTabs) {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "tab skill";
-    btn.dataset.skillTab = t.id;
+    btn.className = "tab";
+    btn.dataset.tabId = t.id;
     btn.title = t.name;
     const label = document.createElement("span");
     label.className = "tab-label";
@@ -1758,56 +1759,56 @@ function syncTabActive() {
   for (const btn of tabsEl.querySelectorAll("button[data-view]")) {
     btn.classList.toggle(
       "active",
-      !activeSkillId && !newTabOpen && btn.dataset.view === currentView,
+      !activeTabId && !newTabOpen && btn.dataset.view === currentView,
     );
   }
-  for (const btn of tabsEl.querySelectorAll(".tab.skill")) {
-    btn.classList.toggle("active", btn.dataset.skillTab === activeSkillId);
+  for (const btn of tabsEl.querySelectorAll(".tab[data-tab-id]")) {
+    btn.classList.toggle("active", btn.dataset.tabId === activeTabId);
   }
   // The new tab page has no tab of its own; `+` stands in for it.
   tabAddEl.classList.toggle("active", newTabOpen);
 }
 
 // applyLayout switches between the two page contents: a fixed view (graph or a
-// section tree) and a skill conversation. The conversation takes the whole page
-// while a skill tab is active; otherwise the side panel behaves as before.
+// section tree) and a conversation. The conversation takes the whole page while
+// a tab is active; otherwise the side panel behaves as before.
 function applyLayout() {
-  const skillMode = !!activeSkillId;
-  // Exactly one pane at a time: a fixed view, a skill conversation, or the new
+  const tabMode = !!activeTabId;
+  // Exactly one pane at a time: a fixed view, a conversation, or the new
   // tab page.
-  leftEl.hidden = skillMode || newTabOpen;
+  leftEl.hidden = tabMode || newTabOpen;
   newTabEl.hidden = !newTabOpen;
-  aiEl.classList.toggle("skill-mode", skillMode);
-  aiEl.hidden = !skillMode;
-  if (skillMode) aiResizeInput();
+  aiEl.classList.toggle("tab-mode", tabMode);
+  aiEl.hidden = !tabMode;
+  if (tabMode) aiResizeInput();
   graph?.updateSize();
 }
 
-// openSkillTab opens a tab for a skill instance: `fresh` marks a session that was
-// just created by /ai/skill/run (nothing rendered yet), otherwise the session is
+// openTab opens a tab for a chat instance: `fresh` marks a session that was just
+// created by /ai/skill/run (nothing rendered yet), otherwise the session is
 // loaded like a resumed history session.
-async function openSkillTab({ skillId, sessionId, name, text, fresh }, mode = "push") {
-  let tab = skillTabs.find((t) => t.sessionId === sessionId);
+async function openTab({ skillId, sessionId, name, text, fresh }, mode = "push") {
+  let tab = openTabs.find((t) => t.sessionId === sessionId);
   if (!tab) {
     tab = {
       id: `tab_${Math.random().toString(36).slice(2, 10)}`,
       skillId: skillId || "",
       sessionId,
-      name: name || "skill",
+      name: name || "chat",
       text: text || "",
     };
     if (fresh) tab.fresh = true;
-    skillTabs.push(tab);
+    openTabs.push(tab);
   }
-  saveSkillTabs();
-  renderSkillTabs();
-  await activateSkillTab(tab.id, mode);
+  saveTabs();
+  renderTabs();
+  await activateTab(tab.id, mode);
 }
 
-async function activateSkillTab(id, mode = "push") {
-  const tab = skillTabs.find((t) => t.id === id);
+async function activateTab(id, mode = "push") {
+  const tab = openTabs.find((t) => t.id === id);
   if (!tab) return;
-  activeSkillId = id;
+  activeTabId = id;
   newTabOpen = false;
   applyLayout();
   syncTabActive();
@@ -1826,7 +1827,7 @@ async function activateSkillTab(id, mode = "push") {
       // A session created for this skill: the stream carries no user message, so
       // the skill text is drawn locally, then the run is replayed from the start.
       delete tab.fresh;
-      saveSkillTabs();
+      saveTabs();
       aiCancelStream();
       aiMessagesEl.innerHTML = "";
       if (tab.text) aiAppend("user", tab.text);
@@ -1843,21 +1844,21 @@ async function activateSkillTab(id, mode = "push") {
   aiInputEl.focus();
 }
 
-function closeSkillTab(id) {
-  const idx = skillTabs.findIndex((t) => t.id === id);
+function closeTab(id) {
+  const idx = openTabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
-  skillTabs.splice(idx, 1);
+  openTabs.splice(idx, 1);
   aiDrafts.delete(id); // a closed instance keeps no draft
-  saveSkillTabs();
-  renderSkillTabs();
-  if (activeSkillId !== id) return;
+  saveTabs();
+  renderTabs();
+  if (activeTabId !== id) return;
   // The closed tab owned the message area: fall back to the neighbour, or to
   // the graph when it was the last one.
   aiCancelStream();
   renderedTabId = null;
-  activeSkillId = null;
-  const next = skillTabs[Math.max(0, idx - 1)];
-  if (next) activateSkillTab(next.id, "replace");
+  activeTabId = null;
+  const next = openTabs[Math.max(0, idx - 1)];
+  if (next) activateTab(next.id, "replace");
   else navigate("/", "replace");
 }
 
@@ -1966,7 +1967,7 @@ function openNewTab({ push = true } = {}) {
     history.pushState(null, "", NEW_TAB_PATH);
   }
   newTabOpen = true;
-  activeSkillId = null;
+  activeTabId = null;
   applyLayout();
   syncTabActive();
   newTabEl.innerHTML = `<div class="newtab-body"><div class="empty-hint">loading…</div></div>`;
@@ -2080,7 +2081,7 @@ async function newTabReload() {
 // you are not already looking at. An open conversation is a tab already — this
 // is how a *closed* one is found again — so the tabs are filtered out (a skill
 // run and a blank chat both end up here). Should one ever be listed anyway,
-// selecting it is harmless: openSkillTab switches to the tab that already holds
+// selecting it is harmless: openTab switches to the tab that already holds
 // that session instead of opening a second one. One page of log/list is 100
 // sessions, and that is what the page shows; the log service is not required for
 // the rest of the new tab page.
@@ -2097,7 +2098,7 @@ async function recentSessions() {
   } catch (e) {
     sessions = [];
   }
-  const open = new Set(skillTabs.map((t) => t.sessionId));
+  const open = new Set(openTabs.map((t) => t.sessionId));
   const list = sessions.filter((s) => s.sessionId && !open.has(s.sessionId));
   const labels = new Map(
     list.map((s) => [s.sessionId, aiOneLine(s.preview || "").slice(0, 60) || s.sessionId]),
@@ -2143,28 +2144,28 @@ async function newTabRun(skillId) {
     if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
     const name = newTabSkills.get(skillId)?.name || skillId;
     const text = newTabSkills.get(skillId)?.text || "";
-    await openSkillTab({ skillId, sessionId: data.sessionId, name, text, fresh: true }, "replace");
+    await openTab({ skillId, sessionId: data.sessionId, name, text, fresh: true }, "replace");
   } catch (err) {
     newTabError(String(err.message || err));
   }
 }
 
-// newTabBlankChat starts a conversation with no skill behind it — a skill tab
-// whose text is empty, so the panel opens ready for input.
+// newTabBlankChat starts a conversation with no skill behind it — a tab whose
+// text is empty, so the panel opens ready for input.
 async function newBlankChat() {
   try {
     const sessionId = await aiNewSession();
-    await openSkillTab({ skillId: "", sessionId, name: "new chat", text: "", fresh: true }, "replace");
+    await openTab({ skillId: "", sessionId, name: "new chat", text: "", fresh: true }, "replace");
   } catch (err) {
     newTabError(String(err.message || err));
   }
 }
 
-// newTabResume reopens a past conversation as a tab: openSkillTab loads it
+// newTabResume reopens a past conversation as a tab: openTab loads it
 // through /ai/resume + log replay, exactly like reopening a closed tab.
 async function newTabResume(sessionId) {
   const name = newTabSessions.get(sessionId) || "chat";
-  await openSkillTab({ skillId: "", sessionId, name, text: "" }, "replace");
+  await openTab({ skillId: "", sessionId, name, text: "" }, "replace");
 }
 
 function newTabClick(event) {
@@ -2411,7 +2412,7 @@ async function aiConfirmAccept() {
       // The open conversation is gone; start a fresh one in its tab (a rebind —
       // leaving the tab on the deleted session would 404 when reopened) and
       // leave the picker.
-      const tab = skillTabs.find((t) => t.sessionId === sessionId);
+      const tab = openTabs.find((t) => t.sessionId === sessionId);
       aiMessagesEl.innerHTML = "";
       aiClearImages();
       await aiNew();
@@ -2421,8 +2422,8 @@ async function aiConfirmAccept() {
         tab.skillId = "";
         tab.name = "new chat";
         tab.text = "";
-        saveSkillTabs();
-        renderSkillTabs();
+        saveTabs();
+        renderTabs();
         renderedTabId = tab.id;
         // The tab was rebound to a fresh session: the address must not keep
         // naming the deleted one.
@@ -2502,7 +2503,7 @@ function aiSyncCommandDrawer() {
 // the tab is reopened.
 async function aiCommandNew() {
   aiDrawerHide();
-  const idx = skillTabs.findIndex((t) => t.id === activeSkillId);
+  const idx = openTabs.findIndex((t) => t.id === activeTabId);
   try {
     const sessionId = await aiNewSession();
     const tab = {
@@ -2514,18 +2515,18 @@ async function aiCommandNew() {
       fresh: true,
     };
     if (idx < 0) {
-      skillTabs.push(tab);
+      openTabs.push(tab);
     } else {
-      aiDrafts.delete(skillTabs[idx].id);
-      skillTabs[idx] = tab; // the slot now owns the fresh instance
+      aiDrafts.delete(openTabs[idx].id);
+      openTabs[idx] = tab; // the slot now owns the fresh instance
     }
     // The slot's old conversation is gone from the DOM; force a redraw.
     renderedTabId = null;
-    saveSkillTabs();
-    renderSkillTabs();
+    saveTabs();
+    renderTabs();
     // The instance changed session in place: the URL follows it without leaving
     // the cancelled session behind in history.
-    await activateSkillTab(tab.id, "replace");
+    await activateTab(tab.id, "replace");
   } catch (err) {
     aiAppend("assistant", `[error] ${err.message}`);
   }
@@ -2907,7 +2908,7 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("popstate", route);
 
-renderSkillTabs();
+renderTabs();
 newTabInit();
 
 // The URL decides which view is on screen — including which conversation tab —

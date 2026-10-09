@@ -20,7 +20,7 @@
 
 ### 第一类:常规需求开发
 
-**阶段一:设计。** 范围:`development/` 与 `notes/`。把需求整理为设计记录:AI 生成的方案写入 `development/iterations/`,一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`,在此创建并随设计演进更新;`development/plans/<迭代编号>/` 只放人工的讨论与原始笔记。
+**阶段一：设计。** 范围：`development/`。把需求整理为设计记录:AI 生成的方案写入 `development/iterations/`,一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`,在此创建并随设计演进更新;`development/plans/<迭代编号>/` 只放人工的讨论与原始笔记。
 
 **阶段二:契约、测试、代码。** 范围:`contracts/`、`atoms/` `edges/`、`development/testing/`、`workspace/`。顺序很重要:先定义 **contracts**,再定义静态关系(`atoms/` `edges/`),再定义测试(`development/testing/`),最后才开发代码(`workspace/`)。
 
@@ -38,13 +38,13 @@
 
 目前只有构建打包接通:读 `how-to/deploy/prod/BOOK.md`,照它执行。
 
-### 第三类:更改 How-to 内容
+### 第三类：更改说明内容
 
-改的是说明本身 —— 告诉人和 agent 如何开发、如何操作这个项目的内容。初始化不是另一类,而是这一类的最初形态:项目还没有 how-to,只是尚未写出;此后让它与现实保持一致,是同一件事的延续。
+改的是说明本身 —— 告诉人和 agent 如何开发、如何操作这个项目的内容：`how-to/`、`notes/`、本项目的 `AGENTS.md` 等等。初始化不是另一类,而是这一类的最初形态:项目还没有 how-to,只是尚未写出;此后让它与现实保持一致,是同一件事的延续。
 
-**阶段一:按指示修改。** 按用户指定的文件修改。若英文与 `_zh` 版本都存在,则两个都要改。`development/plans/` 与 `development/iterations/` 固定用中文;其他地方英文优先。范围就是 how-to 内容:`how-to/` 与 `AGENTS.md`。
+按指示修改：按用户指定的文件修改。若英文与 `_zh` 版本都存在，则两个都要改。范围就是说明内容：`how-to/`、`notes/` 与本项目的 `AGENTS.md`。
 
-初始化就是同一类型应用在「还没有 how-to」的项目上:建项目标记 `engineer.yaml`,铺好 how-to 材料(`how-to/`,以及 `how-to/README.md` 和开发 SOP),和用户一起完成。完整的初始化步骤在 `agents/how-to.md` —— 五步,每步写明要弄清楚什么、要问什么、要写什么:初始化时从头走完,只写或只改其中一部分材料时读对应的那一步。
+初始化就是同一类型应用在「还没有 how-to」的项目上:建项目标记 `engineer.yaml`,铺好 how-to 材料（`how-to/`，以及 `how-to/README.md` 和开发 SOP），和用户一起完成。
 
 ## 仓库结构
 

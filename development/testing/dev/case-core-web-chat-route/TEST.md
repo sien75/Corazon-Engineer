@@ -8,7 +8,7 @@ Deep links (`/chat/<id>` opened with no tab for it) resume the session into a
 new tab, and a dead link shows its error rather than a blank page.
 
 Source of truth: `workspace/web/app.js` (`parseRoute` / `route` / `routeChat` /
-`syncChatUrl` / `activateSkillTab` / `openNewTab` / `closeNewTab`) and
+`syncChatUrl` / `activateTab` / `openNewTab` / `closeNewTab`) and
 `workspace/web/server/serve.go` (the SPA fallback that makes a chat URL survive
 a reload). Routing is browser behaviour, so this case runs through a real
 browser (`ego-browser`) rather than curl.
@@ -121,7 +121,7 @@ check("forward renders the conversation the URL names", (await path()) === `/cha
 // 6. a tab click is an explicit move: it pushes, so back leaves it
 await page.click("loc=css:#tabs button[data-view='graph']");
 await page.waitForFunction(() => location.pathname === "/");
-await page.click("loc=css:#tabs .tab.skill");
+await page.click("loc=css:#tabs .tab[data-tab-id]");
 await page.waitForFunction((id) => location.pathname === `/chat/${id}`, sid1);
 check("clicking a session tab names it in the URL", (await path()) === `/chat/${sid1}`);
 await back();
@@ -136,25 +136,25 @@ await page.waitForFunction(
   undefined, { timeout: 30_000 });
 const deep = await page.evaluate((id) => ({
   path: location.pathname,
-  tab: document.querySelector("#tabs .tab.skill.active")?.textContent.trim(),
+  tab: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
   user: document.querySelector("#ai-messages .ai-user")?.textContent.trim(),
-  skillMode: document.getElementById("ai").classList.contains("skill-mode"),
+  tabMode: document.getElementById("ai").classList.contains("tab-mode"),
 }), sid1);
 check("a deep link opens the session as a tab",
-  deep.path === `/chat/${sid1}` && deep.skillMode === true && !!deep.tab, deep);
+  deep.path === `/chat/${sid1}` && deep.tabMode === true && !!deep.tab, deep);
 check("the deep-linked conversation replays its history",
   deep.user === "seeded instruction", { user: deep.user });
 
 // 8. a reload stays on the conversation (the URL is the state)
 await page.reload();
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("skill-mode"),
+await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
   undefined, { timeout: 30_000 });
 const reloaded = await page.evaluate((id) => ({
   path: location.pathname,
-  tabs: document.querySelectorAll("#tabs .tab.skill").length,
+  tabs: document.querySelectorAll("#tabs .tab[data-tab-id]").length,
 }), sid1);
 check("a reload stays on the conversation the URL names",
   reloaded.path === `/chat/${sid1}` && reloaded.tabs === 1, reloaded);
@@ -166,11 +166,11 @@ await page.keyboard.press("Escape");
 await page.waitForFunction((id) => location.pathname === `/chat/${id}`, sid1);
 const afterEsc = await page.evaluate(() => ({
   path: location.pathname,
-  skillMode: document.getElementById("ai").classList.contains("skill-mode"),
+  tabMode: document.getElementById("ai").classList.contains("tab-mode"),
   newTabHidden: document.getElementById("newtab").hidden,
 }));
 check("Esc leaves the new tab page for the conversation it came from",
-  afterEsc.path === `/chat/${sid1}` && afterEsc.skillMode === true && afterEsc.newTabHidden === true,
+  afterEsc.path === `/chat/${sid1}` && afterEsc.tabMode === true && afterEsc.newTabHidden === true,
   afterEsc);
 
 // 10. /new replaces the instance in place: new session, no extra entry
@@ -183,7 +183,7 @@ await page.waitForFunction(
 const afterNew = await page.evaluate(() => ({
   path: location.pathname,
   len: history.length,
-  tabs: document.querySelectorAll("#tabs .tab.skill").length,
+  tabs: document.querySelectorAll("#tabs .tab[data-tab-id]").length,
   messages: document.querySelectorAll("#ai-messages .ai-msg").length,
 }));
 const sid2 = chatId(afterNew.path);
@@ -198,13 +198,13 @@ await page.waitForSelector("#newtab .skill-item", { state: "visible" });
 await page.click("loc=css:#newtab [data-action=newchat]");
 await page.waitForFunction(() => /^\/chat\/.+/.test(location.pathname));
 const sid3 = chatId(await path());
-await page.click("loc=css:#tabs .tab.skill >> nth=0");
+await page.click("loc=css:#tabs .tab[data-tab-id] >> nth=0");
 await page.waitForFunction((id) => location.pathname === `/chat/${id}`, sid2);
-await page.click("loc=css:#tabs .tab.skill.active .tab-close");
+await page.click("loc=css:#tabs .tab[data-tab-id].active .tab-close");
 await page.waitForFunction((id) => location.pathname === `/chat/${id}`, sid3);
 const closed = await page.evaluate(() => ({
   path: location.pathname,
-  tabs: document.querySelectorAll("#tabs .tab.skill").length,
+  tabs: document.querySelectorAll("#tabs .tab[data-tab-id]").length,
 }));
 check("closing the active tab names its neighbour in the URL",
   closed.path === `/chat/${sid3}` && closed.tabs === 1, closed);
