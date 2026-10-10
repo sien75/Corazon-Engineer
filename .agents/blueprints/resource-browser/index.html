@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>Skill &amp; Blueprint 浏览</title>
+  <!-- 首帧前定好主题，避免闪一下浅色；key 与外壳共用。 -->
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <!-- 链接外壳的调色板：var(--*) 直接可用，主题切换由外壳推 data-theme。 -->
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin: 0; padding: 24px; font-size: 13px; line-height: 1.6; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    .hint { color: var(--fg-muted); margin: 0 0 18px; }
+    .cols { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 20px; align-items: start; }
+    .group { margin-bottom: 16px; }
+    .group h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+                color: var(--fg-muted); margin: 0 0 6px; font-weight: 600; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { padding: 3px 8px; border-radius: 5px; cursor: pointer;
+         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    li:hover { background: var(--surface-3); }
+    li.sel { background: var(--accent-bg); color: var(--accent);
+             border: 1px solid var(--accent-border); padding: 2px 7px; }
+    .empty { color: var(--fg-muted); font-style: italic; padding: 0 8px; }
+    #preview { border: 1px solid var(--border); border-radius: 6px;
+               background: var(--surface-2); overflow: hidden; }
+    #head { padding: 7px 12px; border-bottom: 1px solid var(--border);
+            color: var(--fg-dim); display: flex; gap: 10px; align-items: baseline; }
+    #head a { color: var(--accent); }
+    #head .id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #body { margin: 0; padding: 12px; max-height: 62vh; overflow: auto; font-size: 12px;
+            white-space: pre-wrap; word-break: break-word; }
+    #err { color: var(--err); margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Skill &amp; Blueprint 浏览</h1>
+  <p class="hint">左边是 static 从文件树里读出来的资源；点一条，右边显示它的原文。
+  三者都只是文件：<code>.agents/skills/&lt;slug&gt;/SKILL.md</code>、
+  <code>.engineer/suggested-skills/&lt;slug&gt;.md</code>、
+  <code>.agents/blueprints/&lt;slug&gt;/index.html</code>。</p>
+
+  <div class="cols">
+    <div>
+      <div class="group"><h2>Skills</h2><ul id="skills"></ul></div>
+      <div class="group"><h2>Suggested</h2><ul id="suggested"></ul></div>
+      <div class="group"><h2>Blueprints</h2><ul id="blueprints"></ul></div>
+    </div>
+    <div id="preview">
+      <div id="head"><span class="id">选一个资源</span></div>
+      <pre id="body"></pre>
+    </div>
+  </div>
+  <div id="err"></div>
+
+  <script>
+    let STATIC = "";
+    const $ = (id) => document.getElementById(id);
+    const fail = (msg) => { $("err").textContent = String(msg); };
+
+    async function api(path, body) {
+      const r = await fetch(STATIC + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/yaml" },
+        body: JSON.stringify(body || {}),
+      });
+      const text = await r.text();
+      if (!r.ok) throw new Error(path + " → HTTP " + r.status + " " + text.slice(0, 200));
+      return text;
+    }
+
+    // static 回的是 application/yaml（不是 JSON），这里只需要顶层列表和块标量，
+    // 所以用一个最小的解析器，不引额外的库。
+    function section(text, key) {
+      const out = [];
+      let inside = false;
+      for (const line of text.split("\n")) {
+        const top = /^([A-Za-z0-9_-]+):/.exec(line);
+        if (top) { inside = top[1] === key; continue; }
+        if (!inside) continue;
+        const m = /^\s*-\s*(.+?)\s*$/.exec(line);
+        if (m) out.push(m[1].replace(/^["']|["']$/g, ""));
+      }
+      return out;
+    }
+
+    function block(text, key) {
+      const lines = text.split("\n");
+      let start = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (new RegExp("^" + key + ":\\s*\\|").test(lines[i])) { start = i + 1; break; }
+      }
+      if (start < 0) return "";
+      const out = [];
+      let indent = -1;
+      for (let i = start; i < lines.length; i++) {
+        if (lines[i].trim() === "") { out.push(""); continue; }
+        const ind = lines[i].match(/^\s*/)[0].length;
+        if (ind === 0) break;
+        if (indent < 0) indent = ind;
+        out.push(lines[i].slice(indent));
+      }
+      return out.join("\n").replace(/\s+$/, "");
+    }
+
+    function renderList(ul, items, type) {
+      if (!items.length) {
+        ul.innerHTML = '<li class="empty">（空）</li>';
+        return;
+      }
+      for (const id of items) {
+        const li = document.createElement("li");
+        // 列表里给的是文件路径，显示最后一段更好读；蓝图显示目录名。
+        const short = id.replace(/\.agents\/skills\//, "").replace(/\/SKILL\.md$/, "")
+                        .replace(/\.engineer\/suggested-skills\//, "").replace(/\.md$/, "")
+                        .replace(/^\.agents\/blueprints\//, "").replace(/\/index\.html$/, "");
+        li.textContent = short;
+        li.title = id;
+        li.onclick = () => select(li, id, type);
+        ul.appendChild(li);
+      }
+    }
+
+    async function select(li, id, type) {
+      for (const el of document.querySelectorAll("li.sel")) el.classList.remove("sel");
+      li.classList.add("sel");
+      $("body").textContent = "载入中…";
+      try {
+        const text = await api("/static/query-detail", { id, type });
+        const key = type === "suggested-skill" ? "suggested-skill" : type;
+        $("body").textContent = block(text, key) || text;
+
+        const head = $("head");
+        head.innerHTML = "";
+        const idEl = document.createElement("span");
+        idEl.className = "id";
+        idEl.textContent = id;
+        head.appendChild(idEl);
+        const m = /^\.agents\/blueprints\/([^/]+)\/index\.html$/.exec(id);
+        if (m) { // 蓝图本身就是页面，给个直达链接
+          const a = document.createElement("a");
+          a.href = "/pages/" + m[1] + "/";
+          a.textContent = "打开页面 ↗";
+          head.appendChild(a);
+        }
+      } catch (e) {
+        $("body").textContent = "";
+        fail(e);
+      }
+    }
+
+    const cfg = document.createElement("script");
+    cfg.src = "/config.js";
+    cfg.onload = async () => {
+      STATIC = window.ENGINEER.static;
+      try {
+        const text = await api("/static/query", {});
+        renderList($("skills"), section(text, "skills"), "skill");
+        renderList($("suggested"), section(text, "suggested-skills"), "suggested-skill");
+        renderList($("blueprints"), section(text, "blueprints"), "blueprint");
+      } catch (e) {
+        fail("读不到资源列表：" + e);
+      }
+    };
+    cfg.onerror = () => fail("加载 /config.js 失败");
+    document.head.appendChild(cfg);
+  </script>
+</body>
+</html>

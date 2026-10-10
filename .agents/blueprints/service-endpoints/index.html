@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>服务与端点</title>
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin: 0; padding: 24px; font-size: 13px; line-height: 1.6; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    .hint { color: var(--fg-muted); margin: 0 0 16px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--fg-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    td.mono { font-size: 12px; color: var(--fg-dim); }
+    .pill { padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid transparent; }
+    .ok { color: var(--ok); border-color: var(--ok); }
+    .bad { color: var(--err); border-color: var(--err); }
+    .skip { color: var(--fg-muted); border-color: var(--border-strong); }
+    button { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 5px; cursor: pointer;
+             border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--fg); }
+    #err { color: var(--err); margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>服务与端点</h1>
+  <p class="hint">地址来自同源的 <code>/config.js</code>（<code>window.ENGINEER</code>）。
+  探活只发只读请求：static 的 <code>query</code>、log 的 <code>query</code>、web 的 <code>/config.js</code>；
+  ai 没有只读探针，只显示地址，不打扰它。</p>
+
+  <div style="margin-bottom:14px"><button id="reload">重新探活</button> <span class="hint" id="stat" style="margin:0"></span></div>
+  <table>
+    <thead><tr><th style="width:80px">service</th><th style="width:230px">address</th>
+      <th style="width:90px">状态</th><th>探针</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="err"></div>
+
+  <script>
+    const err = (e) => { document.getElementById("err").textContent = (e && e.message) || e; };
+
+    function row(service, addr, probe) {
+      const tr = document.createElement("tr");
+      const c1 = document.createElement("td"); c1.textContent = service;
+      const c2 = document.createElement("td"); c2.className = "mono"; c2.textContent = addr || "—";
+      const c3 = document.createElement("td");
+      const pill = document.createElement("span");
+      pill.className = "pill skip";
+      pill.textContent = "…";
+      c3.appendChild(pill);
+      const c4 = document.createElement("td"); c4.className = "mono"; c4.textContent = probe;
+      tr.append(c1, c2, c3, c4);
+      document.getElementById("rows").appendChild(tr);
+      return pill;
+    }
+
+    async function ping(pill, url, opts, label) {
+      try {
+        const r = await fetch(url, opts);
+        const ok = r.ok;
+        pill.textContent = "HTTP " + r.status;
+        pill.className = "pill " + (ok ? "ok" : "bad");
+        return label + " → " + r.status;
+      } catch (e) {
+        pill.textContent = "不通";
+        pill.className = "pill bad";
+        return label + " → " + ((e && e.message) || e);
+      }
+    }
+
+    const YAML = { method: "POST", headers: { "Content-Type": "application/yaml" }, body: "{}" };
+
+    async function probeAll() {
+      const tbody = document.getElementById("rows");
+      tbody.textContent = "";
+      document.getElementById("err").textContent = "";
+      document.getElementById("stat").textContent = "探活中…";
+      const E = window.ENGINEER;
+
+      const p1 = row("static", E.static, "POST /static/query");
+      const p2 = row("log", E.log, "POST /log/query");
+      const p3 = row("ai", E.ai, "—");
+      p3.textContent = "未探活";
+      const p4 = row("web", location.origin, "GET /config.js");
+
+      const results = await Promise.all([
+        ping(p1, E.static + "/static/query", YAML, "static/query"),
+        ping(p2, E.log + "/log/query", { ...YAML, body: JSON.stringify({ pageNum: 1 }) }, "log/query"),
+        ping(p4, "/config.js", {}, "config.js"),
+      ]);
+      document.getElementById("stat").textContent = results.join(" · ");
+    }
+
+    const cfg = document.createElement("script");
+    cfg.src = "/config.js";
+    cfg.onload = () => {
+      document.getElementById("reload").onclick = () => probeAll().catch(err);
+      probeAll().catch(err);
+    };
+    cfg.onerror = () => err("加载 /config.js 失败");
+    document.head.appendChild(cfg);
+  </script>
+</body>
+</html>

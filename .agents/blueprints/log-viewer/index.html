@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>运行记录</title>
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin: 0; padding: 24px; font-size: 13px; line-height: 1.6; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    .hint { color: var(--fg-muted); margin: 0 0 14px; }
+    .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+    select, button { font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 5px;
+                     border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--fg); }
+    button { cursor: pointer; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--fg-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover { background: var(--surface-3); }
+    tbody tr.sel { background: var(--accent-bg); color: var(--accent); }
+    td.mono { color: var(--fg-dim); font-size: 12px; }
+    #detail { margin-top: 16px; display: none; }
+    pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+          padding: 12px; white-space: pre-wrap; word-break: break-word; margin: 0;
+          max-height: 50vh; overflow: auto; font-size: 12px; }
+    #err { color: var(--err); margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>运行记录</h1>
+  <p class="hint">来自 <code>log/query</code>。test = 跑过的用例，telemetry = 监听 / 观测结果，
+  conversation 由 ai 自己写。点一行看记录原文。</p>
+
+  <div class="bar">
+    <label>kind
+      <select id="kind">
+        <option value="">全部</option>
+        <option value="test" selected>test</option>
+        <option value="telemetry">telemetry</option>
+        <option value="conversation">conversation</option>
+      </select>
+    </label>
+    <button id="reload">刷新</button>
+    <span class="hint" id="stat" style="margin:0"></span>
+  </div>
+
+  <table>
+    <thead><tr><th style="width:150px">createdAt</th><th style="width:70px">kind</th>
+      <th style="width:70px">atom</th><th>summary</th><th style="width:150px">id</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="detail"><pre id="detail-body"></pre></div>
+  <div id="err"></div>
+
+  <script>
+    const err = (e) => { document.getElementById("err").textContent = (e && e.message) || e; };
+    const $ = (id) => document.getElementById(id);
+
+    // log/query 回的也是 yaml：records 是一列对象，字段都在 `    key: value` 这一层。
+    function items(text, key) {
+      const out = []; let inside = false;
+      for (const line of text.split("\n")) {
+        const top = /^([A-Za-z0-9_-]+):/.exec(line);
+        if (top) { inside = top[1] === key; continue; }
+        if (!inside) continue;
+        if (/^\s*-\s/.test(line)) out.push(line.replace(/^\s*-\s*/, ""));
+        else if (out.length && /^\s+\S/.test(line)) out[out.length - 1] += "\n" + line.trim();
+      }
+      return out;
+    }
+    function field(chunk, name) {
+      const m = new RegExp("(?:^|\\n)" + name + ":\\s*(.*)").exec(chunk);
+      return m ? m[1].trim().replace(/^["']|["']$/g, "") : "";
+    }
+    async function api(base, path, body) {
+      const r = await fetch(base + path, {
+        method: "POST", headers: { "Content-Type": "application/yaml" },
+        body: JSON.stringify(body || {}),
+      });
+      const t = await r.text();
+      if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+      return t;
+    }
+
+    async function load() {
+      const tbody = $("rows");
+      tbody.textContent = "";
+      $("detail").style.display = "none";
+      const kind = $("kind").value;
+      const text = await api(window.ENGINEER.log, "/log/query",
+        kind ? { kind, pageNum: 1 } : { pageNum: 1 });
+      const recs = items(text, "records");
+      $("stat").textContent = recs.length + " 条";
+      for (const rec of recs) {
+        const tr = document.createElement("tr");
+        const cells = [
+          [field(rec, "createdAt"), ""], [field(rec, "kind"), ""],
+          [field(rec, "atom") || "—", ""], [field(rec, "summary"), ""],
+          [field(rec, "id"), "mono"],
+        ];
+        for (const [v, cls] of cells) {
+          const td = document.createElement("td");
+          if (cls) td.className = cls;
+          td.textContent = v;
+          tr.appendChild(td);
+        }
+        tr.onclick = async () => {
+          for (const el of tbody.querySelectorAll("tr.sel")) el.classList.remove("sel");
+          tr.classList.add("sel");
+          $("detail").style.display = "block";
+          $("detail-body").textContent = "载入中…";
+          try {
+            $("detail-body").textContent =
+              await api(window.ENGINEER.log, "/log/query-detail", { id: field(rec, "id") });
+          } catch (e) { err(e); }
+        };
+        tbody.appendChild(tr);
+      }
+    }
+
+    const cfg = document.createElement("script");
+    cfg.src = "/config.js";
+    cfg.onload = () => {
+      $("reload").onclick = () => load().catch(err);
+      $("kind").onchange = () => load().catch(err);
+      load().catch(err);
+    };
+    cfg.onerror = () => err("加载 /config.js 失败");
+    document.head.appendChild(cfg);
+  </script>
+</body>
+</html>

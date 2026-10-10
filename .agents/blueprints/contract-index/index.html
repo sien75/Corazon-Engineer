@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>契约清单</title>
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin: 0; padding: 24px; font-size: 13px; line-height: 1.6; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    .hint { color: var(--fg-muted); margin: 0 0 16px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--fg-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover { background: var(--surface-3); }
+    tbody tr.sel { background: var(--accent-bg); color: var(--accent); }
+    #detail { margin-top: 18px; display: none; }
+    #detail h2 { font-size: 12px; margin: 0 0 6px; color: var(--fg-dim); }
+    pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+          padding: 12px; white-space: pre-wrap; word-break: break-word; margin: 0;
+          max-height: 52vh; overflow: auto; font-size: 12px; }
+    #err { color: var(--err); margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>契约清单</h1>
+  <p class="hint">点一行看契约原文。<code>contracts/</code> 是接口形状的唯一事实来源 —— 改契约先于改代码。</p>
+
+  <table>
+    <thead><tr><th style="width:38%">id</th><th>文件</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="detail"><h2 id="detail-id"></h2><pre id="detail-body"></pre></div>
+  <div id="err"></div>
+
+  <script>
+    const err = (e) => { document.getElementById("err").textContent = (e && e.message) || e; };
+    const $ = (id) => document.getElementById(id);
+
+    function list(text, key) {
+      const out = []; let inside = false;
+      for (const line of text.split("\n")) {
+        const top = /^([A-Za-z0-9_-]+):/.exec(line);
+        if (top) { inside = top[1] === key; continue; }
+        if (!inside) continue;
+        const m = /^\s*-\s*(.+?)\s*$/.exec(line);
+        if (m) out.push(m[1].replace(/^["']|["']$/g, ""));
+      }
+      return out;
+    }
+    function block(text, key) {
+      const lines = text.split("\n"); let start = -1;
+      for (let i = 0; i < lines.length; i++)
+        if (new RegExp("^" + key + ":\\s*\\|").test(lines[i])) { start = i + 1; break; }
+      if (start < 0) return "";
+      const out = []; let indent = -1;
+      for (let i = start; i < lines.length; i++) {
+        if (lines[i].trim() === "") { out.push(""); continue; }
+        const ind = lines[i].match(/^\s*/)[0].length;
+        if (ind === 0) break;
+        if (indent < 0) indent = ind;
+        out.push(lines[i].slice(indent));
+      }
+      return out.join("\n").replace(/\s+$/, "");
+    }
+    async function api(path, body) {
+      const r = await fetch(window.ENGINEER.static + path, {
+        method: "POST", headers: { "Content-Type": "application/yaml" },
+        body: JSON.stringify(body || {}),
+      });
+      const t = await r.text();
+      if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+      return t;
+    }
+
+    const cfg = document.createElement("script");
+    cfg.src = "/config.js";
+    cfg.onload = async () => {
+      try {
+        const files = list(await api("/static/query", {}), "contracts");
+        const tbody = $("rows");
+        for (const file of files) {
+          const tr = document.createElement("tr");
+          const id = file.replace(/^contracts\//, "").replace(/\.yaml$/, "");
+          for (const v of [id, file]) {
+            const td = document.createElement("td");
+            td.textContent = v;
+            tr.appendChild(td);
+          }
+          tr.onclick = async () => {
+            for (const el of tbody.querySelectorAll("tr.sel")) el.classList.remove("sel");
+            tr.classList.add("sel");
+            $("detail").style.display = "block";
+            $("detail-id").textContent = file;
+            $("detail-body").textContent = "载入中…";
+            try {
+              const text = await api("/static/query-detail", { id: file, type: "contract" });
+              $("detail-body").textContent = block(text, "contract") || text;
+            } catch (e) { err(e); }
+          };
+          tbody.appendChild(tr);
+        }
+      } catch (e) { err(e); }
+    };
+    cfg.onerror = () => err("加载 /config.js 失败");
+    document.head.appendChild(cfg);
+  </script>
+</body>
+</html>

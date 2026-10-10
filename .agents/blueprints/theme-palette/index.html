@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>调色板</title>
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin: 0; padding: 24px; font-size: 13px; line-height: 1.6; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    .hint { color: var(--fg-muted); margin: 0 0 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+    .sw { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--surface-2); }
+    .chip { height: 34px; border-bottom: 1px solid var(--border); }
+    .meta { padding: 6px 9px; display: flex; justify-content: space-between; gap: 8px; }
+    .meta b { font-weight: 600; font-size: 12px; }
+    .meta span { color: var(--fg-muted); font-size: 11px; }
+    #now { color: var(--fg-dim); }
+  </style>
+</head>
+<body>
+  <h1>调色板</h1>
+  <p class="hint">这些就是 <code>/theme.css</code> 里的变量 —— 外壳和蓝图共用同一份，
+  所以蓝图不复制任何颜色。当前主题：<b id="now">…</b>。在外壳里切换主题，这页会跟着重绘。</p>
+  <div class="grid" id="grid"></div>
+
+  <script>
+    // 只读 token 名；值不走 JS，直接 background: var(--x)，主题一变浏览器自己重绘。
+    const VARS = [
+      "bg", "code-bg", "surface", "surface-2", "surface-3", "surface-inset", "surface-question",
+      "border", "border-strong", "spinner-track", "fg", "fg-dim", "fg-muted",
+      "accent", "accent-bg", "accent-border", "ok", "err",
+      "danger", "danger-bg", "danger-fg", "danger-bg-hover",
+      "question-border", "question-btn-bg", "question-btn-border", "question-btn-fg",
+    ];
+    const grid = document.getElementById("grid");
+    const cells = [];
+    for (const v of VARS) {
+      const box = document.createElement("div");
+      box.className = "sw";
+      const chip = document.createElement("div");
+      chip.className = "chip";
+      chip.style.background = "var(--" + v + ")";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const name = document.createElement("b");
+      name.textContent = "--" + v;
+      const val = document.createElement("span");
+      meta.append(name, val);
+      box.append(chip, meta);
+      grid.appendChild(box);
+      cells.push([v, val]);
+    }
+
+    function refresh() {
+      document.getElementById("now").textContent =
+        document.documentElement.getAttribute("data-theme") || "(none)";
+      const cs = getComputedStyle(document.documentElement);
+      for (const [v, el] of cells) el.textContent = cs.getPropertyValue("--" + v).trim() || "—";
+    }
+    refresh();
+    new MutationObserver(refresh).observe(document.documentElement,
+      { attributes: true, attributeFilter: ["data-theme"] });
+  </script>
+</body>
+</html>

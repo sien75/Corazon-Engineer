@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>架构速览</title>
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin: 0; padding: 24px; font-size: 13px; line-height: 1.6; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    h2 { font-size: 12px; margin: 22px 0 6px; color: var(--fg-dim); }
+    .hint { color: var(--fg-muted); margin: 0 0 16px; }
+    .cards { display: flex; gap: 10px; flex-wrap: wrap; }
+    .card { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2);
+            padding: 8px 14px; min-width: 82px; }
+    .card b { display: block; font-size: 20px; line-height: 1.2; }
+    .card span { color: var(--fg-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--fg-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    td.num { text-align: right; color: var(--fg-dim); }
+    #err { color: var(--err); margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>架构速览</h1>
+  <p class="hint">全部来自 <code>static/query</code> —— <code>atoms/</code>、<code>edges/</code>、
+  <code>contracts/</code> 就是 schema 的全部，其余目录只是文件列表。</p>
+
+  <div class="cards" id="counts"></div>
+  <h2>atoms</h2>
+  <table><thead><tr><th>name</th><th>runtime</th><th>role</th><th>path</th></tr></thead><tbody id="atoms"></tbody></table>
+  <h2>edges</h2>
+  <table><thead><tr><th>from</th><th>via</th><th>to</th><th>channel</th></tr></thead><tbody id="edges"></tbody></table>
+  <div id="err"></div>
+
+  <script>
+    const err = (e) => { document.getElementById("err").textContent = (e && e.message) || e; };
+
+    // static 回的是 application/yaml：顶层 `key:` 下的一段列表，每项是若干行。
+    // atom 的 interfaces 里还有嵌套的 `- channel:` —— 缩进更深的 `-` 属于当前项，
+    // 只有当 `-` 落在这一层的缩进上时才算新的一项。
+    function items(text, key) {
+      const out = []; let inside = false, indent = -1;
+      for (const line of text.split("\n")) {
+        const top = /^([A-Za-z0-9_-]+):/.exec(line);
+        if (top) { inside = top[1] === key; indent = -1; continue; }
+        if (!inside) continue;
+        const m = /^(\s*)-\s(.*)$/.exec(line);
+        if (m) {
+          if (indent < 0) indent = m[1].length;
+          if (m[1].length === indent) { out.push(m[2]); continue; }
+        }
+        if (out.length && /^\s+\S/.test(line)) out[out.length - 1] += "\n" + line.trim();
+      }
+      return out;
+    }
+    function field(chunk, name) {
+      const m = new RegExp("(?:^|\\n)" + name + ":\\s*(.*)").exec(chunk);
+      return m ? m[1].trim().replace(/^["']|["']$/g, "") : "";
+    }
+    function row(tbody, cells) {
+      const tr = document.createElement("tr");
+      for (const c of cells) { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); }
+      tbody.appendChild(tr);
+    }
+    function card(label, n) {
+      const d = document.createElement("div");
+      d.className = "card";
+      const b = document.createElement("b"); b.textContent = n;
+      const s = document.createElement("span"); s.textContent = label;
+      d.append(b, s);
+      document.getElementById("counts").appendChild(d);
+    }
+
+    const cfg = document.createElement("script");
+    cfg.src = "/config.js";
+    cfg.onload = async () => {
+      try {
+        const r = await fetch(window.ENGINEER.static + "/static/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/yaml" },
+          body: "{}",
+        });
+        const text = await r.text();
+        if (!r.ok) throw new Error("static/query → HTTP " + r.status);
+
+        const atoms = items(text, "atoms");
+        const edges = items(text, "edges");
+        const contracts = items(text, "contracts");
+        card("atoms", atoms.length);
+        card("edges", edges.length);
+        card("contracts", contracts.length);
+        card("skills", items(text, "skills").length);
+        card("blueprints", items(text, "blueprints").length);
+
+        for (const a of atoms) {
+          row(document.getElementById("atoms"), [
+            field(a, "name"), field(a, "runtime_type"), field(a, "role") || "—", field(a, "path") || "—",
+          ]);
+        }
+        for (const e of edges) {
+          row(document.getElementById("edges"), [
+            field(e, "from"), field(e, "from_interface"),
+            field(e, "to") + " · " + field(e, "to_interface"), field(e, "channel"),
+          ]);
+        }
+      } catch (e) { err(e); }
+    };
+    cfg.onerror = () => err("加载 /config.js 失败");
+    document.head.appendChild(cfg);
+  </script>
+</body>
+</html>

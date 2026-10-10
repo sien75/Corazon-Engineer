@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>How-to 手册</title>
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin: 0; padding: 24px; font-size: 13px; line-height: 1.6; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    .hint { color: var(--fg-muted); margin: 0 0 16px; }
+    .cols { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; align-items: start; }
+    ul { list-style: none; margin: 0; padding: 0; max-height: 72vh; overflow: auto; }
+    li { padding: 4px 8px; border-radius: 5px; cursor: pointer; font-size: 12px;
+         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    li:hover { background: var(--surface-3); }
+    li.sel { background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-border); padding: 3px 7px; }
+    li .dir { color: var(--fg-muted); }
+    pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+          padding: 14px; white-space: pre-wrap; word-break: break-word; margin: 0;
+          max-height: 72vh; overflow: auto; font-size: 12px; }
+    #err { color: var(--err); margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>How-to 手册</h1>
+  <p class="hint">系统怎么搭、怎么跑、怎么连资源。<code>deploy/[env]/BOOK.md</code> 是各环境的操作手册，
+  <code>operation/</code> 是观测与连接。改系统照书走，别即兴敲命令。</p>
+
+  <div class="cols">
+    <ul id="files"></ul>
+    <pre id="body">选一份…</pre>
+  </div>
+  <div id="err"></div>
+
+  <script>
+    const err = (e) => { document.getElementById("err").textContent = (e && e.message) || e; };
+    const $ = (id) => document.getElementById(id);
+
+    function list(text, key) {
+      const out = []; let inside = false;
+      for (const line of text.split("\n")) {
+        const top = /^([A-Za-z0-9_-]+):/.exec(line);
+        if (top) { inside = top[1] === key; continue; }
+        if (!inside) continue;
+        const m = /^\s*-\s*(.+?)\s*$/.exec(line);
+        if (m) out.push(m[1].replace(/^["']|["']$/g, ""));
+      }
+      return out;
+    }
+    function block(text, key) {
+      const lines = text.split("\n"); let start = -1;
+      for (let i = 0; i < lines.length; i++)
+        if (new RegExp("^" + key + ":\\s*\\|").test(lines[i])) { start = i + 1; break; }
+      if (start < 0) return "";
+      const out = []; let indent = -1;
+      for (let i = start; i < lines.length; i++) {
+        if (lines[i].trim() === "") { out.push(""); continue; }
+        const ind = lines[i].match(/^\s*/)[0].length;
+        if (ind === 0) break;
+        if (indent < 0) indent = ind;
+        out.push(lines[i].slice(indent));
+      }
+      return out.join("\n").replace(/\s+$/, "");
+    }
+    async function api(path, body) {
+      const r = await fetch(window.ENGINEER.static + path, {
+        method: "POST", headers: { "Content-Type": "application/yaml" },
+        body: JSON.stringify(body || {}),
+      });
+      const t = await r.text();
+      if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+      return t;
+    }
+
+    const cfg = document.createElement("script");
+    cfg.src = "/config.js";
+    cfg.onload = async () => {
+      try {
+        const files = list(await api("/static/query", {}), "how-to");
+        const ul = $("files");
+        for (const f of files) {
+          const li = document.createElement("li");
+          li.textContent = f.slice("how-to/".length);
+          li.title = f;
+          li.onclick = async () => {
+            for (const el of document.querySelectorAll("li.sel")) el.classList.remove("sel");
+            li.classList.add("sel");
+            $("body").textContent = "载入中…";
+            try {
+              $("body").textContent =
+                block(await api("/static/query-detail", { id: f, type: "how-to" }), "how-to") || "（空文件）";
+            } catch (e) { err(e); }
+          };
+          ul.appendChild(li);
+        }
+      } catch (e) { err(e); }
+    };
+    cfg.onerror = () => err("加载 /config.js 失败");
+    document.head.appendChild(cfg);
+  </script>
+</body>
+</html>

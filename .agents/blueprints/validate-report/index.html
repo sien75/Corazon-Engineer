@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>Schema 校验</title>
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin: 0; padding: 24px; font-size: 13px; line-height: 1.6; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    .hint { color: var(--fg-muted); margin: 0 0 14px; }
+    .bar { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+    button { font: inherit; font-size: 12px; padding: 8px 24px; min-width: 96px; border-radius: 5px;
+             border: 1px solid var(--border-strong); background: var(--surface-2);
+             color: var(--fg); cursor: pointer; }
+    button:hover { background: var(--surface-3); }
+    .badge { padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid transparent; }
+    .ok { color: var(--ok); border-color: var(--ok); }
+    .bad { color: var(--err); border-color: var(--err); }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--fg-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    td.file { color: var(--fg-dim); font-size: 12px; }
+    #err { color: var(--err); margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Schema 校验</h1>
+  <p class="hint">调 <code>static/validate</code> 扫整棵树（<code>atoms/</code>
+  <code>edges/</code> <code>contracts/</code>）并列出每一条字段级错误。只读，不写任何东西。</p>
+
+  <div class="bar">
+    <button id="run">校验</button>
+    <span id="badge"></span>
+  </div>
+
+  <table>
+    <thead><tr><th style="width:200px">file</th><th style="width:90px">type</th>
+      <th style="width:120px">field</th><th>message</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="err"></div>
+
+  <script>
+    const err = (e) => { document.getElementById("err").textContent = (e && e.message) || e; };
+    const $ = (id) => document.getElementById(id);
+
+    function items(text, key) {
+      const out = []; let inside = false;
+      for (const line of text.split("\n")) {
+        const top = /^([A-Za-z0-9_-]+):/.exec(line);
+        if (top) { inside = top[1] === key; continue; }
+        if (!inside) continue;
+        if (/^\s*-\s/.test(line)) out.push(line.replace(/^\s*-\s*/, ""));
+        else if (out.length && /^\s+\S/.test(line)) out[out.length - 1] += "\n" + line.trim();
+      }
+      return out;
+    }
+    function field(chunk, name) {
+      const m = new RegExp("(?:^|\\n)" + name + ":\\s*(.*)").exec(chunk);
+      return m ? m[1].trim().replace(/^["']|["']$/g, "") : "";
+    }
+
+    async function run() {
+      $("err").textContent = "";
+      $("badge").textContent = "校验中…";
+      $("badge").className = "badge";
+      const r = await fetch(window.ENGINEER.static + "/static/validate", {
+        method: "POST", headers: { "Content-Type": "application/yaml" }, body: "",
+      });
+      const text = await r.text();
+      if (!r.ok) throw new Error("static/validate → HTTP " + r.status);
+
+      const ok = /^ok:\s*true\s*$/m.test(text);
+      const errors = items(text, "errors");
+      $("badge").textContent = ok ? "ok · 全树通过" : "errors · " + errors.length + " 条";
+      $("badge").className = "badge " + (ok ? "ok" : "bad");
+
+      const tbody = $("rows");
+      tbody.textContent = "";
+      for (const e of errors) {
+        const tr = document.createElement("tr");
+        const vals = [[field(e, "file"), "file"], [field(e, "type"), ""],
+                      [field(e, "field") || "—", ""], [field(e, "message"), ""]];
+        for (const [v, cls] of vals) {
+          const td = document.createElement("td");
+          if (cls) td.className = cls;
+          td.textContent = v;
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      if (ok) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 4;
+        td.className = "file";
+        td.textContent = "没有错误。";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+      }
+    }
+
+    const cfg = document.createElement("script");
+    cfg.src = "/config.js";
+    cfg.onload = () => {
+      $("run").onclick = () => run().catch(err);
+      run().catch(err);
+    };
+    cfg.onerror = () => err("加载 /config.js 失败");
+    document.head.appendChild(cfg);
+  </script>
+</body>
+</html>
