@@ -170,17 +170,20 @@ shasum -a 256 dist/engineer-"$TAG"-*.tar.gz
 ssh "$SRV" "cd $REPO/dist && sha256sum engineer-$TAG-*.tar.gz"
 ```
 
-**Release notes are two parts, nothing else** — the core change in a sentence or two, then the other changes by name. Write them on the build machine, ship the file with the tarballs, and pass `--notes-file` (`--generate-notes` prints the commit log instead — not this):
+**Release notes are two parts, nothing else** — the core change in a sentence or two, then the changes as a list. Write them on the build machine, ship the file with the tarballs, and pass `--notes-file` (`--generate-notes` prints the commit log instead — not this):
 
 ```markdown
 ## Core change
 
-<one or two sentences: what this release is>
+<one or two sentences: what this release is — one thing>
 
-## Other changes
+## Changes
 
-<one line naming what moved — no detail, no rationale; that lives in the commits and the code>
+- <what moved, said directly — no detail, no rationale; that lives in the commits and the code>
+- <...>
 ```
+
+**One item per change, not per component.** A bullet names a thing that moved, in the user's terms — it carries no subsystem label (`web`, `ai`, `how-to/deploy`) and it does not gather several changes under one heading. Grouping by which binary a change landed in is how the notes turned into a wall of clauses; nothing about a release is easier to read that way. A release whose `Changes` is prose instead of a list is a release whose notes were written from the diff rather than from what moved.
 
 No design prose, no platform / sha256 / install boilerplate: the release lists the assets, and `README.md` carries the install line.
 
