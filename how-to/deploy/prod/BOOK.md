@@ -74,9 +74,19 @@ mkdir -p "$OUT"/{bin,web}
 
 # 3. web assets — shipped loose next to the binary, which serves them from `--assets`
 #    (the layout the launcher passes at runtime), so the frontend stays editable
-#    without a rebuild
-cp workspace/web/{index.html,app.js,style.css} "$OUT/web/"
+#    without a rebuild. Every local asset index.html links must be here: theme.css
+#    is the shell's palette and a blueprint's too — shipping without it strips the
+#    whole UI of its colors.
+cp workspace/web/{index.html,app.js,style.css,theme.css} "$OUT/web/"
 cp -R workspace/web/vendor "$OUT/web/"
+
+# 3b. guard: every asset index.html links (except the generated /config.js) must
+#     actually be in the package — this is how theme.css once went missing.
+for f in $(grep -oE '(href|src)="/[^"]+"' "$OUT/web/index.html" \
+  | sed -E 's/.*="\/(.*)"/\1/' | sort -u); do
+  [ "$f" = "config.js" ] && continue
+  [ -e "$OUT/web/$f" ] || { echo "MISSING web asset: $f" >&2; exit 1; }
+done
 
 # 4. tool content — published parts only: agents/ (AI capability description) and
 #    docs/. Everything else (schema, development, how-to, ...) is dev-time internal
