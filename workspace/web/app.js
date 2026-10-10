@@ -1856,9 +1856,9 @@ function applyLayout() {
   graph?.updateSize();
 }
 
-// openTab opens a tab for a chat instance: `fresh` marks a session that was just
-// created by /ai/skill/run (nothing rendered yet), otherwise the session is
-// loaded like a resumed history session.
+// openTab opens a tab for a chat instance: `fresh` marks a session created just
+// now (nothing rendered yet) — `text` is what its composer starts with, drawn
+// but not sent — otherwise the session is loaded like a resumed history session.
 async function openTab({ skillId, sessionId, name, text, fresh }, mode = "push") {
   let tab = openTabs.find((t) => t.kind !== "page" && t.sessionId === sessionId);
   if (!tab) {
@@ -1932,13 +1932,17 @@ async function activateTab(id, mode = "push") {
   renderedTabId = id;
   try {
     if (tab.fresh) {
-      // A session created for this skill: the stream carries no user message, so
-      // the skill text is drawn locally, then the run is replayed from the start.
+      // A brand-new session: nothing has been sent yet. A skill opens with its
+      // text sitting in the composer — the user edits it and decides when to
+      // send; the run starts on that send, not on the click.
       delete tab.fresh;
       saveTabs();
       aiCancelStream();
       aiMessagesEl.innerHTML = "";
-      if (tab.text) aiAppend("user", tab.text);
+      if (tab.text) {
+        aiDrafts.set(tab.id, { text: tab.text, images: [], tasks: [] });
+        aiRestoreDraft(tab.id);
+      }
       aiSession = tab.sessionId;
       aiSeenSeq = 0;
       await aiStream();
@@ -2036,16 +2040,16 @@ function closeNewTab() {
   navigate(newTabReturn, "replace");
 }
 
-// One row of the launcher: a **class** you can instantiate. A skill row opens a
-// chat; a blueprint row opens a page. Changing either is the agent's job — the
-// row has no delete (ask in a conversation and the agent edits the file).
+// One row of the launcher: a **class** you can instantiate. A kept skill and a
+// blueprint have exactly one action, so the whole row is that action — the same
+// clickable row as a recent conversation. A suggested candidate is not kept yet:
+// its row says so and points at the agent instead of running.
 function newTabSkillItemHtml(t, suggested) {
-  return `<div class="launch-item" data-action="run" data-id="${t.id}">
+  return `<div class="launch-item" data-action="${suggested ? "suggest" : "run"}" data-id="${t.id}">
     <div class="launch-main">
       <div class="launch-name">${escapeHtml(t.name)}</div>
-      <div class="launch-desc">${escapeHtml(t.text)}</div>
+      <div class="launch-desc">${escapeHtml(t.desc || t.text)}</div>
     </div>
-    <div class="launch-actions"><button type="button" data-action="run" data-id="${t.id}">chat</button></div>
   </div>`;
 }
 
@@ -2055,7 +2059,6 @@ function newTabBlueprintItemHtml(b) {
       <div class="launch-name">${escapeHtml(b.name)}</div>
       <div class="launch-desc">${escapeHtml(b.files.join(" · "))}</div>
     </div>
-    <div class="launch-actions"><button type="button" data-action="page" data-id="${b.id}">page</button></div>
   </div>`;
 }
 
@@ -2077,6 +2080,22 @@ function newTabSecHeadHtml(title, count, action) {
     ? `<button type="button" class="newtab-sec-open" data-action="${action}" title="open ${title}">more →</button>`
     : "";
   return `<div class="newtab-sec-head"><h3>${title}</h3>${note}${open}</div>`;
+}
+
+// toast is the launcher's one-line notice (a suggested candidate cannot be
+// changed from here — it points at the agent instead).
+let toastTimer = null;
+function toast(message) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2600);
 }
 
 function newTabError(message) {  const body = newTabEl?.querySelector(".newtab-body");
@@ -2126,18 +2145,33 @@ async function newTabFiles(schema, prefix, entry, type) {
 function skillFromFile(id, raw, source) {
   const front = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(raw);
   let name = id;
+  let description = "";
   let body = raw;
   if (front) {
     body = raw.slice(front[0].length);
-    const n = /^name\s*:\s*(.+)$/m.exec(front[1]);
-    if (n) name = n[1].trim().replace(/^["']|["']$/g, "");
+    const field = (key) => {
+      const m = new RegExp(`^${key}\\s*:\\s*(.+)$`, "m").exec(front[1]);
+      return m ? m[1].trim().replace(/^["']|["']$/g, "") : "";
+    };
+    name = field("name") || id;
+    description = field("description");
   }
-  return { id, name: name || id, source, status: "active", text: body.trim() };
+  const text = body.trim();
+  // The one-line preview: the declared description, else the first non-empty
+  // line of the skill itself.
+  const firstLine = text.split("\n").map((l) => l.trim()).find(Boolean) || "";
+  return { id, name: name || id, desc: description || firstLine, source, status: "active", text };
 }
 
+// titleFromHtml reads a document's title. Parse it rather than regex the source:
+// the source carries entities (`&amp;`) that must be decoded before the name is
+// escaped for display, or the user sees the entity itself.
 function titleFromHtml(html) {
-  const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-  return m ? m[1].replace(/\s+/g, " ").trim() : "";
+  try {
+    return new DOMParser().parseFromString(html, "text/html").title.replace(/\s+/g, " ").trim();
+  } catch {
+    return "";
+  }
 }
 
 async function newTabReload() {
@@ -2294,18 +2328,17 @@ function newTabSessionHtml(s) {
   </div>`;
 }
 
+// newTabRun opens a skill as a new conversation: a fresh session, with the
+// skill's text already in the composer. Nothing is sent — the skill is a
+// starting point the user edits and sends themselves.
 async function newTabRun(skillId) {
+  const skill = newTabSkills.get(skillId);
   try {
-    const res = await fetch(`${AI_BASE}/ai/skill/run`, {
-      method: "POST",
-      headers: { "Content-Type": "application/yaml" },
-      body: yaml.dump({ skillId }),
-    });
-    const data = yaml.load(await res.text()) || {};
-    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-    const name = newTabSkills.get(skillId)?.name || skillId;
-    const text = newTabSkills.get(skillId)?.text || "";
-    await openTab({ skillId, sessionId: data.sessionId, name, text, fresh: true }, "replace");
+    const sessionId = await aiNewSession();
+    await openTab(
+      { skillId, sessionId, name: skill?.name || skillId, text: skill?.text || "", fresh: true },
+      "replace",
+    );
   } catch (err) {
     newTabError(String(err.message || err));
   }
@@ -2344,6 +2377,8 @@ function newTabClick(event) {
   else if (action === "resume") newTabResume(id);
   else if (action === "run") newTabRun(id);
   else if (action === "page") newTabOpenPage(id);
+  else if (action === "suggest")
+    toast("Suggested skill — ask the agent in a chat to add it");
   else if (action === "open-skills") newTabGo("skills");
   else if (action === "open-blueprints") newTabGo("blueprints");
   else if (action === "newtab-back") newTabGo("home", "replace");

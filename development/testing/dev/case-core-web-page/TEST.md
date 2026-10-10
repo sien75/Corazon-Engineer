@@ -305,16 +305,14 @@ const recent = await page.evaluate(() => ({
 }));
 check("recent holds no page", recent.count === 0 && !/Hello Page/.test(recent.texts), recent);
 
-// 8. a blueprint can be deleted from the blueprints page, and it asks first
+// 8. the blueprints page is read-only: a row opens the page and nothing else.
+// There is no delete button and no confirm popover — removing a blueprint is a
+// file removal, and the agent is what does it.
 await page.click("loc=css:#newtab [data-section=blueprints] .newtab-sec-open");
 await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
-await page.click("loc=css:#newtab [data-section=blueprints-all] .launch-actions button[data-action=delete][data-id='alpha']");
-await page.waitForSelector(".skill-confirm", { state: "visible" });
-await page.click("loc=css:.skill-confirm .skill-confirm-delete");
-await page.waitForFunction(() =>
-  ![...document.querySelectorAll("#newtab [data-section=blueprints-all] .launch-name")]
-    .some((e) => e.textContent === "alpha"), undefined, { timeout: 10_000 });
-check("deleting a blueprint removes it from the page", true);
+check("the blueprints page offers no delete affordance",
+  await page.evaluate(() =>
+    document.querySelectorAll("#newtab .launch-actions button, #newtab [data-action=delete]").length === 0));
 
 // 9. closing the page tab falls back to the graph (closing it while it is the
 // one on screen — a tab that is not active just disappears from the bar)
@@ -341,14 +339,20 @@ Expected: `"ok": true` — and beyond the browser checks, the page follows the
 shell's theme: the frame's document carries the shell's `data-theme` (and
 `color-scheme`), the shared `/theme.css` palette is what both sides paint with,
 and a switch to dark repaints the page **without reloading it** (its
-`window.__alive` marker survives). The setup's own consequences are part of the
-case — `alpha` leaves the disk:
+`window.__alive` marker survives).
+
+Removing a blueprint is a file removal, not a button; static's watcher notices it
+and the page drops the row on its own:
 
 ```bash
+rm -rf "$BPS/alpha"
+sleep 2   # the watcher polls once a second
+curl -s -X POST http://localhost:8524/static/query -d '{}' | grep -A6 '^blueprints:'
 ls "$BPS"
 ```
 
-Expected: `hello`, `beta`, `gamma` — no `alpha`.
+Expected: the listing no longer holds `alpha`; `ls` shows `hello`, `beta`,
+`gamma`.
 
 ## Teardown
 

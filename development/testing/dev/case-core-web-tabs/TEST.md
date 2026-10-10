@@ -172,20 +172,19 @@ check("the skills page lists every saved skill, with a plain back button at the 
   skillsPage.backBorder === "0px" && skillsPage.dtHost <= 40, skillsPage);
 check("suggested sits below my skills, apart, capped at 10",
   skillsPage.suggested === 10 && skillsPage.apart !== "0px", skillsPage);
-// Each row can be chatted with from a button of its own, next to what that kind
-// of skill allows: a saved skill can be deleted, a suggestion kept or dropped.
-check("rows offer chat, plus save/ignore or delete",
+// Each row is exactly one action, and carries no button of its own: a saved
+// skill runs, a suggested candidate only points at the agent.
+check("every skill row is one action and carries no button",
   await page.evaluate(() => {
-    const actionsOf = (row) =>
-      [...row.querySelectorAll(".launch-actions button")].map((b) => b.textContent.trim()).join(",");
     const mine = [...document.querySelectorAll("#newtab [data-section=skills-mine] .launch-item")];
     const suggested = [...document.querySelectorAll("#newtab [data-section=skills-suggested] .launch-item")];
     return mine.length === 4 && suggested.length === 10 &&
-      mine.every((r) => actionsOf(r) === "chat,delete") &&
-      suggested.every((r) => actionsOf(r) === "chat,save,ignore");
+      mine.every((r) => r.dataset.action === "run") &&
+      suggested.every((r) => r.dataset.action === "suggest") &&
+      document.querySelectorAll("#newtab .launch-actions button").length === 0;
   }));
 // The suggested section is a plain heading: discovery is automatic (the ai
-// service scans once 10 runs pile up), so the page offers no manual trigger.
+// service scans once 30 runs pile up), so the page offers no manual trigger.
 check("the suggested section has no refresh button",
   await page.evaluate(() =>
     document.querySelectorAll("#newtab .skill-refresh, #newtab [data-action=refresh]").length === 0));
@@ -200,13 +199,18 @@ check("the back button returns to the launcher",
   await page.evaluate(() => document.getElementById("newtab").hidden === false &&
     document.querySelectorAll("#newtab .newtab-sec").length === 4));
 
-// 2b. there is no write action on a row: changing a skill or a blueprint is the
-// agent's job now, so every row offers exactly one button
+// 2b. a row is one action, and nothing more: a kept skill runs, a blueprint
+// opens, a suggested candidate only points at the agent. No row carries a
+// delete / save / ignore button.
 const rowActions = await page.evaluate(() =>
-  [...document.querySelectorAll("#newtab .launch-actions button")].map((b) => b.dataset.action));
-check("rows offer only read/run actions (no delete, save or ignore)",
-  rowActions.length > 0 && rowActions.every((a) => a === "run" || a === "page"),
+  [...document.querySelectorAll("#newtab .launch-item")].map((e) => e.dataset.action));
+check("every launcher row is exactly one action (run / page / suggest / resume / newchat)",
+  rowActions.length > 0 && rowActions.every((a) =>
+    ["run", "page", "suggest", "resume", "newchat"].includes(a)),
   { actions: [...new Set(rowActions)] });
+check("no row carries a delete / save / ignore button",
+  await page.evaluate(() =>
+    document.querySelectorAll("#newtab .launch-actions button, #newtab button[data-action=delete]").length === 0));
 check("no delete affordance and no popover code path",
   await page.evaluate(() => document.querySelector(".skill-confirm") === null));
 
@@ -232,35 +236,49 @@ await page.click("loc=css:.tab[data-tab-id] .tab-close");
 await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-id]").length === 0,
   undefined, { timeout: 5_000 });
 
-// 4. running a skill opens a tab and streams the run into it — through the
-// row's own `chat` button on the skills page.
+// 4. a skill row opens a new conversation with the skill's text already in the
+// composer. Nothing is sent on the click: the run starts when the user sends.
 await page.click("#tab-add");
 await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
 await page.click("loc=css:#newtab [data-section=skills] .newtab-sec-open");
 await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
-await page.click("loc=css:#newtab .launch-actions button[data-action='run'][data-id='seeded-skill']");
+await page.click("loc=css:#newtab [data-section=skills-mine] .launch-item[data-id='seeded-skill']");
 await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
 await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
-  () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
-  undefined, { timeout: 30_000 });
+  () => (document.getElementById("ai-input-field")?.value || "").includes("seeded instruction"),
+  undefined, { timeout: 10_000 });
 const run = await page.evaluate(() => ({
   tab: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
-  user: document.querySelector("#ai-messages .ai-user")?.textContent.trim(),
-  assistant: document.querySelector("#ai-messages .ai-assistant")?.textContent.trim().slice(0, 40),
+  input: document.getElementById("ai-input-field").value,
+  messages: (document.querySelector("#ai-messages")?.textContent || "").trim(),
   leftHidden: document.getElementById("left").hidden,
   width: document.getElementById("ai").getBoundingClientRect().width,
   viewport: window.innerWidth,
   newTabHidden: document.getElementById("newtab").hidden,
 }));
-check("running a skill opens a tab", !!run.tab && run.tab.startsWith("Seeded skill"), { tab: run.tab });
-check("running leaves the launcher", run.newTabHidden === true);
-check("the skill text is the first message", run.user === "seeded instruction", { user: run.user });
-check("the run streams into the tab", (run.assistant || "").includes("dev stub"), { assistant: run.assistant });
+check("a skill row opens a tab named after the skill", !!run.tab && run.tab.startsWith("Seeded skill"), { tab: run.tab });
+check("opening the skill leaves the launcher", run.newTabHidden === true);
+check("the skill text waits in the composer and nothing is sent",
+  run.input === "seeded instruction" && run.messages === "",
+  { input: run.input, messages: run.messages.slice(0, 60) });
 check("a tab takes the whole page",
   run.leftHidden === true && run.width > run.viewport * 0.9,
   { leftHidden: run.leftHidden, width: run.width, viewport: run.viewport });
+// Sending is the user's decision — the prefilled text runs on that click.
+await page.click("#ai-send");
+await page.waitForFunction(
+  () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
+  undefined, { timeout: 30_000 });
+const sent = await page.evaluate(() => ({
+  user: document.querySelector("#ai-messages .ai-user")?.textContent.trim(),
+  assistant: (document.querySelector("#ai-messages .ai-assistant")?.textContent || "").slice(0, 40),
+  input: document.getElementById("ai-input-field").value,
+}));
+check("sending runs the prefilled skill text",
+  sent.user === "seeded instruction" && sent.assistant.includes("dev stub") && sent.input === "",
+  sent);
 // The conversation is a column inside that page: capped and centred, messages
 // and composer aligned.
 check("the conversation column is capped at 1000px and centred",

@@ -448,7 +448,6 @@ canvas.layer {
 .launch-grid .launch-item {
   flex: 1 1 0;
   min-width: 0;
-  flex-direction: column;
 }
 
 /* A sub-page is a list to work through: it starts at the top of the pane and the
@@ -504,7 +503,7 @@ canvas.layer {
 
 .launch-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -515,6 +514,12 @@ canvas.layer {
 
 .launch-item:hover {
   border-color: var(--accent);
+}
+
+/* A suggested candidate is not a skill yet: the dashed edge says "proposed, not
+   kept" and clicking it points at the agent instead of running. */
+.launch-item[data-action="suggest"] {
+  border-style: dashed;
 }
 
 .launch-main {
@@ -535,26 +540,28 @@ canvas.layer {
   white-space: nowrap;
 }
 
-.launch-actions {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.launch-actions button {
-  background: none;
+/* A one-line notice from the launcher; fades in at the bottom, out on its own. */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%) translateY(8px);
+  max-width: 80vw;
+  padding: 8px 14px;
   border: 1px solid var(--border);
-  border-radius: 3px;
-  color: var(--fg-muted);
-  font: inherit;
-  font-size: 11px;
-  padding: 2px 6px;
-  cursor: pointer;
+  border-radius: 6px;
+  background: var(--surface-3);
+  color: var(--fg);
+  font-size: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 200;
 }
 
-.launch-actions button:hover {
-  color: var(--accent);
-  border-color: var(--accent);
+#toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 /* ---------- page tab ---------- */

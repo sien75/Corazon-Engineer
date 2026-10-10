@@ -60,11 +60,17 @@ const task = await taskSpace("core-web-input-grow");
 const page = task.page("p1");
 await page.goto(`${WEB}/`);
 await page.waitForSelector("#tabs", { state: "visible" });
-// Open a skill: + gives the new tab page, running an entry shows the chat.
+// Open a skill: + gives the new tab page, and the row opens a chat with the
+// skill text already in the composer. Clear it so the measurement starts empty.
 await page.click("#tab-add");
-await page.waitForSelector("#newtab .skill-item", { state: "visible" });
-await page.click("loc=css:#newtab .skill-item >> nth=0");
+await page.waitForSelector("#newtab .launch-item", { state: "visible" });
+await page.click("loc=css:#newtab [data-section=skills] .launch-item >> nth=0");
 await page.waitForSelector("#ai-input-field", { state: "visible" });
+await page.evaluate(() => {
+  const el = document.getElementById("ai-input-field");
+  el.value = "";
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+});
 
 // Rendered metrics of the textarea, plus the styles that define its limits.
 const measure = () =>

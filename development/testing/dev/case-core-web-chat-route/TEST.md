@@ -99,15 +99,22 @@ await page.waitForFunction(() => location.pathname === "/new");
 await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
 check("+ moves the address bar to /new", (await path()) === "/new");
 
-// 3. running a skill from it names that conversation's session in the URL
-// (one saved skill, so it is among the launcher's preview rows)
+// 3. opening a skill from it names that conversation's session in the URL, with
+// the skill text waiting in the composer — it is not sent until the user sends
 await page.click("loc=css:#newtab [data-section=skills] .launch-item:has-text('Seeded skill') >> nth=0");
 await page.waitForFunction(() => /^\/chat\/.+/.test(location.pathname));
 await page.waitForFunction(
+  () => (document.getElementById("ai-input-field")?.value || "").includes("seeded instruction"));
+const sid1 = chatId(await path());
+check("opening a skill puts its session in the URL", !!sid1, { path: await nowPath() });
+check("the skill text waits in the composer, unsent",
+  await page.evaluate(() => (document.querySelector("#ai-messages")?.textContent || "") === ""));
+await page.click("#ai-send");
+await page.waitForFunction(
   () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
   undefined, { timeout: 30_000 });
-const sid1 = chatId(await path());
-check("running a skill puts its session in the URL", !!sid1, { path: await nowPath() });
+check("sending runs the prefilled skill text",
+  await page.evaluate(() => (document.querySelector("#ai-messages .ai-user")?.textContent || "").includes("seeded instruction")));
 
 // 4. the page it was started from is replaced, not stacked: back skips /new
 await back();
