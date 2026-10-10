@@ -63,9 +63,9 @@ new MutationObserver(showTheme)
 const s = document.createElement("script");
 s.src = "/config.js";
 s.onload = async () => {
-  document.getElementById("runtime").textContent = "ai=" + window.ENGINEER.ai;
+  document.getElementById("runtime").textContent = "static=" + window.ENGINEER.static;
   try {
-    const r = await fetch(window.ENGINEER.ai + "/ai/blueprint/list", {
+    const r = await fetch(window.ENGINEER.static + "/static/query", {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body: "{}",
@@ -86,25 +86,28 @@ done
 # log + ai on their own ports; ai in stub mode, so no model is ever needed
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8522 >/tmp/page-log.log 2>&1 &
+# its own static, rooted at $ROOT: the launcher reads skills and blueprints from it
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8524 >/tmp/page-static.log 2>&1 &
 
 (cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8521 --stub \
-  --log http://localhost:8522 --static http://localhost:8502 \
+  --log http://localhost:8522 --static http://localhost:8524 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/page-ai.log 2>&1 &)
 
-# one saved skill, so the skills page has something of the user's own to show
+# one saved skill, so the skills page has something of the user's own to show —
+# a plain file, exactly what the agent would write
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8521/ai/blueprint/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8521/ai/new -d '{}' && break
   sleep 1
 done
-curl -s -X POST http://localhost:8521/ai/skill/save \
-  -d 'name: Seeded skill
-text: seeded instruction'
+mkdir -p "$ROOT/.agents/skills/seeded-skill"
+printf -- '---\nname: Seeded skill\ndescription: seeded instruction\n---\nseeded instruction\n' \
+  > "$ROOT/.agents/skills/seeded-skill/SKILL.md"
 
 # web assets + the blueprint root (--pages)
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8641 --assets "$ROOTDIR/workspace/web" \
   --pages "$BPS" \
-  --static http://localhost:8502 --ai http://localhost:8521 --log http://localhost:8522 \
+  --static http://localhost:8524 --ai http://localhost:8521 --log http://localhost:8522 \
   >/tmp/page-web.log 2>&1 &
 ```
 

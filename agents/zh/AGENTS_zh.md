@@ -28,6 +28,44 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 外部工具的凭证由各工具自己存储(在各自的 `~/.xxx` 位置),没有项目级凭证目录。登录 / 鉴权是用户的事 —— 让用户来做。工具未鉴权就如实说明,不要到处翻找。凭证不得进入回复或日志。
 
+## 项目资源:skill 与 blueprint
+
+有两类资源以普通文件形式存在项目中,由前端读取。改它们就跟改任何文件一样 —— 两者都没有 API。
+
+**Skill** 就是一段文本:运行一个 skill 会开一个新会话,把这段文本作为第一条消息交给 agent。
+
+- 保留的 skill 是目录 `.agents/skills/<slug>/SKILL.md` —— frontmatter(`name`、`description`)加正文的 skill 文本。
+- 发现的候选是 `.engineer/suggested-skills/<slug>.md`,形状相同。候选由历史对话自动归纳,用户在前端查看。
+- 要把候选转正,就把它移动到位置:`.engineer/suggested-skills/<slug>.md` → `.agents/skills/<slug>/SKILL.md`。要丢弃就直接删除。只在用户要求时做。
+
+**Blueprint** 是前端资源 —— 用户可以在 tab 里打开的一个页面。不要等用户开口要“页面”:当对话谈到适合**看**而不是**说**的东西(图表、表格、示意、对比),或值得留起来下次复用的东西,就写一个 blueprint。
+
+- `.agents/blueprints/<slug>/index.html` 是入口;需要的 js / css / 图片放在同目录。目录本身就是整个页面。
+- 文档的 `<title>` 就是用户看到的名字。
+- 它由 `/pages/<slug>/` 提供,与外壳同源,因此可以链外壳的样式表、调用各服务。
+- 跟随外壳主题:链 `/theme.css`、用它色板里的 `var(--*)` 变量,并在首帧前给 `<html>` 设好 `data-theme`,避免闪出错误配色。最小入口:
+
+```html
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>一个可读的名字</title>
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin: 0; padding: 24px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  ...
+</body>
+</html>
+```
+
 ## 工作规则
 
 - 先查证再回答:对系统结构或状态不确定时,先查询拿真实数据,不要凭记忆编造。
@@ -68,6 +106,7 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 - `docs/` — 文档,即通常意义上的文档。
 - `agents/` — 项目面向 AI 的说明:AI 应如何在本项目上工作;以及 schema / contract / enum 参考。
 - `development/` — 开发过程的产出:设计 / 迭代记录与 E2E 测试;一个普通文件树,内部组织方式因项目而异;`development/README.md` 是它的概述。
+- `.agents/` — agent 以文件形式保留、供其它 agent 读取的项目资源:`skills/<slug>/SKILL.md`(保留的 skill)与 `blueprints/<slug>/index.html`(页面)。
 - `notes/` — 自由笔记。
 - `.engineer/` — 项目的本地私有数据(数据库、运行数据、日志),不进 git,绝不提交。
 

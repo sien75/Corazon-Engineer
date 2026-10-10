@@ -102,18 +102,29 @@ func decode(w http.ResponseWriter, r *http.Request, v interface{}) bool {
 	return true
 }
 
-// safePath resolves a relative id under root and rejects path escapes.
+// safePath resolves a relative id under root and rejects path escapes. The id
+// must sit under a registered type directory; only that leading directory may
+// be dot-prefixed (.agents/skills, .engineer/suggested-skills, ...). Inside it,
+// dot-prefixed entries are still not content.
 func (s *Server) safePath(id string) (string, error) {
-	clean := filepath.Clean(filepath.FromSlash(id))
-	if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(id)))
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("invalid path %q", id)
 	}
-	for _, seg := range strings.Split(clean, string(filepath.Separator)) {
-		if strings.HasPrefix(seg, ".") {
+	dir := schema.TypeDirOf(clean)
+	if dir == "" {
+		return "", fmt.Errorf("invalid path %q: not under a known type directory", id)
+	}
+	rest := strings.TrimPrefix(strings.TrimPrefix(clean, dir), "/")
+	if rest == "" {
+		return "", fmt.Errorf("invalid path %q", id)
+	}
+	for _, seg := range strings.Split(rest, "/") {
+		if seg == "" || strings.HasPrefix(seg, ".") {
 			return "", fmt.Errorf("invalid path %q: dot-prefixed entries are not content", id)
 		}
 	}
-	return filepath.Join(s.root, clean), nil
+	return filepath.Join(s.root, filepath.FromSlash(clean)), nil
 }
 
 // ---------- static-query ----------
@@ -137,6 +148,9 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 		"development": schema.ListEntries(s.root, "development"),
 		"docs":        schema.ListEntries(s.root, "docs"),
 		"notes":       schema.ListEntries(s.root, "notes"),
+		"skills":           schema.ListEntries(s.root, schema.TypeDirs["skill"]),
+		"suggested-skills": schema.ListEntries(s.root, schema.TypeDirs["suggested-skill"]),
+		"blueprints":       schema.ListEntries(s.root, schema.TypeDirs["blueprint"]),
 	})
 }
 
@@ -150,7 +164,7 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 	if !decode(w, r, &req) {
 		return
 	}
-	if !containsStr([]string{"how-to", "development", "contract", "docs", "notes"}, req.Type) {
+	if !containsStr(schema.ObjectTypes, req.Type) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid type: "+req.Type)
 		return
 	}
@@ -261,18 +275,11 @@ func (s *Server) publishSchema(op, rel string) {
 	})
 }
 
-// contentType maps a relative path's leading directory to its object type.
+// contentType maps a relative path to its object type via the registered type
+// directories; the longest match wins, so two-segment dirs (.agents/skills)
+// resolve correctly.
 func contentType(rel string) string {
-	dir := rel
-	if i := strings.IndexByte(rel, '/'); i >= 0 {
-		dir = rel[:i]
-	}
-	for typ, d := range schema.TypeDirs {
-		if d == dir {
-			return typ
-		}
-	}
-	return ""
+	return schema.TypeOf(rel)
 }
 
 // eventContent loads a changed file in the shape the stream contract declares:

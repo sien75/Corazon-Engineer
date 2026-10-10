@@ -22,16 +22,45 @@ var RuntimeTypes = []string{"native", "go", "browser", "node", "bun", "jre", "py
 
 var AtomRoles = []string{"service", "database", "cache", "queue", "storage", "gateway", "scheduler", "worker", "proxy"}
 
-var ObjectTypes = []string{"atom", "edge", "how-to", "development", "contract", "docs", "notes"}
+var ObjectTypes = []string{"atom", "edge", "how-to", "development", "contract", "docs", "notes", "skill", "suggested-skill", "blueprint"}
 
 var TypeDirs = map[string]string{
-	"atom":        "atoms",
-	"edge":        "edges",
-	"how-to":      "how-to",
-	"contract":    "contracts",
-	"development": "development",
-	"docs":        "docs",
-	"notes":       "notes",
+	"atom":            "atoms",
+	"edge":            "edges",
+	"how-to":          "how-to",
+	"contract":        "contracts",
+	"development":     "development",
+	"docs":            "docs",
+	"notes":           "notes",
+	"skill":           ".agents/skills",
+	"suggested-skill": ".engineer/suggested-skills",
+	"blueprint":       ".agents/blueprints",
+}
+
+// TypeDirOf returns the registered type directory a relative path sits under
+// (the longest match), or "" when it is not under one. Type directories may be
+// dot-prefixed (.agents/skills, .engineer/suggested-skills, ...), which is why
+// the match is done here rather than by rejecting every dot segment.
+func TypeDirOf(rel string) string {
+	rel = filepath.ToSlash(rel)
+	best := ""
+	for _, d := range TypeDirs {
+		if (rel == d || strings.HasPrefix(rel, d+"/")) && len(d) > len(best) {
+			best = d
+		}
+	}
+	return best
+}
+
+// TypeOf returns the object type a relative path belongs to, or "".
+func TypeOf(rel string) string {
+	d := TypeDirOf(rel)
+	for t, dir := range TypeDirs {
+		if dir == d {
+			return t
+		}
+	}
+	return ""
 }
 
 type FieldError struct {

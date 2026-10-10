@@ -1,6 +1,6 @@
 atoms:
   - name: ai
-    description: Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash; also owns the skill system (a skill is one piece of text; running it opens a session with that text) — custom skills are files at .agents/skills/<slug>/SKILL.md, while suggested candidates and the scan bookkeeping over past conversation runs live in its own sqlite (.engineer/skill.db); it also owns the blueprint system — a blueprint is a frontend resource, a directory at .agents/blueprints/<slug>/ holding an index.html entry plus assets, written by the agent through save_blueprint, with no discovery and no sqlite, and a page is one blueprint rendered in a tab
+    description: Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash; it also owns automatic skill discovery — a skill is one piece of text, kept as a file at .agents/skills/<slug>/SKILL.md with candidates at .engineer/suggested-skills/<slug>.md, discovered from past conversation runs read back through log, and running one opens a session with that text; blueprints are frontend resources under .agents/blueprints/, written by the agent as plain files and served/listed by static — ai has no blueprint interface of its own
     path: ./workspace/ai
     runtime_type: bun
     runtime_version: "1.3"
@@ -43,68 +43,12 @@ atoms:
           extend:
             path: /ai/resume
             method: POST
-        - id: ai-skill-list
-          channel: network
-          protocol: http
-          contract: ./contracts/ai-skill-list.yaml
-          extend:
-            path: /ai/skill/list
-            method: POST
-        - id: ai-skill-save
-          channel: network
-          protocol: http
-          contract: ./contracts/ai-skill-save.yaml
-          extend:
-            path: /ai/skill/save
-            method: POST
-        - id: ai-skill-delete
-          channel: network
-          protocol: http
-          contract: ./contracts/ai-skill-delete.yaml
-          extend:
-            path: /ai/skill/delete
-            method: POST
-        - id: ai-skill-ignore
-          channel: network
-          protocol: http
-          contract: ./contracts/ai-skill-ignore.yaml
-          extend:
-            path: /ai/skill/ignore
-            method: POST
         - id: ai-skill-run
           channel: network
           protocol: http
           contract: ./contracts/ai-skill-run.yaml
           extend:
             path: /ai/skill/run
-            method: POST
-        - id: ai-skill-refresh
-          channel: network
-          protocol: http
-          contract: ./contracts/ai-skill-refresh.yaml
-          extend:
-            path: /ai/skill/refresh
-            method: POST
-        - id: ai-blueprint-list
-          channel: network
-          protocol: http
-          contract: ./contracts/ai-blueprint-list.yaml
-          extend:
-            path: /ai/blueprint/list
-            method: POST
-        - id: ai-blueprint-save
-          channel: network
-          protocol: http
-          contract: ./contracts/ai-blueprint-save.yaml
-          extend:
-            path: /ai/blueprint/save
-            method: POST
-        - id: ai-blueprint-delete
-          channel: network
-          protocol: http
-          contract: ./contracts/ai-blueprint-delete.yaml
-          extend:
-            path: /ai/blueprint/delete
             method: POST
 
       consumes:

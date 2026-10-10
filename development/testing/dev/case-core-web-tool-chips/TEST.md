@@ -61,7 +61,7 @@ var live = []m{
 	{"seq": 9, "type": "tool_execution_start", "toolCallId": "t6", "toolName": "find", "args": m{"pattern": "**/*.spec.ts"}},
 	{"seq": 10, "type": "tool_execution_start", "toolCallId": "t7", "toolName": "ls", "args": m{"path": "development/testing/"}},
 	{"seq": 11, "type": "tool_execution_start", "toolCallId": "t8", "toolName": "bash", "args": m{"command": "sudo -E curl -s http://localhost:1"}},
-	{"seq": 12, "type": "tool_execution_start", "toolCallId": "t9", "toolName": "save_skill", "args": m{"name": "deploy-notes", "text": "..."}},
+	{"seq": 12, "type": "tool_execution_start", "toolCallId": "t9", "toolName": "edit", "args": m{"path": ".agents/skills/deploy-notes/SKILL.md"}},
 	{"seq": 13, "type": "tool_execution_start", "toolCallId": "t10", "toolName": "mystery", "args": m{"x": 1}},
 	{"seq": 14, "type": "tool_execution_end", "toolCallId": "t1", "isError": false, "result": "file body"},
 	{"seq": 15, "type": "message_update", "assistantMessageEvent": m{"type": "text_start"}},
@@ -104,8 +104,8 @@ func main() {
 			w.Write(b)
 		}
 		switch r.URL.Path {
-		case "/ai/skill/list":
-			write(200, m{"skills": []any{}})
+		case "/static/query":
+			write(200, m{"skills": []any{}, "suggested-skills": []any{}, "blueprints": []any{}})
 		case "/ai/new":
 			write(200, m{"sessionId": "live-1"})
 		case "/ai/resume":

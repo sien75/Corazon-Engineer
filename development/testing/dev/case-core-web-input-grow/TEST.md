@@ -25,24 +25,26 @@ printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8513 >/tmp/input-grow-log.log 2>&1 &
+# its own static, rooted at $ROOT: the launcher reads skills from static now
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8514 >/tmp/input-grow-static.log 2>&1 &
 
 (cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8511 --stub \
-  --log http://localhost:8513 --static http://localhost:8502 \
+  --log http://localhost:8513 --static http://localhost:8514 \
   --agents "$ROOTDIR/agents/AGENTS.md" >/tmp/input-grow-ai.log 2>&1 &)
 sleep 2
-# one skill, so the new tab page has something to open
+# one skill, so the new tab page has something to open — a plain file
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8511/ai/skill/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8511/ai/new -d '{}' && break
   sleep 1
 done
-curl -s -o /dev/null -X POST http://localhost:8511/ai/skill/save \
-  -d 'name: Input grow
-text: placeholder skill'
+mkdir -p "$ROOT/.agents/skills/input-grow"
+printf -- '---\nname: Input grow\ndescription: placeholder skill\n---\nplaceholder skill\n' \
+  > "$ROOT/.agents/skills/input-grow/SKILL.md"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
   --pages /tmp/engineer-pages-unused \
-  --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8513 \
+  --static http://localhost:8514 --ai http://localhost:8511 --log http://localhost:8513 \
   >/tmp/input-grow-web.log 2>&1 &
 ```
 

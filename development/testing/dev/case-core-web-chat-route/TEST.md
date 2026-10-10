@@ -28,33 +28,35 @@ printf 'project: chat-route-test\n' > "$ROOT/engineer.yaml"
 # can run next to them); ai in stub mode, so the run is deterministic and offline
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8523 >/tmp/chat-route-log.log 2>&1 &
+# its own static, rooted at $ROOT: the launcher reads skills from static now, so
+# a seeded skill must live in the scratch tree static serves
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8524 >/tmp/chat-route-static.log 2>&1 &
 
 (cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8521 --stub \
-  --log http://localhost:8523 --static http://localhost:8502 \
+  --log http://localhost:8523 --static http://localhost:8524 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/chat-route-ai.log 2>&1 &)
 
-# one saved skill, so the new tab page has something to run
-# wait for ai first: the save must not race the boot
+# one saved skill, so the new tab page has something to run — a plain file
+# wait for ai first: the write must not race the boot
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8521/ai/skill/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8521/ai/new -d '{}' && break
   sleep 1
 done
-curl -s -X POST http://localhost:8521/ai/skill/save \
-  -d 'name: Seeded skill
-text: seeded instruction'
+mkdir -p "$ROOT/.agents/skills/seeded-skill"
+printf -- '---\nname: Seeded skill\ndescription: seeded instruction\n---\nseeded instruction\n' \
+  > "$ROOT/.agents/skills/seeded-skill/SKILL.md"
 
 # web assets
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8620 --assets "$ROOTDIR/workspace/web" \
   --pages /tmp/engineer-pages-unused \
-  --static http://localhost:8502 --ai http://localhost:8521 --log http://localhost:8523 \
+  --static http://localhost:8524 --ai http://localhost:8521 --log http://localhost:8523 \
   >/tmp/chat-route-web.log 2>&1 &
 ```
 
 Expected on startup: the ai service logs `--stub: model calls disabled`, the log
-server logs its address on `:8523`, and the web server logs
-`engineer web: http://localhost:8620`. (`--static` is only referenced by the
-frontend, never called here, so any address — or none — is fine.)
+server logs its address on `:8523`, the static server on `:8524`, and the web
+server logs `engineer web: http://localhost:8620`.
 
 ## Run
 

@@ -1,207 +1,171 @@
 # Test: core-skill-crud
 
-Skill CRUD on the ai service. A skill is one piece of text. A **custom** skill — a
-skill the user keeps — is a **file**: `<project>/.agents/skills/<slug>/SKILL.md`.
-The ai service's own sqlite (`.engineer/skill.db`) holds only the suggested
-candidates and the scan bookkeeping. log and static are not involved.
+Skills are plain files. A **kept** skill is `<project>/.agents/skills/<slug>/SKILL.md`;
+a **candidate** is `<project>/.engineer/suggested-skills/<slug>.md`. There is no
+skill database and no CRUD API: static lists and reads the files, and the agent
+changes them with its file tools. This case exercises the read side (static) and
+the file side directly; `/ai/skill/run` still opens a session from a skill.
 
 ## Setup
 
 ```bash
 ROOTDIR="$PWD"
 # Isolated scratch project root: the test must never touch the real .agents/skills
-# or .engineer/skill.db
+# or .engineer.
 ROOT="$ROOTDIR/.engineer/.skill-test"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
 printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
 
-# A scratch log service. The ai service refuses to start without a --log address,
-# so it must be given one — and it must not be the real one. Nothing reads it back.
+# A scratch log service (ai refuses to start without --log) and a scratch static
+# service rooted at $ROOT, so the read side reads this scratch tree and not the
+# real project.
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8544 \
   >/tmp/skill-crud-log.log 2>&1 &
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8545 \
+  >/tmp/skill-crud-static.log 2>&1 &
 
 (cd workspace/ai && bun install && bun run src/main.ts \
   --bind 127.0.0.1 --port 8543 --root "$ROOT" --stub \
-  --log http://localhost:8544 --static http://localhost:8502 \
+  --log http://localhost:8544 --static http://localhost:8545 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/skill-crud-ai.log 2>&1 &)
 
 AI=http://localhost:8543
+STATIC=http://localhost:8545
 SKILLS="$ROOT/.agents/skills"
+SUGGESTED="$ROOT/.engineer/suggested-skills"
 
-# wait for it before asking: the blocks below run back to back
+# wait for static and ai before asking: the blocks below run back to back
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST $AI/ai/skill/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST $STATIC/static/query -d '{}' &&
+    curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
   sleep 1
 done
 ```
 
-`--stub` disables model calls (the echo stub); the skill API never needs a model,
-so the whole case runs offline. `--static` is only a line in the system prompt —
-the service itself never calls it, and under `--stub` it is not used at all.
+`--stub` disables model calls (the echo stub); nothing here needs a model.
 
-## 1. save creates a custom skill — a file in the project
+## 1. a kept skill is a directory with one file
 
 ```bash
-curl -s -X POST $AI/ai/skill/save -d 'name: Payment logs
-text: check payment-service logs in dev for the last 30 minutes'
-cat "$SKILLS/payment-logs/SKILL.md"
+mkdir -p "$SKILLS/payment-logs"
+printf -- '---\nname: Payment logs\ndescription: check payment-service logs in dev for the last 30 minutes\n---\ncheck payment-service logs in dev for the last 30 minutes\n' \
+  > "$SKILLS/payment-logs/SKILL.md"
+
+curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^skills:'
+curl -s -X POST $STATIC/static/query-detail -d 'type: skill
+id: .agents/skills/payment-logs/SKILL.md'
 ```
 
-Expected: 200; `skill.id: payment-logs`, `skill.source: custom`,
-`skill.status: active`, `createdAt` == `updatedAt`. The `cat` prints exactly
+Expected: `skills` holds `.agents/skills/payment-logs/SKILL.md`; the detail call
+echoes the type and id and returns the file body verbatim under `skill` —
+frontmatter (`name`, `description`) then the text. The id is the directory name,
+`name` is the display name, `description` is the first line of the text.
 
-```
----
-name: Payment logs
-description: check payment-service logs in dev for the last 30 minutes
----
-check payment-service logs in dev for the last 30 minutes
-```
-
-— the id is the directory name, `name` is the display name, `description` is the
-first line of the text, and the body is the skill text itself.
-
-## 2. list returns it, filters are honored
+## 2. a candidate is one file; promoting it is a move
 
 ```bash
-curl -s -X POST $AI/ai/skill/list -d ''
-curl -s -X POST $AI/ai/skill/list -d 'source: custom'
-curl -s -X POST $AI/ai/skill/list -d 'source: suggested'
-curl -s -X POST $AI/ai/skill/list -d 'status: ignored'
+mkdir -p "$SUGGESTED"
+printf -- '---\nname: Payment logs\ndescription: check payment-service logs in dev\n---\ncheck payment-service logs in dev\n' \
+  > "$SUGGESTED/payment-logs.md"
+
+curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^suggested-skills:'
+curl -s -X POST $STATIC/static/query-detail -d 'type: suggested-skill
+id: .engineer/suggested-skills/payment-logs.md'
 ```
 
-Expected: 200; the skill appears in the unfiltered list and in `source: custom`;
-`source: suggested` and `status: ignored` are empty.
+Expected: the candidate is listed under `suggested-skills` (and not under
+`skills`); the detail call returns it under `suggested-skill`.
 
-## 3. save with an id updates in place
+Promotion is the mv the agent runs when the user says to keep it:
 
 ```bash
-TID=$(curl -s -X POST $AI/ai/skill/list -d 'source: custom' \
-  | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["skills"][0]["id"])')
-curl -s -X POST $AI/ai/skill/save -d "id: $TID
-name: Payment logs (dev)
-text: check payment-service logs in dev"
-ls "$SKILLS"
-cat "$SKILLS/$TID/SKILL.md"
+mkdir -p "$SKILLS/dev-logs"
+mv "$SUGGESTED/payment-logs.md" "$SKILLS/dev-logs/SKILL.md"
+
+curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^skills:'
+curl -s -X POST $STATIC/static/query -d '{}' | grep -A2 '^suggested-skills:'
 ```
 
-Expected: 200; same `id`, new `name` / `text`, `source` still `custom`,
-`createdAt` unchanged, `updatedAt` newer. `ls` shows **one** directory — a rename
-rewrites the file in place, the directory (the id) does not move — and the file
-carries the new name and the shorter text (its derived `description` shrinks too).
+Expected: `skills` now holds both `payment-logs/SKILL.md` and
+`dev-logs/SKILL.md`; `suggested-skills` is empty.
 
-## 4. error branches
+## 3. delete is rm
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/save -d 'text: no name'
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/save -d 'name: x
-text: "   "'
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/save -d 'id: t_nope
-name: x
-text: y'
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/delete -d 'id: ""'
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/delete -d 'id: t_nope'
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/ignore -d 'id: t_nope'
-# a custom skill is a file: it has no ignored state, so ignore must not touch it
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/ignore -d "id: $TID"
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/list -d 'source: bogus'
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/list -d 'status: bogus'
+rm -rf "$SKILLS/payment-logs"
+curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^skills:'
 ```
 
-Expected, in order: 400, 400, 404, 400, 404, 404, 404, 400, 400 — each with body
-`error.code` `bad_request` / `not_found` matching the status.
+Expected: `payment-logs` is gone from the listing; `dev-logs` remains.
 
-## 5. a suggested candidate: ignore, restore, accept
-
-Suggested candidates are the only thing the sqlite still holds, so seed one there
-directly (a scan needs a model; this case runs under `--stub`):
+## 4. static is read-only and does not read private data
 
 ```bash
-SKILLDB="$ROOT/.engineer/skill.db" bun -e '
-import { Database } from "bun:sqlite";
-const db = new Database(process.env.SKILLDB);
-db.query(`INSERT INTO skill (id, name, text, source, status, evidence, created_at, updated_at)
-  VALUES (?, ?, ?, "suggested", "active", ?, ?, ?)`)
-  .run("t_seeded", "Payment logs", "check payment-service logs in dev",
-       "{}", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");'
-
-curl -s -X POST $AI/ai/skill/list -d 'source: suggested'
-curl -s -X POST $AI/ai/skill/ignore -d 'id: t_seeded'
-curl -s -X POST $AI/ai/skill/list -d 'status: ignored'
-curl -s -X POST $AI/ai/skill/ignore -d 'id: t_seeded
-ignored: false'
-curl -s -X POST $AI/ai/skill/list -d 'source: suggested
-status: active'
+# no delete interface exists at all
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $STATIC/static/delete -d '{}'
+# the whole .engineer dir is private: only the registered type dir is readable
+curl -s -X POST $STATIC/static/query-detail -d 'type: suggested-skill
+id: .engineer/engineer.db'
+# an escape inside the registered dir cleans out of it and is refused
+curl -s -X POST $STATIC/static/query-detail -d 'type: suggested-skill
+id: .engineer/suggested-skills/../engineer.db'
 ```
 
-Expected: it is listed as `source: suggested`; after the first ignore
-`skill.status: ignored` and it shows up under `status: ignored` instead of
-`status: active`; after `ignored: false` it is an active suggestion again.
+Expected: 404 `unknown endpoint`; then 400 `bad_request` twice (the id is not
+under the registered type dir). The ai service's private data is never served.
 
-Accepting it copies the candidate into the project as a file:
+## 5. the ai service has no skill CRUD and no database
 
 ```bash
-curl -s -X POST $AI/ai/skill/save -d 'id: t_seeded
-name: Seeded suggestion
-text: check payment-service logs in dev'
-curl -s -X POST $AI/ai/skill/list -d 'source: suggested'
-curl -s -X POST $AI/ai/skill/list -d 'source: custom'
-cat "$SKILLS/seeded-suggestion/SKILL.md"
-SKILLDB="$ROOT/.engineer/skill.db" bun -e '
-import { Database } from "bun:sqlite";
-const db = new Database(process.env.SKILLDB);
-console.log("candidate rows:", db.query("SELECT count(*) AS n FROM skill WHERE id = ?").get("t_seeded").n);'
+for p in list save delete ignore refresh; do
+  printf "%-8s " "$p"
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/$p -d '{}'
+done
+ls "$ROOT/.engineer" 2>/dev/null
 ```
 
-Expected: the save answers 200 with `skill.id: seeded-suggestion` (the id became
-the directory name — a suggested candidate id is not a path), the file exists with
-that name and text, the suggested filter is now empty, the custom filter holds it,
-and the candidate row is gone from sqlite (accepted, not duplicated).
+Expected: `/ai/skill/save|delete|ignore|list` are 404 `unknown endpoint`;
+`refresh` is **kept** (200, the manual scan trigger). `$ROOT/.engineer` holds no
+`skill.db` — the ai service keeps no skill database.
 
-## 6. delete removes the directory
+## 6. /ai/skill/run still instantiates a skill
 
 ```bash
-curl -s -X POST $AI/ai/skill/delete -d "id: $TID"
-ls "$SKILLS"
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/delete -d "id: $TID"
+curl -s -X POST $AI/ai/skill/run -d 'skillId: dev-logs'
+curl -s -X POST $AI/ai/skill/run -d 'skillId: nope' -o /dev/null -w '%{http_code}\n'
+curl -s -X POST $AI/ai/skill/run -d 'text: an ad-hoc skill'
 ```
 
-Expected: 200 `skillId: $TID`; `$SKILLS` no longer holds `$TID` (the directory is
-gone, not just the id forgotten); a second delete of the same id is 404.
+Expected: 200 with a fresh `sessionId` and the echoed `skillId`; a missing skill
+is 404; an ad-hoc text runs without a `skillId`.
 
 ## 7. files survive a restart
 
 ```bash
 pkill -f 'main.ts.*--port 8543'
 
-# relaunch the ai service exactly as in Setup, wait for it the same way
 (cd workspace/ai && bun run src/main.ts \
   --bind 127.0.0.1 --port 8543 --root "$ROOT" --stub \
-  --log http://localhost:8544 --static http://localhost:8502 \
+  --log http://localhost:8544 --static http://localhost:8545 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/skill-crud-ai.log 2>&1 &)
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST $AI/ai/skill/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
   sleep 1
 done
 
-curl -s -X POST $AI/ai/skill/list -d 'source: custom'
-SKILLDB="$ROOT/.engineer/skill.db" bun -e '
-import { Database } from "bun:sqlite";
-const db = new Database(process.env.SKILLDB);
-console.log("rows in the skill table:", db.query("SELECT count(*) AS n FROM skill").get().n);'
+curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^skills:'
 ```
 
-Expected: the skill saved before the restart (`seeded-suggestion`) is still listed
-— custom skills live in the project, not in memory — and the sqlite holds no
-skill rows at all (the accepted candidate was dropped, and nothing was saved
-back).
+Expected: `dev-logs/SKILL.md` is still listed — skills live in the project files,
+not in process memory.
 
 ## Teardown
 
 ```bash
 pkill -f 'main.ts.*--port 8543'
 pkill -f '/tmp/engineer serve-log --root .*skill-test'
+pkill -f '/tmp/engineer serve-static --root .*skill-test'
 ```

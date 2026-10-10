@@ -21,7 +21,7 @@ and the page are DOM behaviour, so this case runs through a real browser
 Prerequisite: `ego-browser` on `PATH` (`ego-browser --version`).
 
 ```bash
-# A scratch project root: the case must not touch the real .engineer/skill.db or log
+# A scratch project root: the case must not touch the real .agents/ or .engineer/
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.skill-test"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
@@ -31,47 +31,45 @@ mkdir -p "$ROOT/.agents/blueprints"
 # log + ai on their own ports; ai in stub mode, so skill runs are deterministic and offline
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8513 >/tmp/tabs-log.log 2>&1 &
+# its own static, rooted at $ROOT: the launcher reads skills from static now
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8514 >/tmp/tabs-static.log 2>&1 &
 
 (cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8511 --stub \
-  --log http://localhost:8513 --static http://localhost:8502 \
+  --log http://localhost:8513 --static http://localhost:8514 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/tabs-ai.log 2>&1 &)
 
-# wait for ai first: the saves below must not race the boot
+# wait for ai first: the writes below must not race the boot
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8511/ai/skill/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8511/ai/new -d '{}' && break
   sleep 1
 done
-# four saved skills, so the launcher's three-at-a-time preview is exercised
-for n in "Seeded skill:seeded instruction" "Skill B:b instruction" "Skill C:c instruction" "Skill D:d instruction"; do
-  curl -s -X POST http://localhost:8511/ai/skill/save \
-    -d "name: ${n%%:*}
-text: ${n##*:}" >/dev/null
+# four saved skills, so the launcher's three-at-a-time preview is exercised —
+# each is a directory with one SKILL.md, exactly what the agent would write
+for n in "seeded-skill:Seeded skill:seeded instruction" "skill-b:Skill B:b instruction" "skill-c:Skill C:c instruction" "skill-d:Skill D:d instruction"; do
+  slug=$(echo "$n" | cut -d: -f1); name=$(echo "$n" | cut -d: -f2); text=$(echo "$n" | cut -d: -f3)
+  mkdir -p "$ROOT/.agents/skills/$slug"
+  printf -- "---\nname: %s\ndescription: %s\n---\n%s\n" "$name" "$text" "$text" \
+    > "$ROOT/.agents/skills/$slug/SKILL.md"
 done
 
-# suggested candidates are seeded straight into the sqlite (a scan needs a model;
-# this case runs --stub) — 12 of them, one more than the page is allowed to show
-SKILLDB="$ROOT/.engineer/skill.db" bun -e '
-import { Database } from "bun:sqlite";
-const db = new Database(process.env.SKILLDB);
-const ins = db.query(`INSERT INTO skill (id, name, text, source, status, evidence, created_at, updated_at)
-  VALUES (?, ?, ?, "suggested", "active", ?, ?, ?)`);
-for (let i = 1; i <= 12; i++) {
-  const ts = `2026-01-${String(i).padStart(2, "0")}T00:00:00Z`;
-  ins.run(`t_seed_${i}`, `Seed suggestion ${i}`, `seeded candidate ${i}`, "{}", ts, ts);
-}'
+# 12 candidate files — one more than the skills page is allowed to show
+for i in $(seq 1 12); do
+  mkdir -p "$ROOT/.engineer/suggested-skills"
+  printf -- "---\nname: Seed suggestion %s\ndescription: seeded candidate %s\n---\nseeded candidate %s\n" \
+    "$i" "$i" "$i" > "$ROOT/.engineer/suggested-skills/seed-$i.md"
+done
 
 # web assets + the blueprint root (empty here; pages have their own case)
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
   --pages "$ROOT/.agents/blueprints" \
-  --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8513 \
+  --static http://localhost:8514 --ai http://localhost:8511 --log http://localhost:8513 \
   >/tmp/tabs-web.log 2>&1 &
 ```
 
 Expected on startup: the ai service logs `--stub: model calls disabled`, the
-log server logs its address on `:8513`, and the web server logs
-`engineer web: http://localhost:8610`. (`--static` is only referenced by the
-frontend, never called here, so any address — or none — is fine.)
+log server logs its address on `:8513`, the static server on `:8514`, and the web
+server logs `engineer web: http://localhost:8610`.
 
 ## Run
 
@@ -202,34 +200,15 @@ check("the back button returns to the launcher",
   await page.evaluate(() => document.getElementById("newtab").hidden === false &&
     document.querySelectorAll("#newtab .newtab-sec").length === 4));
 
-// 2b. delete asks first: the button opens a small popover anchored to it, and the
-// skill is still there until the popover's own button is used.
-await page.click("loc=css:#newtab [data-section=skills] .newtab-sec-open");
-await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
-await page.click("loc=css:#newtab [data-section=skills-mine] .launch-actions button[data-action=delete][data-id='seeded-skill']");
-await page.waitForSelector(".skill-confirm", { state: "visible" });
-const confirmBox = await page.evaluate(() => {
-  const pop = document.querySelector(".skill-confirm");
-  const btn = [...document.querySelectorAll("#newtab [data-section=skills-mine] button[data-action=delete]")]
-    .find((b) => b.closest(".launch-item").textContent.includes("Seeded skill"));
-  const p = pop.getBoundingClientRect();
-  const b = btn.getBoundingClientRect();
-  return {
-    text: pop.textContent,
-    anchored: Math.abs(p.top - b.bottom) < 40 && p.left < b.right && p.right > b.left,
-    onScreen: p.left >= 0 && p.right <= window.innerWidth && p.top >= 0 && p.bottom <= window.innerHeight,
-    stillListed: [...document.querySelectorAll("#newtab .launch-name")].some((e) => e.textContent === "Seeded skill"),
-  };
-});
-check("delete asks first, in a popover on its own button",
-  /Seeded skill/.test(confirmBox.text) && confirmBox.anchored && confirmBox.onScreen &&
-  confirmBox.stillListed === true, confirmBox);
-await page.click("loc=css:.skill-confirm .skill-confirm-cancel");
-await page.waitForFunction(() => document.querySelector(".skill-confirm") === null,
-  undefined, { timeout: 5_000 });
-check("cancelling leaves the skill alone",
-  await page.evaluate(() => document.querySelector(".skill-confirm") === null &&
-    [...document.querySelectorAll("#newtab .launch-name")].some((e) => e.textContent === "Seeded skill")));
+// 2b. there is no write action on a row: changing a skill or a blueprint is the
+// agent's job now, so every row offers exactly one button
+const rowActions = await page.evaluate(() =>
+  [...document.querySelectorAll("#newtab .launch-actions button")].map((b) => b.dataset.action));
+check("rows offer only read/run actions (no delete, save or ignore)",
+  rowActions.length > 0 && rowActions.every((a) => a === "run" || a === "page"),
+  { actions: [...new Set(rowActions)] });
+check("no delete affordance and no popover code path",
+  await page.evaluate(() => document.querySelector(".skill-confirm") === null));
 
 // 3. the launcher can start a blank conversation (no skill behind it)
 await page.cdp("Emulation.clearDeviceMetricsOverride", {});
@@ -455,21 +434,13 @@ await page.waitForFunction(() => document.getElementById("ai-input-field").value
 const draftB = await page.evaluate(() => document.getElementById("ai-input-field").value);
 check("the second instance's draft is intact", draftB === "draft-B", { draft: draftB });
 
-// 13. confirming the popover really deletes: the skill is a folder in the
-// project, and it leaves both the page and the api's list.
+// 13. every row is read-only: changing a skill or a blueprint is a conversation
+// away (the agent edits the file), so the page has no delete action at all.
 await page.click("#tab-add");
 await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
-await page.click("loc=css:#newtab [data-section=skills] .newtab-sec-open");
-await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
-await page.click("loc=css:#newtab [data-section=skills-mine] .launch-actions button[data-action=delete][data-id='seeded-skill']");
-await page.waitForSelector(".skill-confirm", { state: "visible" });
-await page.click("loc=css:.skill-confirm .skill-confirm-delete");
-await page.waitForFunction(() =>
-  ![...document.querySelectorAll("#newtab .launch-name")].some((e) => e.textContent === "Seeded skill"),
-  undefined, { timeout: 10_000 });
-check("confirming deletes the skill",
+check("the launcher has no delete action anywhere",
   await page.evaluate(() =>
-    document.querySelectorAll("#newtab [data-section=skills-mine] .launch-item").length === 3));
+    [...document.querySelectorAll("#newtab button")].every((b) => b.dataset.action !== "delete")));
 
 const ok = checks.every((c) => c.pass);
 console.log(JSON.stringify({ ok, checks }, null, 2));

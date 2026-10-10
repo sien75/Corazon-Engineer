@@ -3,13 +3,13 @@ description: Fetch content of a single leaf file
 
 request:
   body:
-    type: how-to | development | contract | docs | notes  # leaf file type
+    type: how-to | development | contract | docs | notes | skill | suggested-skill | blueprint  # leaf file type
     id: string  # relative path (directory entry from static-query), e.g. "contracts/ai-ask.yaml"
 
 response:
   status: 200
   body:
-    type: how-to | development | contract | docs | notes  # echoed request type
+    type: how-to | development | contract | docs | notes | skill | suggested-skill | blueprint  # echoed request type
     id: string  # echoed request id
 
     how-to?: string  # when type=how-to, raw file text (prose markdown / config yaml)
@@ -26,6 +26,12 @@ response:
     docs?: string  # when type=docs, raw markdown text
 
     notes?: string  # when type=notes, raw markdown text
+
+    skill?: string  # when type=skill, raw markdown text (frontmatter + body)
+
+    suggested-skill?: string  # when type=suggested-skill, raw markdown text
+
+    blueprint?: string  # when type=blueprint, raw file text (e.g. index.html)
 
 errors:
   - status: 400

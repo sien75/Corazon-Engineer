@@ -2,10 +2,19 @@ import type { PendingRun, Skill, SkillStore } from "./store.ts";
 
 // A scan fires once this many settled runs are waiting. Runs accumulate across
 // sessions; a bigger pile only makes a bigger scan, never a bigger prompt (the
-// batch shrinks until it fits).
-export const SCAN_THRESHOLD = 10;
-// Never propose more than this many skills from one scan.
-const MAX_SUGGESTIONS = 3;
+// batch is capped at SCAN_BATCH and shrinks further until it fits).
+//
+// Discovery is deliberately restrained: a capability has to keep coming back
+// before it is worth proposing. Thirty settled runs is roughly a working day of
+// real use, and the prompt below still asks for three separate sightings before
+// anything is proposed.
+export const SCAN_THRESHOLD = 30;
+// How many of the waiting runs one scan reads at a time. The rest stay queued
+// for the next scan, so a long backlog is mined in batches, not all at once.
+const SCAN_BATCH = 10;
+// Never propose more than this many skills from one scan. Preferring few is the
+// point: a suggestion the user has to ignore is worse than no suggestion.
+const MAX_SUGGESTIONS = 2;
 // Keep a skill name short enough to be a tab label.
 const MAX_NAME = 24;
 
@@ -72,7 +81,7 @@ function buildPrompt(
   return [
     "You mine a developer's past agent runs for skills worth saving as reusable shortcuts.",
     "",
-    "A skill is one piece of text: running it opens a fresh conversation and hands that text to an agent as its first message. A good skill is a self-contained instruction that the developer has in effect repeated.",
+    "A skill is one piece of text: running it opens a fresh conversation and hands that text to an agent as its first message. A good skill is a self-contained instruction for a capability the developer reaches for again and again.",
     "",
     "Already-known skills — never propose anything equivalent to these (they are either already saved or already rejected by the user):",
     existing,
@@ -81,12 +90,15 @@ function buildPrompt(
     runs,
     "",
     "Return STRICT JSON and nothing else:",
-    '{"skills":[{"name":"short tab label, <= 24 chars","text":"the reusable instruction"}]}',
+    '{"skills":[{"name":"short plain tab label, <= 24 chars","text":"the reusable instruction"}]}',
     "",
     "Rules:",
-    "- Propose at most 3. Prefer 0 when nothing clearly repeats.",
-    "- Only propose work that shows up in more than one run, or that the user explicitly asked to save.",
-    "- `text` must stand alone: no references to earlier conversation, no half-finished requests.",
+    "- Be restrained. Propose at most 2, and prefer 0. An ignored suggestion is worse than none.",
+    "- Propose a capability only when the same kind of work appears in at least THREE different runs. One sighting is never enough.",
+    "- Propose only general, reusable capabilities. Reject one-off work: a specific bug, a single named file, a ticket number, a date, a customer, a one-time migration.",
+    "- Ask: would this instruction be useful unchanged next week, on another project? If not, do not propose it.",
+    "- `name` is a short, plain tab label (<= 24 chars) in the language the user writes in. It must say what the skill does at a glance: no jargon, no acronyms, no tool names, no sentences, nothing vague.",
+    "- `text` is the standalone instruction; it must make sense with no conversation context.",
     "- No commentary outside the JSON.",
   ].join("\n");
 }
@@ -182,7 +194,7 @@ export class Suggester {
     const store = this.deps.store;
     const known = store.known();
     const budget = this.deps.inputBudgetTokens();
-    let n = Math.min(pending.length, SCAN_THRESHOLD);
+    let n = Math.min(pending.length, SCAN_BATCH);
     while (n >= 1) {
       const batch = pending.slice(0, n);
       let prompt = buildPrompt(batch, known);
@@ -231,8 +243,9 @@ export class Suggester {
     return { kind: "ok", skills };
   }
 
-  // persist drops anything equivalent to an already-known skill (saved or
-  // ignored) or to an earlier item of the same scan, then stores the rest.
+  // persist drops anything equivalent to an already-known skill (kept or
+  // already proposed) or to an earlier item of the same scan, then writes the
+  // rest out as candidate files.
   private persist(
     items: { name: string; text: string }[],
     batch: PendingRun[],
@@ -243,11 +256,6 @@ export class Suggester {
       seen.add(norm(t.name));
       seen.add(norm(t.text));
     }
-    const evidence = {
-      sessionIds: [...new Set(batch.map((r) => r.sessionId))],
-      runs: batch.map((r) => r.id),
-      scannedAt: new Date().toISOString(),
-    };
     let added = 0;
     for (const item of items) {
       const text = item.text.trim();
@@ -256,7 +264,7 @@ export class Suggester {
       if (seen.has(norm(name)) || seen.has(norm(text))) continue;
       seen.add(norm(name));
       seen.add(norm(text));
-      this.deps.store.addSuggested(name, text, evidence);
+      this.deps.store.addSuggested(name, text);
       added++;
     }
     return added;

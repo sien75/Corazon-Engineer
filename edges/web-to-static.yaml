@@ -14,7 +14,7 @@ edges:
     to_interface: static-query-detail
     channel: network
     protocol: http
-    description: Web frontend fetches section content (how-to/development/contracts/docs/notes) for the top menu views
+    description: Web frontend fetches section content (how-to/development/contracts/docs/notes, and the skills / suggested-skills / blueprints files) for the top menu views and the launcher
   - id: web-to-static-stream
     from: web
     from_interface: static-stream

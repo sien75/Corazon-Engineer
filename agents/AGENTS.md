@@ -28,6 +28,44 @@ Listening-type tools (log/metric/trace tailers, subscribers, stream readers) mus
 
 External tools keep their own credentials (under their own `~/.xxx` locations); there is no project-level credential store. Logging in / authenticating a tool is the user's job — ask the user to do it. If a tool is not authenticated, say so honestly instead of probing around. Never echo credentials into responses or logs.
 
+## Project resources: skills and blueprints
+
+Two kinds of resource live in the project as plain files and are read by the frontend. You change them the way you change any file — there is no API for either.
+
+**Skills** are one piece of text: running one opens a fresh conversation and hands that text to an agent as the first message.
+
+- A kept skill is a directory `.agents/skills/<slug>/SKILL.md` — frontmatter (`name`, `description`) followed by the skill text as the body.
+- A discovered candidate is `.engineer/suggested-skills/<slug>.md`, the same shape. Candidates are proposed automatically from past conversation runs; the user sees them in the frontend.
+- To keep a candidate, move it into place: `.engineer/suggested-skills/<slug>.md` → `.agents/skills/<slug>/SKILL.md`. To drop one, delete it. Do this only when the user asks.
+
+**Blueprints** are frontend resources — a page the user can open in a tab. Do not wait to be asked for a "page": when a conversation reaches something better shown than told (a chart, a table, a diagram, a comparison), or something worth keeping to use again, write a blueprint.
+
+- `.agents/blueprints/<slug>/index.html` is the entry; put any js / css / images beside it. The directory is the whole page.
+- The document's `<title>` is the name the user sees.
+- It is served at `/pages/<slug>/`, same origin as the shell, so it can link the shell's stylesheet and call the services.
+- Follow the shell's theme: link `/theme.css`, use its `var(--*)` variables, and set `data-theme` on `<html>` before first paint so the page does not flash the wrong palette. Minimal entry:
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>A readable name</title>
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin: 0; padding: 24px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  ...
+</body>
+</html>
+```
+
 ## Working rules
 
 - Verify before answering: when unsure about structure or state, query first and answer from real data. Do not fabricate from memory.
@@ -68,6 +106,7 @@ So: besides the project's own `AGENTS.md`, we recommend also reading `developmen
 - `docs/` — documentation, in the ordinary sense.
 - `agents/` — the project's agent instructions: how an AI agent should work on this project, plus the schema / contract / enum reference.
 - `development/` — what the development process produces: design / iteration records and E2E tests; a plain file tree whose internal layout is project-specific; `development/README.md` is its overview.
+- `.agents/` — project resources the agent keeps as files and other agents read: `skills/<slug>/SKILL.md` (kept skills) and `blueprints/<slug>/index.html` (pages).
 - `notes/` — free-form notes.
 - `.engineer/` — local private data of the project (database, run data, logs). Git-ignored. Never commit it.
 

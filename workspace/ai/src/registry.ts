@@ -22,7 +22,6 @@ import {
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
 import { SkillStore } from "./skill/store.ts";
-import { BlueprintError, BlueprintStore, type BlueprintFile } from "./blueprint/store.ts";
 import {
   SCAN_THRESHOLD,
   Suggester,
@@ -49,10 +48,11 @@ export interface EngineerEvent {
 
 type Listener = (ev: EngineerEvent) => void;
 
-// ask_user: one of the three custom tools (save_skill and save_blueprint are
-// built further down). It does not block: it ends the current run and the user's
-// answer arrives later as a normal user text turn on /ai/ask — the one input
-// path, which is also where permission/approval logic would go.
+// ask_user: the one custom tool (skills and blueprints are plain files the
+// agent writes with write/edit, so they need no tool of their own). It does not
+// block: it ends the current run and the user's answer arrives later as a normal
+// user text turn on /ai/ask — the one input path, which is also where
+// permission/approval logic would go.
 const askUserTool = defineTool({
   name: "ask_user",
   label: "Ask user",
@@ -149,16 +149,13 @@ export class Registry {
   private settings = SettingsManager.inMemory();
   private skillStore?: SkillStore;
   private suggester?: Suggester;
-  private skillTool?: ReturnType<typeof defineTool>;
-  private blueprintStore?: BlueprintStore;
-  private blueprintTool?: ReturnType<typeof defineTool>;
 
   constructor(private opts: RegistryOptions) {}
 
   // init resolves the model. Any pi-supported provider works; without any
   // authenticated provider it falls back to the dev echo stub.
   async init(): Promise<void> {
-    // The skill system is independent of the model: CRUD and the run queue work
+    // The skill system is independent of the model: the run queue works
     // without one; only the suggestion scan needs a model (and falls back to a
     // deterministic stub when there is none).
     this.skillStore = new SkillStore(this.opts.root);
@@ -167,10 +164,6 @@ export class Registry {
       oneShot: (prompt) => this.oneShot(prompt),
       inputBudgetTokens: () => this.scanBudget(),
     });
-    this.skillTool = this.buildSkillTool();
-    // Blueprints are the pages' classes — plain files in the project, no scan.
-    this.blueprintStore = new BlueprintStore(this.opts.root);
-    this.blueprintTool = this.buildBlueprintTool();
     if (this.opts.forceStub) return; // dev stub forced (offline / tests)
     this.modelRuntime = await ModelRuntime.create();
     const requested = this.opts.model ?? DEFAULT_MODEL;
@@ -215,134 +208,9 @@ export class Registry {
     return this.model ? `${this.model.provider}/${this.model.id}` : "stub";
   }
 
-  // --- skill system ---
-
-  // Saving a skill is itself an agent capability: the user describes a skill in
-  // conversation and the agent stores it. A skill is only a name plus a piece of
-  // text, so this is the whole of the create path.
-  private buildSkillTool(): ReturnType<typeof defineTool> {
-    return defineTool({
-      name: "save_skill",
-      label: "Save skill",
-      description:
-        "Save a reusable skill. A skill is a single piece of text: running it opens " +
-        "a fresh conversation and hands that text to the agent as the first " +
-        "message. Use this when the user asks to remember or save something as a " +
-        "skill / shortcut.",
-      promptSnippet: "save_skill: save a reusable skill (name + text)",
-      parameters: Type.Object({
-        name: Type.String({ description: "Short label for the skill" }),
-        text: Type.String({
-          description:
-            "The skill itself: a self-contained instruction handed to the agent when the skill runs",
-        }),
-      }),
-      executionMode: "sequential",
-      execute: async (_toolCallId, params) => {
-        const name = String(params.name ?? "").trim();
-        const text = String(params.text ?? "").trim();
-        if (!name || !text) {
-          return {
-            content: [{ type: "text", text: "name and text are both required." }],
-            details: undefined,
-          };
-        }
-        const skill = this.skillStore?.save({ name, text });
-        if (!skill) {
-          return {
-            content: [{ type: "text", text: "could not save the skill." }],
-            details: undefined,
-          };
-        }
-        return {
-          content: [
-            { type: "text", text: `Saved skill ${skill.id} ("${skill.name}").` },
-          ],
-          details: { skillId: skill.id, name: skill.name, text: skill.text },
-        };
-      },
-    });
-  }
-
   get skills(): SkillStore {
     if (!this.skillStore) throw new Error("skill store not initialized");
     return this.skillStore;
-  }
-
-  // --- blueprint system ---
-
-  // A blueprint is the class behind a page. Writing one is itself an agent
-  // capability — the user describes the page in conversation and the agent lays
-  // it down as files — and it is the *only* way blueprints come to exist: unlike
-  // skills there is no discovery, no queue and no sqlite to accept or ignore.
-  private buildBlueprintTool(): ReturnType<typeof defineTool> {
-    return defineTool({
-      name: "save_blueprint",
-      label: "Save blueprint",
-      description:
-        "Save a page blueprint: a frontend resource the user can open as a page " +
-        "tab in the launcher. A blueprint is a directory in the project holding " +
-        "one html entry (index.html) plus any files it needs — js, css, images, " +
-        "subdirectories. Pass every file the page needs, index.html included; " +
-        "files you do not pass are left untouched. Give it a <title>: that is the " +
-        "name the user sees.",
-      promptSnippet: "save_blueprint: save a page blueprint (name + files)",
-      parameters: Type.Object({
-        name: Type.String({ description: "Short label for the blueprint" }),
-        files: Type.Array(
-          Type.Object({
-            path: Type.String({
-              description:
-                'Path inside the blueprint directory, e.g. "index.html" or "app.js"; must include index.html',
-            }),
-            content: Type.String({ description: "The file's text" }),
-          }),
-          { description: "The files that make up the blueprint" },
-        ),
-        id: Type.Optional(
-          Type.String({
-            description:
-              "An existing blueprint id to write into; omit to create a new one",
-          }),
-        ),
-      }),
-      executionMode: "sequential",
-      execute: async (_toolCallId, params) => {
-        const name = String(params.name ?? "").trim();
-        const files = (Array.isArray(params.files) ? params.files : []).map(
-          (f: any): BlueprintFile => ({
-            path: String(f?.path ?? ""),
-            content: String(f?.content ?? ""),
-          }),
-        );
-        const id = params.id ? String(params.id) : undefined;
-        try {
-          const bp = this.blueprintStore!.save({ id, name, files });
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Saved blueprint ${bp.id} ("${bp.name}"): ${bp.files.join(", ")}`,
-              },
-            ],
-            details: { blueprintId: bp.id, name: bp.name, files: bp.files },
-          };
-        } catch (err) {
-          if (err instanceof BlueprintError) {
-            return {
-              content: [{ type: "text", text: err.message }],
-              details: undefined,
-            };
-          }
-          throw err;
-        }
-      },
-    });
-  }
-
-  get blueprints(): BlueprintStore {
-    if (!this.blueprintStore) throw new Error("blueprint store not initialized");
-    return this.blueprintStore;
   }
 
   // scanSkills runs one suggestion scan. The automatic path is fire-and-forget;
@@ -444,9 +312,9 @@ export class Registry {
         sessionManager,
         settingsManager: this.settings,
         // Capability surface: read/grep/find/ls + bash (execution, including
-        // HTTP via curl) + write/edit. External CLIs run through bash. ask_user,
-        // save_skill and save_blueprint are the custom tools and must be in the
-        // allowlist to stay enabled.
+        // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
+        // is the one custom tool and must be in the allowlist to stay enabled;
+        // skills and blueprints are plain files the agent writes itself.
         tools: [
           "read",
           "grep",
@@ -456,14 +324,8 @@ export class Registry {
           "write",
           "edit",
           "ask_user",
-          "save_skill",
-          "save_blueprint",
         ],
-        customTools: [
-          askUserTool,
-          ...(this.skillTool ? [this.skillTool] : []),
-          ...(this.blueprintTool ? [this.blueprintTool] : []),
-        ],
+        customTools: [askUserTool],
       });
       sess.agent = session;
       session.agent.shouldStopAfterTurn = () => ++sess.turns >= MAX_TURNS;
@@ -716,7 +578,7 @@ export class Registry {
 
   // onRunSettled queues the run's text for the suggestion scan and fires a scan
   // once enough runs have piled up. It must never block or break a conversation:
-  // queueing is one local sqlite write, and the scan itself runs as an
+  // queueing is one local file write, and the scan itself runs as an
   // independent async task that never touches a user session.
   private onRunSettled(sess: Sess): void {
     const text = sess.runText.trim();

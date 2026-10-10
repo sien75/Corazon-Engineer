@@ -1995,86 +1995,6 @@ function newTabInit() {
 // again on every load (a page reload, or a tab pointed at another blueprint).
 pageFrameEl.addEventListener("load", pushPageTheme);
 
-// Deleting a skill or a blueprint deletes a folder in the project, so the row's
-// delete button asks first — a small popover next to it, not a modal: the page
-// stays visible and one more click (or Esc, or a scroll, or clicking anywhere
-// else) is all it takes to back out. `skillConfirm` is the one that is open.
-let skillConfirm = null;
-
-function skillConfirmClose() {
-  if (!skillConfirm) return;
-  const { el, off } = skillConfirm;
-  skillConfirm = null;
-  off?.();
-  el?.remove();
-}
-
-function skillConfirmOpen(button, target) {
-  skillConfirmClose();
-  const pop = document.createElement("div");
-  pop.className = "skill-confirm";
-  const msg = document.createElement("div");
-  msg.className = "skill-confirm-msg";
-  const what = target.kind === "blueprint" ? "blueprint" : "skill";
-  msg.textContent = `Delete “${target.name}”? Its ${what} folder goes with it.`;
-  const actions = document.createElement("div");
-  actions.className = "skill-confirm-actions";
-  const del = document.createElement("button");
-  del.type = "button";
-  del.className = "skill-confirm-delete";
-  del.textContent = "Delete";
-  del.addEventListener("click", () => {
-    const { id, path } = target;
-    skillConfirmClose();
-    newTabSend(path, { id });
-  });
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.className = "skill-confirm-cancel";
-  cancel.textContent = "Cancel";
-  cancel.addEventListener("click", () => skillConfirmClose());
-  actions.appendChild(del);
-  actions.appendChild(cancel);
-  pop.appendChild(msg);
-  pop.appendChild(actions);
-  document.body.appendChild(pop);
-
-  // Anchored under the button that opened it, flipped above when it would fall
-  // off the bottom, and never past the right edge.
-  const anchor = button.getBoundingClientRect();
-  const box = pop.getBoundingClientRect();
-  let top = anchor.bottom + 6;
-  if (top + box.height > window.innerHeight - 8) top = anchor.top - box.height - 6;
-  const left = Math.min(anchor.right - box.width, window.innerWidth - box.width - 8);
-  pop.style.top = `${Math.max(8, top)}px`;
-  pop.style.left = `${Math.max(8, left)}px`;
-
-  // Esc must close the popover before it reaches the page (which would leave the
-  // new tab page altogether), hence the capture-phase listener.
-  const onKeyDown = (e) => {
-    if (e.key !== "Escape") return;
-    e.preventDefault();
-    e.stopPropagation();
-    skillConfirmClose();
-  };
-  const onOutside = (e) => {
-    if (!skillConfirm) return;
-    if (e.target.closest?.(".skill-confirm") || e.target.closest?.("[data-action=delete]")) return;
-    skillConfirmClose();
-  };
-  const onScroll = () => skillConfirmClose();
-  window.addEventListener("keydown", onKeyDown, true);
-  document.addEventListener("mousedown", onOutside, true);
-  window.addEventListener("scroll", onScroll, true);
-  const off = () => {
-    window.removeEventListener("keydown", onKeyDown, true);
-    document.removeEventListener("mousedown", onOutside, true);
-    window.removeEventListener("scroll", onScroll, true);
-  };
-  skillConfirm = { id: target.id, el: pop, off };
-  del.focus();
-}
-
 // openNewTab shows the launcher at /new (or one of its sub-pages). `push` is
 // false when the URL already says so (a back/forward step re-renders the page);
 // a second `+` click just refreshes it instead of stacking another entry.
@@ -2112,39 +2032,30 @@ function newTabGo(sub, mode = "push") {
 // to). Replacing keeps the page out of history: back must not reopen it.
 function closeNewTab() {
   if (!newTabOpen) return;
-  skillConfirmClose();
   newTabOpen = false;
   navigate(newTabReturn, "replace");
 }
 
 // One row of the launcher: a **class** you can instantiate. A skill row opens a
-// chat (the buttons spell out what that kind of skill allows — a suggestion can
-// be kept or dropped, a saved one deleted); a blueprint row opens a page.
+// chat; a blueprint row opens a page. Changing either is the agent's job — the
+// row has no delete (ask in a conversation and the agent edits the file).
 function newTabSkillItemHtml(t, suggested) {
-  const actions = suggested
-    ? `<button type="button" data-action="run" data-id="${t.id}">chat</button>
-       <button type="button" data-action="save" data-id="${t.id}">save</button>
-       <button type="button" data-action="ignore" data-id="${t.id}">ignore</button>`
-    : `<button type="button" data-action="run" data-id="${t.id}">chat</button>
-       <button type="button" data-action="delete" data-id="${t.id}">delete</button>`;
   return `<div class="launch-item" data-action="run" data-id="${t.id}">
     <div class="launch-main">
       <div class="launch-name">${escapeHtml(t.name)}</div>
       <div class="launch-desc">${escapeHtml(t.text)}</div>
     </div>
-    <div class="launch-actions">${actions}</div>
+    <div class="launch-actions"><button type="button" data-action="run" data-id="${t.id}">chat</button></div>
   </div>`;
 }
 
 function newTabBlueprintItemHtml(b) {
-  const actions = `<button type="button" data-action="page" data-id="${b.id}">page</button>
-       <button type="button" data-action="delete" data-id="${b.id}">delete</button>`;
   return `<div class="launch-item" data-action="page" data-id="${b.id}">
     <div class="launch-main">
       <div class="launch-name">${escapeHtml(b.name)}</div>
       <div class="launch-desc">${escapeHtml(b.files.join(" · "))}</div>
     </div>
-    <div class="launch-actions">${actions}</div>
+    <div class="launch-actions"><button type="button" data-action="page" data-id="${b.id}">page</button></div>
   </div>`;
 }
 
@@ -2179,52 +2090,91 @@ function newTabError(message) {  const body = newTabEl?.querySelector(".newtab-b
 // The launcher is one column of sections — the blank Chat button, then a
 // preview of the skills, then a preview of the blueprints, then the past
 // conversations. Skills and blueprints are the **classes** you can instantiate
-// (ai owns both, one service, two kinds of class), recent is the **instances**
-// you already had (log owns conversations — a page has no history at all, so it
-// never appears here).
+// (both are plain project files, read through static), recent is the
+// **instances** you already had (log owns conversations — a page has no history
+// at all, so it never appears here).
 //
 // The previews show three and lead into a page of their own: a class has more to
 // say than a row (its full list, its candidates, its files).
 const SUGGESTED_SHOWN = 10;
 const NEWTAB_PREVIEW = 3;
 
-// newTabList posts one list request and returns the items it holds under `key`.
-// A failure is returned, not thrown: one service being down must not take the
-// rest of the launcher with it.
-async function newTabList(path, key) {
-  try {
-    const res = await fetch(`${AI_BASE}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/yaml" },
-      body: "{}",
-    });
-    const data = yaml.load(await res.text()) || {};
-    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-    return { items: data[key] || [], error: "" };
-  } catch (err) {
-    return { items: [], error: String(err.message || err) };
+
+// Skills and blueprints are plain files, so they are read through static — the
+// same generic query / query-detail the other file views use. A skill keeps its
+// display name in the file's frontmatter; a blueprint's name is its document's
+// <title>. Both need the file's text, hence one detail call each.
+async function newTabFiles(schema, prefix, entry, type) {
+  const out = [];
+  for (const path of schema[prefix] || []) {
+    const m = entry.exec(path);
+    if (!m) continue;
+    const id = m[1];
+    let raw = "";
+    try {
+      const data = await staticCall("/static/query-detail", { type, id: path });
+      raw = String(data?.[type] ?? "");
+    } catch (err) {
+      // A file we cannot read still gets a row; the name falls back to the id.
+      raw = "";
+    }
+    out.push({ id, path, raw });
   }
+  return out;
+}
+
+function skillFromFile(id, raw, source) {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(raw);
+  let name = id;
+  let body = raw;
+  if (front) {
+    body = raw.slice(front[0].length);
+    const n = /^name\s*:\s*(.+)$/m.exec(front[1]);
+    if (n) name = n[1].trim().replace(/^["']|["']$/g, "");
+  }
+  return { id, name: name || id, source, status: "active", text: body.trim() };
+}
+
+function titleFromHtml(html) {
+  const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  return m ? m[1].replace(/\s+/g, " ").trim() : "";
 }
 
 async function newTabReload() {
   const body = newTabEl?.querySelector(".newtab-body");
   if (!body) return;
-  skillConfirmClose();
   // A sub-page is a list to work through, so the pane top-aligns it: the back
   // button belongs at the top of the screen, not floating in the middle of it.
   newTabEl.classList.toggle("subpage", newTabMode !== "home");
-  const [skillRes, blueprintRes] = await Promise.all([
-    newTabList("/ai/skill/list", "skills"),
-    newTabList("/ai/blueprint/list", "blueprints"),
-  ]);
-  const skills = skillRes.items;
-  const blueprints = blueprintRes.items;
+  let skills = [];
+  let blueprints = [];
+  const errors = [];
+  try {
+    const schema = await loadSchema();
+    const [custom, suggested] = await Promise.all([
+      newTabFiles(schema, "skills", /^\.agents\/skills\/([^/]+)\/SKILL\.md$/, "skill"),
+      newTabFiles(schema, "suggested-skills", /^\.engineer\/suggested-skills\/([^/]+)\.md$/, "suggested-skill"),
+    ]);
+    skills = [
+      ...custom.map((f) => skillFromFile(f.id, f.raw, "custom")),
+      ...suggested.map((f) => skillFromFile(f.id, f.raw, "suggested")),
+    ];
+    const files = schema.blueprints || [];
+    blueprints = (await newTabFiles(schema, "blueprints", /^\.agents\/blueprints\/([^/]+)\/index\.html$/, "blueprint")).map((f) => {
+      const dir = `.agents/blueprints/${f.id}/`;
+      return {
+        id: f.id,
+        name: titleFromHtml(f.raw) || f.id,
+        files: files
+          .filter((p) => p.startsWith(dir))
+          .map((p) => p.slice(dir.length)),
+      };
+    });
+  } catch (err) {
+    errors.push(`static: ${String(err.message || err)}`);
+  }
   newTabSkills = new Map(skills.map((t) => [t.id, t]));
   newTabBlueprints = new Map(blueprints.map((b) => [b.id, b]));
-  const errors = [
-    skillRes.error && `skills: ${skillRes.error}`,
-    blueprintRes.error && `blueprints: ${blueprintRes.error}`,
-  ].filter(Boolean);
   const note = errors.length
     ? errors.map((e) => `<div class="empty-hint">${escapeHtml(e)}</div>`).join("")
     : "";
@@ -2344,23 +2294,6 @@ function newTabSessionHtml(s) {
   </div>`;
 }
 
-// newTabSend posts one skill API call and re-renders the page on success.
-async function newTabSend(path, body) {
-  try {
-    const res = await fetch(`${AI_BASE}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/yaml" },
-      body: yaml.dump(body),
-    });
-    const data = yaml.load(await res.text()) || {};
-    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-    await newTabReload();
-    return data;
-  } catch (err) {
-    newTabError(String(err.message || err));
-  }
-}
-
 async function newTabRun(skillId) {
   try {
     const res = await fetch(`${AI_BASE}/ai/skill/run`, {
@@ -2414,24 +2347,6 @@ function newTabClick(event) {
   else if (action === "open-skills") newTabGo("skills");
   else if (action === "open-blueprints") newTabGo("blueprints");
   else if (action === "newtab-back") newTabGo("home", "replace");
-  else if (action === "delete") {
-    const skill = newTabSkills.get(id);
-    const bp = newTabBlueprints.get(id);
-    if (skill) {
-      skillConfirmOpen(hit, { id, name: skill.name, path: "/ai/skill/delete" });
-    } else if (bp) {
-      skillConfirmOpen(hit, {
-        id,
-        name: bp.name,
-        kind: "blueprint",
-        path: "/ai/blueprint/delete",
-      });
-    }
-  } else if (action === "ignore") newTabSend("/ai/skill/ignore", { id, ignored: true });
-  else if (action === "save") {
-    const t = newTabSkills.get(id);
-    if (t) newTabSend("/ai/skill/save", { id, name: t.name, text: t.text });
-  }
 }
 
 tabAddEl.addEventListener("click", () => {
@@ -2441,11 +2356,6 @@ tabAddEl.addEventListener("click", () => {
   else openNewTab();
 });
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && skillConfirm) {
-    event.preventDefault();
-    skillConfirmClose();
-    return;
-  }
   if (event.key === "Escape" && newTabOpen) {
     event.preventDefault();
     // Esc backs out one step at a time: a sub-page first, then the launcher.

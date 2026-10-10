@@ -45,6 +45,9 @@ response:
     development: [string]  # plain file tree under development/, recursive relative paths, e.g. "development/testing/dev/case-x/TEST.md"
     docs: [string]  # entries under docs/, relative paths
     notes: [string]  # entries under notes/, relative paths
+    skills: [string]  # entries under .agents/skills/, e.g. ".agents/skills/<slug>/SKILL.md"
+    suggested-skills: [string]  # entries under .engineer/suggested-skills/, e.g. ".engineer/suggested-skills/<slug>.md"
+    blueprints: [string]  # entries under .agents/blueprints/, e.g. ".agents/blueprints/<slug>/index.html"
 
 errors:
   - status: 400

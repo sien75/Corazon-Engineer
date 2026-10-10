@@ -2,7 +2,7 @@
 
 # static
 
-Corazon Engineer static service — watches the schema file tree, serves the read-only schema views (query / query-detail / stream) to the web frontend, and validates atoms / edges / contracts; writes go through the ai shell
+Corazon Engineer static service — watches the schema file tree, serves the read-only views (query / query-detail / stream) to the web frontend, and validates atoms / edges / contracts; the views cover every file type — atoms, edges, contracts, how-to, development, docs, notes, and the dot-directory resources skills (.agents/skills), suggested skills (.engineer/suggested-skills) and blueprints (.agents/blueprints); writes go through the ai shell
 
 - runtime: go 1.22
 
@@ -42,6 +42,8 @@ atoms:
       role?: string
       runtime_type: string
       runtime_version?: string
+blueprints:
+    - string
 contracts:
     - string
 development:
@@ -60,6 +62,10 @@ edges:
 how-to:
     - string
 notes:
+    - string
+skills:
+    - string
+suggested-skills:
     - string
 ```
 
@@ -88,12 +94,13 @@ Fetch content of a single leaf file
 
 ```yaml
 id: string
-type: how-to | development | contract | docs | notes
+type: how-to | development | contract | docs | notes | skill | suggested-skill | blueprint
 ```
 
 ### Response (status 200)
 
 ```yaml
+blueprint?: string
 contract?:
     description: string
     error: object
@@ -105,7 +112,9 @@ docs?: string
 how-to?: string
 id: string
 notes?: string
-type: how-to | development | contract | docs | notes
+skill?: string
+suggested-skill?: string
+type: how-to | development | contract | docs | notes | skill | suggested-skill | blueprint
 ```
 
 ### Errors
@@ -120,7 +129,7 @@ type: how-to | development | contract | docs | notes
 curl -s -X POST <address>/static/query-detail \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
   id: string
-  type: how-to | development | contract | docs | notes
+  type: how-to | development | contract | docs | notes | skill | suggested-skill | blueprint
 YAML
 ```
 
