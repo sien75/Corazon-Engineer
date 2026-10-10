@@ -51,8 +51,8 @@ type Listener = (ev: EngineerEvent) => void;
 
 // ask_user: one of the three custom tools (save_skill and save_blueprint are
 // built further down). It does not block: it ends the current run and the user's
-// answer is injected later as a normal user text turn (via the dedicated
-// /ai/answer endpoint, which will also host permission logic).
+// answer arrives later as a normal user text turn on /ai/ask — the one input
+// path, which is also where permission/approval logic would go.
 const askUserTool = defineTool({
   name: "ask_user",
   label: "Ask user",
@@ -659,13 +659,6 @@ export class Registry {
     sess.tail = sess.tail.then(() =>
       this.runTurn(sess, agent, promptText, piImages),
     );
-  }
-
-  // answer injects the user's reply to an ask_user question as a normal user
-  // text turn. Kept separate from ask() so permission/approval logic for
-  // ask_user can live on this path.
-  answer(sess: Sess, text: string): void {
-    this.ask(sess, [{ type: "text", text }]);
   }
 
   // stop aborts the in-flight run. pi emits its terminal agent_settled as part

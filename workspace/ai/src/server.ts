@@ -161,17 +161,6 @@ export function serve(registry: Registry, addr: string): void {
           return yamlRes({ sessionId: sess.id });
         }
 
-        case "/ai/answer": {
-          const answer = String(body.answer ?? "");
-          if (!answer.trim()) {
-            return errRes(400, "bad_request", "answer missing or empty");
-          }
-          const sess = registry.get(String(body.id ?? ""));
-          if (!sess) return errRes(404, "not_found", "session not found");
-          registry.answer(sess, answer);
-          return yamlRes({ sessionId: sess.id });
-        }
-
         case "/ai/stop": {
           const sess = registry.get(String(body.id ?? ""));
           if (!sess) return errRes(404, "not_found", "session not found");

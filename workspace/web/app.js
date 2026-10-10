@@ -1633,14 +1633,14 @@ async function aiSend() {
   await aiStream();
 }
 
-// aiAnswer sends a user's reply to a pending ask_user question via the
-// dedicated endpoint, then consumes the new run's stream.
+// aiAnswer sends a user's reply to a pending ask_user question as an ordinary
+// text turn on /ai/ask, then consumes the new run's stream.
 async function aiAnswer(answer) {
   aiAppend("user", answer);
-  const res = await fetch(`${AI_BASE}/ai/answer`, {
+  const res = await fetch(`${AI_BASE}/ai/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
-    body: yaml.dump({ id: aiSession, answer }),
+    body: yaml.dump({ id: aiSession, blocks: [{ type: "text", text: answer }] }),
   });
   const data = yaml.load(await res.text()) || {};
   if (!res.ok) {

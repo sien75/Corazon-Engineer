@@ -160,7 +160,7 @@ Any image content appears as `{ type: image, sha256, mimeType, size }`.
 On resume, context is rebuilt from the latest `compaction` record onward, so
 messages already summarized away are not sent to the provider again.
 
-## 4b. ask_user and ai-answer
+## 4b. ask_user and its answer
 
 Force the agent to use the custom `ask_user` tool:
 
@@ -175,16 +175,19 @@ Then stream: expected `tool_execution_start` with `toolName: ask_user` (its
 `args.options` carry the choices) and `tool_execution_end` with
 `result.terminate: true`, followed by `agent_settled` (the run ends and waits).
 
-Answer via the dedicated endpoint, then stream again:
+Answer through /ai/ask as an ordinary text block, then stream again:
 
 ```bash
-curl -s -X POST http://localhost:8541/ai/answer -d "id: $SID
-answer: A"
+curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
+blocks:
+  - type: text
+    text: A"
 curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID"
 ```
 
 Expected: a new run whose user message text is `A`, then `agent_settled`.
-An empty `answer` returns 400 `bad_request`.
+An empty `blocks` returns 400 `bad_request`; the removed `/ai/answer` returns
+404 `not_found` (`unknown endpoint`).
 
 ## 5. ai-delete removes the session
 

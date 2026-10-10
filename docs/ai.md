@@ -42,24 +42,28 @@ YAML
 
 - `POST /ai/ask` (network / http)
 
-Ask AI; prompt determines what AI does (qa / plan / act)
+Ask AI; prompt determines what AI does (qa / plan / act). A reply to an ask_user question is an ordinary text block on this same interface — there is no separate answer endpoint
 
 ### Request body
 
 ```yaml
-id: string
-prompt: string
+id: string  # session id
+blocks:  # the user turn, in order; a reply to ask_user is just a text block
+    - type: text | image  # "text" carries text, "image" carries base64 data + mimeType
+      text?: string  # text block: the prompt text
+      data?: string  # image block: base64-encoded bytes
+      mimeType?: string  # image block: e.g. image/png
 ```
 
 ### Response (status 200)
 
 ```yaml
-sessionId: string
+sessionId: string  # same session, used to pull stream
 ```
 
 ### Errors
 
-- 400 `bad_request` — prompt missing or empty
+- 400 `bad_request` — blocks missing or empty
 - 404 `not_found` — session not found
 - 500 `internal` — server error
 
@@ -68,8 +72,12 @@ sessionId: string
 ```bash
 curl -s -X POST <address>/ai/ask \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
-  id: string
-  prompt: string
+id: string  # session id
+blocks:  # the user turn, in order; a reply to ask_user is just a text block
+    - type: text | image  # "text" carries text, "image" carries base64 data + mimeType
+      text?: string  # text block: the prompt text
+      data?: string  # image block: base64-encoded bytes
+      mimeType?: string  # image block: e.g. image/png
 YAML
 ```
 

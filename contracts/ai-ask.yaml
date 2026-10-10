@@ -1,10 +1,14 @@
 id: ai-ask
-description: Ask AI; prompt determines what AI does (qa / plan / act)
+description: Ask AI; prompt determines what AI does (qa / plan / act). A reply to an ask_user question is an ordinary text block on this same interface — there is no separate answer endpoint
 
 request:
   body:
     id: string  # session id
-    prompt: string  # what AI should do
+    blocks:  # the user turn, in order; a reply to ask_user is just a text block
+      - type: text | image  # "text" carries text, "image" carries base64 data + mimeType
+        text?: string  # text block: the prompt text
+        data?: string  # image block: base64-encoded bytes
+        mimeType?: string  # image block: e.g. image/png
 
 response:
   status: 200
@@ -14,7 +18,7 @@ response:
 errors:
   - status: 400
     code: bad_request
-    description: prompt missing or empty
+    description: blocks missing or empty
   - status: 404
     code: not_found
     description: session not found
