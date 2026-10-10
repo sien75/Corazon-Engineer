@@ -71,3 +71,27 @@ edges:
     channel: network
     protocol: http
     description: Web frontend instantiates a skill by opening a session with the skill text
+  - id: web-to-ai-blueprint-list
+    from: web
+    from_interface: ai-blueprint-list
+    to: ai
+    to_interface: ai-blueprint-list
+    channel: network
+    protocol: http
+    description: Web frontend lists blueprints for the launcher and the blueprints page
+  - id: web-to-ai-blueprint-save
+    from: web
+    from_interface: ai-blueprint-save
+    to: ai
+    to_interface: ai-blueprint-save
+    channel: network
+    protocol: http
+    description: Creates / updates a blueprint; the agent itself writes blueprints through the same interface (save_blueprint)
+  - id: web-to-ai-blueprint-delete
+    from: web
+    from_interface: ai-blueprint-delete
+    to: ai
+    to_interface: ai-blueprint-delete
+    channel: network
+    protocol: http
+    description: Web frontend deletes a blueprint directory

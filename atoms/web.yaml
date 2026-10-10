@@ -1,6 +1,6 @@
 atoms:
   - name: web
-    description: Corazon Engineer web frontend — renders the architecture graph (static-query), drives ai conversation, shows log records
+    description: Corazon Engineer web frontend — renders the architecture graph (static-query), drives ai conversation, shows log records; its file server (workspace/web/server) is multi-root — /config.js and the app assets come from --assets, while /pages/<id>/ serves the blueprint files in --pages, and /pages/<id> (no slash) is an SPA route that renders that blueprint in an iframe; it also owns the page theme — /theme.css is the palette both the shell and blueprints link, and the shell writes the current data-theme into the page's document
     path: ./workspace/web
     runtime_type: browser
     role: service
@@ -91,6 +91,27 @@ atoms:
           contract: ./contracts/ai-skill-run.yaml
           extend:
             path: /ai/skill/run
+            method: POST
+        - id: ai-blueprint-list
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-blueprint-list.yaml
+          extend:
+            path: /ai/blueprint/list
+            method: POST
+        - id: ai-blueprint-save
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-blueprint-save.yaml
+          extend:
+            path: /ai/blueprint/save
+            method: POST
+        - id: ai-blueprint-delete
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-blueprint-delete.yaml
+          extend:
+            path: /ai/blueprint/delete
             method: POST
         - id: log-list
           channel: network

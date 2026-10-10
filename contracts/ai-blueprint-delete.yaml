@@ -1,0 +1,22 @@
+id: ai-blueprint-delete
+description: Delete a blueprint — its directory under .agents/blueprints/ is removed, assets included
+
+request:
+  body:
+    id: string  # blueprint id (a directory name under .agents/blueprints/)
+
+response:
+  status: 200
+  body:
+    blueprintId: string
+
+errors:
+  - status: 400
+    code: bad_request
+    description: id missing
+  - status: 404
+    code: not_found
+    description: blueprint does not exist
+  - status: 500
+    code: internal
+    description: server error

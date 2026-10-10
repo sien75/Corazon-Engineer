@@ -34,6 +34,7 @@ printf 'project: chat-scroll-test\n' > "$ROOT/engineer.yaml"
 
 # web assets
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8630 --assets "$ROOTDIR/workspace/web" \
+  --pages /tmp/engineer-pages-unused \
   --static http://localhost:8502 --ai http://localhost:8531 --log http://localhost:8533 \
   >/tmp/chat-scroll-web.log 2>&1 &
 ```

@@ -1,16 +1,19 @@
 # Test: core-web-tabs
 
-The tab bar and the new tab page. A skill is one piece of text; opening it runs
-it (the ai service creates a session and hands the text to the model) and shows
-that conversation in a closable tab. The fixed views (graph / how-to /
+The tab bar and the launcher. A tab carries one piece of content: a **chat**
+(a skill is the class behind it — opening it runs the skill's text as the first
+message — and a blank chat needs no skill) or a **page** (a blueprint rendered in
+an iframe, covered by `case-core-web-page`). The fixed views (graph / how-to /
 development / contracts / docs / notes) are tabs too, but they can never be
-closed. `/new` cancels the active instance and opens a fresh generic chat, and
-each instance keeps its own unsent composer draft.
+closed. `+` opens the launcher: Chat, then the Skills and Blueprints sections
+(three each, with a heading to open the full list), then `recent`. `/new`
+cancels the active instance and opens a fresh generic chat, and each instance
+keeps its own unsent composer draft.
 
 Source of truth: `workspace/web/index.html` (`#tabs`), `workspace/web/app.js`
-(`openTab` / `activateTab` / `closeTab` / the new tab page) and
-`workspace/web/style.css` (`#ai.tab-mode`). Tab switching, layout and the
-page are DOM behaviour, so this case runs through a real browser
+(`openTab` / `activateTab` / `closeTab` / the launcher) and
+`workspace/web/style.css` (`.newtab-*`, `#ai.tab-mode`). Tab switching, layout
+and the page are DOM behaviour, so this case runs through a real browser
 (`ego-browser`) rather than curl.
 
 ## Setup
@@ -23,6 +26,7 @@ ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.skill-test"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
 printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
+mkdir -p "$ROOT/.agents/blueprints"
 
 # log + ai on their own ports; ai in stub mode, so skill runs are deterministic and offline
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
@@ -33,15 +37,17 @@ printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/tabs-ai.log 2>&1 &)
 
-# one saved skill, so the new tab page's "my skills" section is not empty
-# wait for ai first: the save must not race the boot
+# wait for ai first: the saves below must not race the boot
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8511/ai/skill/list -d '{}' && break
   sleep 1
 done
-curl -s -X POST http://localhost:8511/ai/skill/save \
-  -d 'name: Seeded skill
-text: seeded instruction'
+# four saved skills, so the launcher's three-at-a-time preview is exercised
+for n in "Seeded skill:seeded instruction" "Skill B:b instruction" "Skill C:c instruction" "Skill D:d instruction"; do
+  curl -s -X POST http://localhost:8511/ai/skill/save \
+    -d "name: ${n%%:*}
+text: ${n##*:}" >/dev/null
+done
 
 # suggested candidates are seeded straight into the sqlite (a scan needs a model;
 # this case runs --stub) — 12 of them, one more than the page is allowed to show
@@ -55,8 +61,9 @@ for (let i = 1; i <= 12; i++) {
   ins.run(`t_seed_${i}`, `Seed suggestion ${i}`, `seeded candidate ${i}`, "{}", ts, ts);
 }'
 
-# web assets
+# web assets + the blueprint root (empty here; pages have their own case)
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
+  --pages "$ROOT/.agents/blueprints" \
   --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8513 \
   >/tmp/tabs-web.log 2>&1 &
 ```
@@ -84,8 +91,8 @@ await page.evaluate(() => {
 });
 await page.reload();
 await page.waitForSelector("#tabs", { state: "visible" });
-// A fixed viewport for this case: the new tab page is checked by comparing
-// boxes, and its centring only holds while the content fits the page.
+// A fixed viewport for this case: the launcher is checked by comparing boxes,
+// and its centring only holds while the content fits the page.
 await page.cdp("Emulation.setDeviceMetricsOverride",
   { width: 1440, height: 1200, deviceScaleFactor: 1, mobile: false });
 
@@ -98,97 +105,120 @@ check("fixed tabs have no close button",
 check("there is no ai toggle in the topbar",
   await page.evaluate(() => document.getElementById("ai-toggle") === null));
 
-// 2. + opens the new tab page (a page, not a dialog), which lists saved skills
+// 2. + opens the launcher (a page, not a dialog): Chat on top, then the Skills
+// and Blueprints sections, then recent — one column, sections ruled apart.
 await page.click("#tab-add");
-await page.waitForSelector("#newtab .skill-item", { state: "visible" });
-check("the page shows the four parts in order",
-  await page.evaluate(() => [...document.querySelectorAll("#newtab h3")]
-    .map((e) => e.textContent.trim().split(" ")[0]).join(",") === "built-in,my,suggested,recent"));
-// The suggested section is a plain heading: discovery is automatic (the ai
-// service scans once 10 runs pile up), so the page offers no manual trigger.
-check("the suggested section has no refresh button",
-  await page.evaluate(() => {
-    const h3 = [...document.querySelectorAll("#newtab h3")]
-      .find((e) => e.textContent.trim().startsWith("suggested"));
-    return h3?.textContent.trim() === "suggested" &&
-      document.querySelectorAll("#newtab .skill-refresh, #newtab [data-action=refresh]").length === 0;
-  }));
-check("built-in offers a blank Chat",
-  await page.evaluate(() => [...document.querySelectorAll("#newtab .skill-name")].some((e) => e.textContent === "Chat")));
-check("the new tab page lists saved skills",
+await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
+check("the launcher's four sections are in order",
+  await page.evaluate(() => [...document.querySelectorAll("#newtab .newtab-sec")]
+    .map((e) => e.dataset.section).join(",") === "chat,skills,blueprints,recent"));
+check("the top of the launcher is the blank Chat button",
   await page.evaluate(() =>
-    [...document.querySelectorAll("#newtab .skill-name")].some((e) => e.textContent === "Seeded skill")));
-// Each row can be chatted with from a button of its own, next to what that kind
-// of skill allows: a saved skill can be deleted, a suggestion kept or dropped.
-check("rows offer chat, plus save/ignore or delete",
-  await page.evaluate(() => {
-    const actionsOf = (row) =>
-      [...row.querySelectorAll(".skill-actions button")].map((b) => b.textContent.trim()).join(",");
-    const mine = [...document.querySelectorAll("#newtab [data-section=mine] .skill-item")];
-    const suggested = [...document.querySelectorAll("#newtab [data-section=suggested] .skill-item")];
-    return mine.length === 1 && suggested.length === 10 &&
-      mine.every((r) => actionsOf(r) === "chat,delete") &&
-      suggested.every((r) => actionsOf(r) === "chat,save,ignore");
-  }));
-check("empty sections say so in English",
+    document.querySelector("#newtab [data-section=chat] [data-action=newchat] .launch-name")
+      ?.textContent === "Chat"));
+// Skills and Blueprints are previews: three rows, and a heading that opens the
+// full list. Four skills exist, so exactly three are shown.
+check("skills previews three of the four, under a heading",
   await page.evaluate(() =>
-    [...document.querySelectorAll("#newtab .empty-hint")].some((e) => e.textContent === "nothing here yet")));
-check("there is no create-skill form on the page",
-  await page.evaluate(() => document.querySelector("#newtab form") === null));
-// Two columns: the relations live on the left, the instances (past
-// conversations) on the right, split by a line that stops short of the page
-// edges — and the whole block sits centred, not spread to the window's sides.
-check("the page is two columns split by a line that stops short of the edges",
+    document.querySelectorAll("#newtab [data-section=skills] .launch-item").length === 3 &&
+    document.querySelector("#newtab [data-section=skills] .newtab-sec-head h3")?.textContent.trim() === "Skills" &&
+    document.querySelectorAll("#newtab [data-section=skills] .launch-item[data-action=run]").length === 3));
+check("an empty Blueprints section says so",
+  await page.evaluate(() =>
+    document.querySelector("#newtab [data-section=blueprints] .newtab-sec-head h3")?.textContent.trim() === "Blueprints" &&
+    document.querySelector("#newtab [data-section=blueprints] .empty-hint")?.textContent === "nothing here yet"));
+// The sections are ruled apart, and the whole column sits centred — not spread
+// to the window's sides.
+check("the sections are ruled apart and the column is centred",
   await page.evaluate(() => {
-    const cols = [...document.querySelectorAll("#newtab .newtab-col")];
-    const divider = document.querySelector("#newtab .newtab-divider");
-    if (cols.length !== 2 || !divider) return false;
+    const secs = [...document.querySelectorAll("#newtab .newtab-sec")];
     const host = document.getElementById("newtab").getBoundingClientRect();
-    const left = cols[0].getBoundingClientRect();
-    const right = cols[1].getBoundingClientRect();
-    const line = divider.getBoundingClientRect();
-    return left.right < right.left &&
-      left.right <= line.left && line.right <= right.left &&
-      line.width <= 2 &&
-      line.top - host.top > 8 && host.bottom - line.bottom > 8 &&
-      left.left - host.left > 8 && host.right - right.right > 8;
+    const body = document.querySelector("#newtab .newtab-body").getBoundingClientRect();
+    const ruled = secs.slice(1).every((s) => getComputedStyle(s).borderTopWidth !== "0px");
+    const stacked = secs.every((s, i) => i === 0 ||
+      secs[i - 1].getBoundingClientRect().bottom <= s.getBoundingClientRect().top + 1);
+    const dx = Math.abs((body.left - host.left) - (host.right - body.right));
+    const dy = Math.abs((body.top - host.top) - (host.bottom - body.bottom));
+    return ruled && stacked && dx <= 2 && dy <= 2;
   }));
-// Suggested is a sample, not an archive: the page shows the 10 most recent.
-check("suggested is capped at 10",
-  await page.evaluate(() =>
-    document.querySelectorAll("#newtab [data-section=suggested] .skill-item").length === 10 &&
-    [...document.querySelectorAll("#newtab [data-section=suggested] .skill-name")]
-      .every((e) => e.textContent.startsWith("Seed suggestion"))));
-check("the page content is centred",
-  await page.evaluate(() => {
-    const body = document.querySelector("#newtab .newtab-body");
-    const box = body.getBoundingClientRect();
-    const host = document.getElementById("newtab").getBoundingClientRect();
-    const dx = Math.abs((box.left - host.left) - (host.right - box.right));
-    const dy = Math.abs((box.top - host.top) - (host.bottom - box.bottom));
-    return dx <= 2 && dy <= 2;
-  }));
-
-check("+ is the active tab while the new tab page shows",
+check("+ is the active tab while the launcher shows",
   await page.evaluate(() => document.getElementById("newtab").hidden === false &&
     document.getElementById("left").hidden === true &&
     document.getElementById("tab-add").classList.contains("active") &&
     document.querySelectorAll("#tabs .tab.active").length === 0));
 
+// 3. the Skills heading opens the skills page: back button top-left of the
+// content column, my skills in full, suggested below a rule.
+await page.click("loc=css:#newtab [data-section=skills] .newtab-sec-open");
+await page.waitForFunction(() => location.pathname === "/new/skills", undefined, { timeout: 5_000 });
+await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
+const skillsPage = await page.evaluate(() => {
+  const back = document.querySelector("#newtab .newtab-back").getBoundingClientRect();
+  const body = document.querySelector("#newtab .newtab-body").getBoundingClientRect();
+  const suggestedHead = document.querySelector("#newtab [data-section=skills-suggested]");
+  const host = document.getElementById("newtab").getBoundingClientRect();
+  return {
+    path: location.pathname,
+    mine: document.querySelectorAll("#newtab [data-section=skills-mine] .launch-item").length,
+    suggested: document.querySelectorAll("#newtab [data-section=skills-suggested] .launch-item").length,
+    backAtTopLeft: back.left - body.left <= 24 && back.top - body.top <= 40,
+    dl: Math.round(back.left - body.left),
+    dt: Math.round(back.top - body.top),
+    dtHost: Math.round(back.top - host.top),
+    backBorder: getComputedStyle(document.querySelector("#newtab .newtab-back")).borderTopWidth,
+    apart: suggestedHead ? getComputedStyle(suggestedHead).borderTopWidth : "",
+  };
+});
+check("the skills page lists every saved skill, with a plain back button at the top",
+  skillsPage.path === "/new/skills" && skillsPage.mine === 4 && skillsPage.backAtTopLeft &&
+  skillsPage.backBorder === "0px" && skillsPage.dtHost <= 40, skillsPage);
+check("suggested sits below my skills, apart, capped at 10",
+  skillsPage.suggested === 10 && skillsPage.apart !== "0px", skillsPage);
+// Each row can be chatted with from a button of its own, next to what that kind
+// of skill allows: a saved skill can be deleted, a suggestion kept or dropped.
+check("rows offer chat, plus save/ignore or delete",
+  await page.evaluate(() => {
+    const actionsOf = (row) =>
+      [...row.querySelectorAll(".launch-actions button")].map((b) => b.textContent.trim()).join(",");
+    const mine = [...document.querySelectorAll("#newtab [data-section=skills-mine] .launch-item")];
+    const suggested = [...document.querySelectorAll("#newtab [data-section=skills-suggested] .launch-item")];
+    return mine.length === 4 && suggested.length === 10 &&
+      mine.every((r) => actionsOf(r) === "chat,delete") &&
+      suggested.every((r) => actionsOf(r) === "chat,save,ignore");
+  }));
+// The suggested section is a plain heading: discovery is automatic (the ai
+// service scans once 10 runs pile up), so the page offers no manual trigger.
+check("the suggested section has no refresh button",
+  await page.evaluate(() =>
+    document.querySelectorAll("#newtab .skill-refresh, #newtab [data-action=refresh]").length === 0));
+check("there is no create-skill form on the page",
+  await page.evaluate(() => document.querySelector("#newtab form") === null));
+check("+ stays the active tab on the skills page",
+  await page.evaluate(() => document.getElementById("tab-add").classList.contains("active") &&
+    document.querySelectorAll("#tabs .tab.active").length === 0));
+await page.click("loc=css:#newtab .newtab-back");
+await page.waitForFunction(() => location.pathname === "/new", undefined, { timeout: 5_000 });
+check("the back button returns to the launcher",
+  await page.evaluate(() => document.getElementById("newtab").hidden === false &&
+    document.querySelectorAll("#newtab .newtab-sec").length === 4));
+
 // 2b. delete asks first: the button opens a small popover anchored to it, and the
 // skill is still there until the popover's own button is used.
-await page.click("loc=css:#newtab [data-section=mine] .skill-actions button[data-action='delete']");
+await page.click("loc=css:#newtab [data-section=skills] .newtab-sec-open");
+await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
+await page.click("loc=css:#newtab [data-section=skills-mine] .launch-actions button[data-action=delete][data-id='seeded-skill']");
 await page.waitForSelector(".skill-confirm", { state: "visible" });
 const confirmBox = await page.evaluate(() => {
   const pop = document.querySelector(".skill-confirm");
-  const btn = document.querySelector("#newtab [data-section=mine] .skill-actions button[data-action=delete]");
+  const btn = [...document.querySelectorAll("#newtab [data-section=skills-mine] button[data-action=delete]")]
+    .find((b) => b.closest(".launch-item").textContent.includes("Seeded skill"));
   const p = pop.getBoundingClientRect();
   const b = btn.getBoundingClientRect();
   return {
     text: pop.textContent,
     anchored: Math.abs(p.top - b.bottom) < 40 && p.left < b.right && p.right > b.left,
     onScreen: p.left >= 0 && p.right <= window.innerWidth && p.top >= 0 && p.bottom <= window.innerHeight,
-    stillListed: [...document.querySelectorAll("#newtab .skill-name")].some((e) => e.textContent === "Seeded skill"),
+    stillListed: [...document.querySelectorAll("#newtab .launch-name")].some((e) => e.textContent === "Seeded skill"),
   };
 });
 check("delete asks first, in a popover on its own button",
@@ -199,10 +229,12 @@ await page.waitForFunction(() => document.querySelector(".skill-confirm") === nu
   undefined, { timeout: 5_000 });
 check("cancelling leaves the skill alone",
   await page.evaluate(() => document.querySelector(".skill-confirm") === null &&
-    [...document.querySelectorAll("#newtab .skill-name")].some((e) => e.textContent === "Seeded skill")));
+    [...document.querySelectorAll("#newtab .launch-name")].some((e) => e.textContent === "Seeded skill")));
 
-// 3. the page can start a blank conversation (no skill behind it)
+// 3. the launcher can start a blank conversation (no skill behind it)
 await page.cdp("Emulation.clearDeviceMetricsOverride", {});
+await page.click("loc=css:#newtab .newtab-back");
+await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
 await page.click("loc=css:#newtab [data-action=newchat]");
 await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
 await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
@@ -213,7 +245,7 @@ const blank = await page.evaluate(() => ({
   inputVisible: !document.getElementById("ai-input").hidden,
   newTabHidden: document.getElementById("newtab").hidden,
 }));
-check("built-in Chat opens a blank conversation tab",
+check("the blank Chat button opens a blank conversation tab",
   !!blank.tab && blank.tab.startsWith("new chat"), { tab: blank.tab });
 check("a blank chat starts empty and ready for input",
   blank.messages === 0 && blank.inputVisible === true && blank.newTabHidden === true, blank);
@@ -222,10 +254,12 @@ await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-
   undefined, { timeout: 5_000 });
 
 // 4. running a skill opens a tab and streams the run into it — through the
-// row's own `chat` button.
+// row's own `chat` button on the skills page.
 await page.click("#tab-add");
-await page.waitForSelector("#newtab .skill-item", { state: "visible" });
-await page.click("loc=css:#newtab .skill-actions button[data-action='run'][data-id='seeded-skill']");
+await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
+await page.click("loc=css:#newtab [data-section=skills] .newtab-sec-open");
+await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
+await page.click("loc=css:#newtab .launch-actions button[data-action='run'][data-id='seeded-skill']");
 await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
 await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
@@ -242,7 +276,7 @@ const run = await page.evaluate(() => ({
   newTabHidden: document.getElementById("newtab").hidden,
 }));
 check("running a skill opens a tab", !!run.tab && run.tab.startsWith("Seeded skill"), { tab: run.tab });
-check("running leaves the new tab page", run.newTabHidden === true);
+check("running leaves the launcher", run.newTabHidden === true);
 check("the skill text is the first message", run.user === "seeded instruction", { user: run.user });
 check("the run streams into the tab", (run.assistant || "").includes("dev stub"), { assistant: run.assistant });
 check("a tab takes the whole page",
@@ -263,10 +297,10 @@ check("the conversation column is capped at 1000px and centred",
 // 4b. recent is the way back to a *closed* conversation: the one that is open
 // as a tab right now is filtered out of it.
 await page.click("#tab-add");
-await page.waitForSelector("#newtab .skill-item", { state: "visible" });
+await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
 check("recent does not list the conversation that is open as a tab",
   await page.evaluate(() =>
-    document.querySelectorAll("#newtab [data-section=recent] .skill-item").length === 0 &&
+    document.querySelectorAll("#newtab [data-section=recent] .launch-item").length === 0 &&
     document.querySelector("#newtab [data-action=resume]") === null));
 await page.click("loc=css:#tabs .tab[data-tab-id]");
 await page.waitForFunction(() => document.getElementById("newtab").hidden === true,
@@ -324,8 +358,10 @@ await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-
 
 // 9. open tabs survive a reload
 await page.click("#tab-add");
-await page.waitForSelector("#newtab .skill-item", { state: "visible" });
-await page.click("loc=css:#newtab .skill-item:has-text('Seeded skill') >> nth=0");
+await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
+await page.click("loc=css:#newtab [data-section=skills] .newtab-sec-open");
+await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
+await page.click("loc=css:#newtab .launch-item:has-text('Seeded skill') >> nth=0");
 await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
 await page.reload();
 await page.waitForSelector("#tabs", { state: "visible" });
@@ -383,7 +419,7 @@ check("/new replaces the tab with a fresh generic chat",
 // Open a second tab, then reopen the replaced one: the old conversation must
 // not reappear.
 await page.click("#tab-add");
-await page.waitForSelector("#newtab .skill-item", { state: "visible" });
+await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
 await page.click("loc=css:#newtab [data-action=newchat]");
 await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
   undefined, { timeout: 10_000 });
@@ -422,16 +458,18 @@ check("the second instance's draft is intact", draftB === "draft-B", { draft: dr
 // 13. confirming the popover really deletes: the skill is a folder in the
 // project, and it leaves both the page and the api's list.
 await page.click("#tab-add");
-await page.waitForSelector("#newtab .skill-item", { state: "visible" });
-await page.click("loc=css:#newtab [data-section=mine] .skill-actions button[data-action='delete']");
+await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
+await page.click("loc=css:#newtab [data-section=skills] .newtab-sec-open");
+await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
+await page.click("loc=css:#newtab [data-section=skills-mine] .launch-actions button[data-action=delete][data-id='seeded-skill']");
 await page.waitForSelector(".skill-confirm", { state: "visible" });
 await page.click("loc=css:.skill-confirm .skill-confirm-delete");
-await page.waitForFunction(() => document.querySelector(".skill-confirm") === null &&
-  ![...document.querySelectorAll("#newtab .skill-name")].some((e) => e.textContent === "Seeded skill"),
+await page.waitForFunction(() =>
+  ![...document.querySelectorAll("#newtab .launch-name")].some((e) => e.textContent === "Seeded skill"),
   undefined, { timeout: 10_000 });
 check("confirming deletes the skill",
   await page.evaluate(() =>
-    document.querySelector("#newtab [data-section=mine] .empty-hint")?.textContent === "nothing here yet"));
+    document.querySelectorAll("#newtab [data-section=skills-mine] .launch-item").length === 3));
 
 const ok = checks.every((c) => c.pass);
 console.log(JSON.stringify({ ok, checks }, null, 2));
@@ -441,33 +479,27 @@ EOF
 ```
 
 Expected: `"ok": true` and every check `"pass": true` — six fixed, unclosable
-tabs and no `ai` toggle in the topbar; `+` opens an inline, centred page (not a
-dialog) with `+` itself as the only active tab, showing the four parts
-(`built-in` / `my skills` / `suggested` / `recent`, the first offering `Chat`; the
-`suggested` heading carrying no refresh button — discovery is automatic — and the
-section itself holding at most 10 candidates even though 12 exist), every row
-carrying a `chat` button beside its own actions (`save` / `ignore` on a
-suggestion, `delete` on a saved skill), `delete` asking first in a popover
+tabs and no `ai` toggle in the topbar; `+` opens an inline, centred launcher (not
+a dialog) with `+` itself as the only active tab, four sections in order
+(`chat` / `skills` / `blueprints` / `recent`, ruled apart, the first offering
+`Chat`; the skills section previewing three of four saved skills under a
+`Skills` heading, the empty blueprints section saying `nothing here yet`); the
+Skills heading opens `/new/skills` with a back button on the left of the centred
+column, the four saved skills (each `chat,delete`) and ten suggested candidates
+below a rule (each `chat,save,ignore`, no refresh button, no create form), the
+back button returning to the launcher; `delete` asking first in a popover
 anchored to its button (cancelling changes nothing, confirming removes the skill
-and leaves `my skills` empty), laid out as
-two columns split by a line that stops short of the page edges (the relations on
-the left, the conversations on the right), with an
-English
-`nothing here yet` for empty sections and no create form; the page can start a
-blank conversation (a tab with no messages, ready for input) and run a
-saved skill (a closable tab that fills the page — with the conversation itself
-capped at 1000px and centred, tool / thinking blocks being 300px chips that
-widen when opened, and the scrolling spanning the whole pane with no bubble
-touching its scrollbar — shows
-the skill text as the first message and streams the reply); `recent` leaves out
-the conversation that is open as a tab; a fixed tab leaves tab mode without
-losing the
-tab; reopening the tab re-renders the conversation; closing the last tab
-falls back to the graph and the conversation can be reopened from `recent`; open
-tabs survive a reload; `/new` replaces the active tab with a fresh generic chat
-and the old conversation never returns when the tab is reopened; and the unsent
-draft is per instance, so typing in one tab never shows up in another. Exit
-code `0`.
+and leaves three); the blank Chat button opening a tab with no messages ready for
+input, and a saved skill's `chat` button opening a closable tab that fills the
+page (the conversation itself capped at 1000px and centred, tool / thinking
+blocks being 300px chips that widen when opened, the scrolling spanning the whole
+pane with no bubble touching its scrollbar) showing the skill text as the first
+message and streaming the reply; `recent` leaving out the conversation that is
+open as a tab; a fixed tab leaving tab mode without losing the tab; reopening the
+tab re-rendering the conversation; closing the last tab falling back to the graph
+and the conversation being reopenable from `recent`; open tabs surviving a
+reload; `/new` replacing the active tab with a fresh generic chat that never
+comes back; and the unsent draft being per instance. Exit code `0`.
 
 ## Teardown
 

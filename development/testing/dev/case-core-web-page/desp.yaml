@@ -1,0 +1,3 @@
+id: core-web-page
+description: web pages — a blueprint is a frontend resource served from the --pages root under /pages/, a tab renders it in an iframe at /pages/<id>, and the launcher + blueprints page create and delete them
+atoms: [web, ai]

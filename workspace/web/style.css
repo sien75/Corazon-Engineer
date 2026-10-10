@@ -2,100 +2,11 @@
   box-sizing: border-box;
 }
 
-/* ---------- themes ---------- */
-
-:root {
-  --bg: #ffffff;
-  --code-bg: #f6f8fa;
-  --surface: #f6f7f9;
-  --surface-2: #ffffff;
-  --surface-3: #eceef1;
-  --surface-inset: #fafbfc;
-  --surface-question: #f5f3ff;
-  --border: #e3e6ea;
-  --border-strong: #d0d7de;
-  --spinner-track: #d0d7de;
-  --fg: #1f2328;
-  --fg-dim: #57606a;
-  --fg-muted: #6e7781;
-  --accent: #0969da;
-  --accent-bg: #ddf4ff;
-  --accent-border: #b6e3ff;
-  --ok: #1a7f37;
-  --err: #cf222e;
-  --danger: #cf222e;
-  --danger-bg: #ffebe9;
-  --danger-fg: #82071e;
-  --danger-bg-hover: #ffd7d5;
-  --question-border: #8250df;
-  --question-btn-bg: #fbefff;
-  --question-btn-border: #d8b9ff;
-  --question-btn-fg: #6639ba;
-}
-
-html[data-theme="dark"] {
-  --bg: #141416;
-  --code-bg: #141416;
-  --surface: #1c1c20;
-  --surface-2: #202024;
-  --surface-3: #26262b;
-  --surface-inset: #16161a;
-  --surface-question: #202030;
-  --border: #2a2a2e;
-  --border-strong: #3f3f46;
-  --spinner-track: #52525b;
-  --fg: #e4e4e7;
-  --fg-dim: #a1a1aa;
-  --fg-muted: #8b8b93;
-  --accent: #7dd3fc;
-  --accent-bg: #0f3a4d;
-  --accent-border: #155e75;
-  --ok: #4ade80;
-  --err: #f87171;
-  --danger: #ef4444;
-  --danger-bg: #7f1d1d;
-  --danger-fg: #fecaca;
-  --danger-bg-hover: #991b1b;
-  --question-border: #6d28d9;
-  --question-btn-bg: #3b0764;
-  --question-btn-border: #7c3aed;
-  --question-btn-fg: #ede9fe;
-}
-
-html[data-theme="solarized"] {
-  --bg: #fdf6e3;
-  --code-bg: #f2ecdb;
-  --surface: #f9f3e1;
-  --surface-2: #fdf6e3;
-  --surface-3: #f1ebd9;
-  --surface-inset: #f6f0de;
-  --surface-question: #f5efe0;
-  --border: #ddd6c1;
-  --border-strong: #c9c2ab;
-  --spinner-track: #c9c2ab;
-  --fg: #073642;
-  --fg-dim: #586e75;
-  --fg-muted: #93a1a1;
-  --accent: #268bd2;
-  --accent-bg: #d7e8f2;
-  --accent-border: #a8cfe6;
-  --ok: #859900;
-  --err: #dc322f;
-  --danger: #dc322f;
-  --danger-bg: #f6d9d3;
-  --danger-fg: #7a1f1c;
-  --danger-bg-hover: #efc4bc;
-  --question-border: #6c71c4;
-  --question-btn-bg: #e6e3f2;
-  --question-btn-border: #b8b6dd;
-  --question-btn-fg: #4a4f9e;
-}
-
 html,
 body {
   margin: 0;
   height: 100%;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font);
   background: var(--bg);
   color: var(--fg);
 }
@@ -484,46 +395,89 @@ canvas.layer {
 }
 
 .newtab-body {
-  width: min(1040px, 100%);
+  width: min(760px, 100%);
   margin: auto;
   padding: 32px 16px;
 }
 
-/* Two columns, and the split is the page's whole idea: the *kinds* of
-   conversation you can start on the left (built-in / my skills / suggested),
-   the past conversations on the right. The line between them spans the content,
-   not the page — it divides the two lists, it does not cut the page in half. */
-.newtab-cols {
-  display: flex;
-  align-items: flex-start;
-  gap: 36px;
+/* The launcher is one column of sections — the Chat button, the skills preview,
+   the blueprints preview, recent — and the sections are ruled apart. A rule
+   divides two lists; it is not a page border. */
+.newtab-sec + .newtab-sec {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 
-.newtab-col {
+/* A section head: a label, a count, and (when the section leads somewhere) an
+   arrow on the right. Only the arrow is the way in — the label is a label. */
+.newtab-sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.newtab-sec-open {
+  margin-left: auto;
+  padding: 0 2px;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.newtab-sec-open:hover {
+  color: var(--accent);
+}
+
+.newtab-sec-note {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* A preview shows a few rows side by side, the full list on a sub-page stacks
+   them: the same row, two arrangements. */
+.launch-grid {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.launch-grid .launch-item {
   flex: 1 1 0;
   min-width: 0;
+  flex-direction: column;
 }
 
-.newtab-divider {
-  align-self: stretch;
-  width: 1px;
-  background: var(--border);
+/* A sub-page is a list to work through: it starts at the top of the pane and the
+   way back rides along at the very top, plain text — no frame, no box. */
+#newtab.subpage {
+  align-items: flex-start;
 }
 
-/* Narrow window: the columns stack and the divider turns into a rule. The row's
-   `align-items: flex-start` must be undone here — in a column it would shrink
-   each column to its content and let a long skill text run off the page. */
-@media (max-width: 900px) {
-  .newtab-cols {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 24px;
-  }
+#newtab.subpage .newtab-body {
+  margin: 0 auto;
+  padding-top: 0;
+}
 
-  .newtab-divider {
-    width: auto;
-    height: 1px;
-  }
+.newtab-back {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 4px;
+  padding: 10px 0 6px;
+  background: var(--surface);
+  border: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.newtab-back:hover {
+  color: var(--accent);
 }
 
 .newtab-body h3 {
@@ -537,7 +491,7 @@ canvas.layer {
 
 /* The heading already separates a section from the one above it; the extra top
    margin is for that, not for the top of the column. */
-.newtab-section:first-child h3 {
+.newtab-sec:first-child h3 {
   margin-top: 0;
 }
 
@@ -548,7 +502,7 @@ canvas.layer {
   text-align: left;
 }
 
-.skill-item {
+.launch-item {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -559,21 +513,21 @@ canvas.layer {
   cursor: pointer;
 }
 
-.skill-item:hover {
+.launch-item:hover {
   border-color: var(--accent);
 }
 
-.skill-main {
+.launch-main {
   flex: 1;
   min-width: 0;
 }
 
-.skill-name {
+.launch-name {
   font-size: 13px;
   color: var(--fg);
 }
 
-.skill-text {
+.launch-desc {
   font-size: 12px;
   color: var(--fg-muted);
   overflow: hidden;
@@ -581,13 +535,13 @@ canvas.layer {
   white-space: nowrap;
 }
 
-.skill-actions {
+.launch-actions {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
 }
 
-.skill-actions button {
+.launch-actions button {
   background: none;
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -598,14 +552,38 @@ canvas.layer {
   cursor: pointer;
 }
 
-.skill-actions button:hover {
+.launch-actions button:hover {
   color: var(--accent);
   border-color: var(--accent);
 }
 
-/* Deleting a skill deletes a folder, so the delete button asks first: a small
-   popover next to it (the position is set from the button's box), where a second
-   click confirms and anything else backs out. */
+/* ---------- page tab ---------- */
+
+/* A page is a blueprint's own html, filling the content area. The iframe is kept
+   alive between visits (switching tabs does not reload it) and simply cleared
+   when its tab closes. */
+#page {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  background: var(--surface);
+}
+
+#page[hidden] {
+  display: none;
+}
+
+#page iframe {
+  flex: 1;
+  border: 0;
+  /* The page's own background wins once it paints; before that (and when it has
+     none) the pane shows the current theme's surface, not a white flash. */
+  background: var(--surface);
+}
+
+/* Deleting a skill or a blueprint deletes a folder, so the delete button asks
+   first: a small popover next to it (the position is set from the button's box),
+   where a second click confirms and anything else backs out. */
 .skill-confirm {
   position: fixed;
   z-index: 100;

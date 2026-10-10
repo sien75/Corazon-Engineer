@@ -1,0 +1,3 @@
+id: core-blueprint-crud
+description: ai blueprints — save_blueprint writes a directory under .agents/blueprints/ with an index.html entry and assets, list reads the directory back, delete removes it; no discovery, no sqlite
+atoms: [ai]

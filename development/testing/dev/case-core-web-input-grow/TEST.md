@@ -41,6 +41,7 @@ text: placeholder skill'
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
+  --pages /tmp/engineer-pages-unused \
   --static http://localhost:8502 --ai http://localhost:8511 --log http://localhost:8513 \
   >/tmp/input-grow-web.log 2>&1 &
 ```

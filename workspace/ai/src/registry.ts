@@ -22,6 +22,7 @@ import {
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
 import { SkillStore } from "./skill/store.ts";
+import { BlueprintError, BlueprintStore, type BlueprintFile } from "./blueprint/store.ts";
 import {
   SCAN_THRESHOLD,
   Suggester,
@@ -48,9 +49,10 @@ export interface EngineerEvent {
 
 type Listener = (ev: EngineerEvent) => void;
 
-// ask_user is the only custom tool. It does not block: it ends the current run
-// and the user's answer is injected later as a normal user text turn (via the
-// dedicated /ai/answer endpoint, which will also host permission logic).
+// ask_user: one of the three custom tools (save_skill and save_blueprint are
+// built further down). It does not block: it ends the current run and the user's
+// answer is injected later as a normal user text turn (via the dedicated
+// /ai/answer endpoint, which will also host permission logic).
 const askUserTool = defineTool({
   name: "ask_user",
   label: "Ask user",
@@ -148,6 +150,8 @@ export class Registry {
   private skillStore?: SkillStore;
   private suggester?: Suggester;
   private skillTool?: ReturnType<typeof defineTool>;
+  private blueprintStore?: BlueprintStore;
+  private blueprintTool?: ReturnType<typeof defineTool>;
 
   constructor(private opts: RegistryOptions) {}
 
@@ -164,6 +168,9 @@ export class Registry {
       inputBudgetTokens: () => this.scanBudget(),
     });
     this.skillTool = this.buildSkillTool();
+    // Blueprints are the pages' classes — plain files in the project, no scan.
+    this.blueprintStore = new BlueprintStore(this.opts.root);
+    this.blueprintTool = this.buildBlueprintTool();
     if (this.opts.forceStub) return; // dev stub forced (offline / tests)
     this.modelRuntime = await ModelRuntime.create();
     const requested = this.opts.model ?? DEFAULT_MODEL;
@@ -260,6 +267,82 @@ export class Registry {
   get skills(): SkillStore {
     if (!this.skillStore) throw new Error("skill store not initialized");
     return this.skillStore;
+  }
+
+  // --- blueprint system ---
+
+  // A blueprint is the class behind a page. Writing one is itself an agent
+  // capability — the user describes the page in conversation and the agent lays
+  // it down as files — and it is the *only* way blueprints come to exist: unlike
+  // skills there is no discovery, no queue and no sqlite to accept or ignore.
+  private buildBlueprintTool(): ReturnType<typeof defineTool> {
+    return defineTool({
+      name: "save_blueprint",
+      label: "Save blueprint",
+      description:
+        "Save a page blueprint: a frontend resource the user can open as a page " +
+        "tab in the launcher. A blueprint is a directory in the project holding " +
+        "one html entry (index.html) plus any files it needs — js, css, images, " +
+        "subdirectories. Pass every file the page needs, index.html included; " +
+        "files you do not pass are left untouched. Give it a <title>: that is the " +
+        "name the user sees.",
+      promptSnippet: "save_blueprint: save a page blueprint (name + files)",
+      parameters: Type.Object({
+        name: Type.String({ description: "Short label for the blueprint" }),
+        files: Type.Array(
+          Type.Object({
+            path: Type.String({
+              description:
+                'Path inside the blueprint directory, e.g. "index.html" or "app.js"; must include index.html',
+            }),
+            content: Type.String({ description: "The file's text" }),
+          }),
+          { description: "The files that make up the blueprint" },
+        ),
+        id: Type.Optional(
+          Type.String({
+            description:
+              "An existing blueprint id to write into; omit to create a new one",
+          }),
+        ),
+      }),
+      executionMode: "sequential",
+      execute: async (_toolCallId, params) => {
+        const name = String(params.name ?? "").trim();
+        const files = (Array.isArray(params.files) ? params.files : []).map(
+          (f: any): BlueprintFile => ({
+            path: String(f?.path ?? ""),
+            content: String(f?.content ?? ""),
+          }),
+        );
+        const id = params.id ? String(params.id) : undefined;
+        try {
+          const bp = this.blueprintStore!.save({ id, name, files });
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Saved blueprint ${bp.id} ("${bp.name}"): ${bp.files.join(", ")}`,
+              },
+            ],
+            details: { blueprintId: bp.id, name: bp.name, files: bp.files },
+          };
+        } catch (err) {
+          if (err instanceof BlueprintError) {
+            return {
+              content: [{ type: "text", text: err.message }],
+              details: undefined,
+            };
+          }
+          throw err;
+        }
+      },
+    });
+  }
+
+  get blueprints(): BlueprintStore {
+    if (!this.blueprintStore) throw new Error("blueprint store not initialized");
+    return this.blueprintStore;
   }
 
   // scanSkills runs one suggestion scan. The automatic path is fire-and-forget;
@@ -361,9 +444,9 @@ export class Registry {
         sessionManager,
         settingsManager: this.settings,
         // Capability surface: read/grep/find/ls + bash (execution, including
-        // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
-        // and save_skill are the custom tools and must be in the allowlist to
-        // stay enabled.
+        // HTTP via curl) + write/edit. External CLIs run through bash. ask_user,
+        // save_skill and save_blueprint are the custom tools and must be in the
+        // allowlist to stay enabled.
         tools: [
           "read",
           "grep",
@@ -374,10 +457,13 @@ export class Registry {
           "edit",
           "ask_user",
           "save_skill",
+          "save_blueprint",
         ],
-        customTools: this.skillTool
-          ? [askUserTool, this.skillTool]
-          : [askUserTool],
+        customTools: [
+          askUserTool,
+          ...(this.skillTool ? [this.skillTool] : []),
+          ...(this.blueprintTool ? [this.blueprintTool] : []),
+        ],
       });
       sess.agent = session;
       session.agent.shouldStopAfterTurn = () => ++sess.turns >= MAX_TURNS;

@@ -96,7 +96,7 @@ echo $! >"$D/static.pid"
     --log "$BASE:$PORT_LOG" --static "$BASE:$PORT_STATIC" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
 nohup "$BIN/engineer" serve-web --bind "$BIND" --port "$PORT_WEB" \
-    --assets "$ROOT/workspace/web" \
+    --assets "$ROOT/workspace/web" --pages "$ROOT/.agents/blueprints" \
     --static "$BASE:$PORT_STATIC" --ai "$BASE:$PORT_AI" --log "$BASE:$PORT_LOG" >"$D/web.log" 2>&1 </dev/null &
 echo $! >"$D/web.pid"
 

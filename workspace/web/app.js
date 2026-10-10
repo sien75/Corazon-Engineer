@@ -347,6 +347,20 @@ function applyTheme(name) {
   if (themeToggleEl) themeToggleEl.title = `theme: ${name}`;
   if (themeMenuEl) syncThemeMenu();
   if (graph) graph.setColors(GRAPH_THEMES[name]);
+  pushPageTheme();
+}
+
+// A page is a document of its own (an iframe), so the shell's variables and its
+// `data-theme` attribute do not reach it on their own. Same origin, though, means
+// the shell can write them straight in: the blueprint then follows the theme by
+// styling `html[data-theme]` / using /theme.css, with no listening of its own.
+function pushPageTheme() {
+  const doc = pageFrameEl?.contentDocument;
+  if (!doc) return;
+  const theme = currentTheme();
+  doc.documentElement.setAttribute("data-theme", theme);
+  // Native widgets and the scrollbar follow color-scheme, not our variables.
+  doc.documentElement.style.colorScheme = theme === "dark" ? "dark" : "light";
 }
 
 function bindGraphEvents() {
@@ -442,19 +456,29 @@ const SECTION_DETAIL_TYPE = {
   notes: "notes",
 };
 
-// The route table: `/` graph, `/new` the new tab page, `/chat/<sessionId>` the
-// tab holding that conversation, `/<section>[/<id>]` a fixed view. Anything else
+// The route table: `/` graph, `/new[/skills|/blueprints]` the launcher,
+// `/chat/<sessionId>` the tab holding that conversation, `/pages/<id>` the tab
+// rendering that blueprint, `/<section>[/<id>]` a fixed view. Anything else
 // falls back to the graph. The web server already answers an unknown path with
-// index.html, so a chat URL survives a reload and can be shared.
+// index.html, so a chat or page URL survives a reload and can be shared.
 const CHAT_PREFIX = "chat";
+const PAGES_PREFIX = "pages";
 const NEW_TAB_PATH = "/new";
+const NEW_TAB_SUBS = ["skills", "blueprints"];
 
 function parseRoute() {
   const parts = location.pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (!parts.length) return { view: "graph" };
   const [section, ...rest] = parts;
   if (section === CHAT_PREFIX && rest.length) return { view: "chat", sessionId: rest.join("/") };
-  if (section === "new" && !rest.length) return { view: "newtab" };
+  if (section === PAGES_PREFIX && rest.length) return { view: "page", pageId: rest.join("/") };
+  if (section === "new") {
+    if (!rest.length) return { view: "newtab" };
+    if (rest.length === 1 && NEW_TAB_SUBS.includes(rest[0])) {
+      return { view: "newtab", sub: rest[0] };
+    }
+    return { view: "newtab" };
+  }
   if (!SECTIONS.includes(section)) return { view: "graph" };
   if (!rest.length) return { view: section };
   return { view: section, id: `${section}/${rest.join("/")}` };
@@ -476,14 +500,18 @@ function entryHref(id) {
 
 function route() {
   const r = parseRoute();
-  // A conversation and the new tab page own the layout themselves; currentView
-  // (the fixed view to fall back to) stays as it was.
+  // A conversation, a page and the launcher own the layout themselves;
+  // currentView (the fixed view to fall back to) stays as it was.
   if (r.view === "chat") {
     routeChat(r.sessionId);
     return;
   }
+  if (r.view === "page") {
+    routePage(r.pageId);
+    return;
+  }
   if (r.view === "newtab") {
-    openNewTab({ push: false });
+    openNewTab({ push: false, sub: r.sub || "home" });
     return;
   }
   currentView = r.view;
@@ -501,7 +529,7 @@ function route() {
 // is active — a schema push must not kick the user out of a conversation tab.
 function showView(r) {
   hidePanel();
-  if (r.view === "chat" || r.view === "newtab") return;
+  if (r.view === "chat" || r.view === "newtab" || r.view === "page") return;
   if (r.view === "graph") {
     contentEl.hidden = true;
     graphEl.hidden = false;
@@ -596,6 +624,11 @@ const aiSendEl = document.getElementById("ai-send");
 const aiStopEl = document.getElementById("ai-stop");
 const aiCmdEl = document.getElementById("ai-cmd");
 const leftEl = document.getElementById("left");
+// A page tab's pane: an iframe onto the blueprint's own files, served from the
+// web server's second root. Kept between visits (switching tabs does not reload
+// it), cleared when its tab closes.
+const pageEl = document.getElementById("page");
+const pageFrameEl = document.getElementById("page-frame");
 let aiSession = null;
 let aiSeenSeq = 0;
 let aiStreaming = false;
@@ -1631,7 +1664,7 @@ const tabAddEl = document.getElementById("tab-add");
 // The tab whose conversation is currently rendered into #ai-messages. Null when
 // something else (an ad-hoc chat) owns the message area.
 let renderedTabId = null;
-let openTabs = loadTabs(); // [{ id, skillId, sessionId, name, fresh }]
+let openTabs = loadTabs(); // [{ id, kind, name, sessionId, skillId, text, pageId }]
 let activeTabId = null; // tab on screen, null while a fixed view is active
 
 // The address bar follows the tabs: while a conversation is on screen the URL is
@@ -1643,9 +1676,25 @@ function chatPath(sessionId) {
   return `/${CHAT_PREFIX}/${encodeURIComponent(sessionId)}`;
 }
 
-function syncChatUrl(sessionId, mode) {
+function pagePath(pageId) {
+  return `/${PAGES_PREFIX}/${encodeURIComponent(pageId)}`;
+}
+
+// pageFrameSrc is where the iframe actually loads: the blueprint's directory,
+// with the trailing slash that makes the server hand over its index.html — the
+// same path without the slash is the SPA route the tab itself lives on.
+function pageFrameSrc(pageId) {
+  return `${pagePath(pageId)}/`;
+}
+
+// The address bar follows whatever the tab carries: a conversation lives at
+// /chat/<sessionId>, a page at /pages/<id>. The mode names how the URL got
+// there: "push" (an explicit move to the tab), "replace" (the tab changed its
+// content in place) or null (the URL drove the render — popstate, a deep link —
+// so there is nothing to write).
+function syncTabUrl(tab, mode) {
   if (!mode) return;
-  const path = chatPath(sessionId);
+  const path = tab.kind === "page" ? pagePath(tab.pageId) : chatPath(tab.sessionId);
   if (location.pathname === path) return;
   if (mode === "replace") history.replaceState(null, "", path);
   else history.pushState(null, "", path);
@@ -1656,12 +1705,25 @@ function syncChatUrl(sessionId, mode) {
 // A session that cannot be loaded is left on screen with its error — the address
 // is the truth and the tab is the user's to close.
 async function routeChat(sessionId) {
-  const tab = openTabs.find((t) => t.sessionId === sessionId);
+  const tab = openTabs.find((t) => t.kind !== "page" && t.sessionId === sessionId);
   if (tab) {
     await activateTab(tab.id, null);
     return;
   }
   await openTab({ skillId: "", sessionId, name: "chat", text: "" }, null);
+}
+
+// routePage renders the page a /pages/<id> URL names. A page is stateless — no
+// session, no history — so a URL that names a blueprint simply gets a tab for
+// it; if there is no such blueprint the iframe shows the server's fallback and
+// the tab is the user's to close, exactly like a chat that cannot be loaded.
+async function routePage(pageId) {
+  const tab = openTabs.find((t) => t.kind === "page" && t.pageId === pageId);
+  if (tab) {
+    await activateTab(tab.id, null);
+    return;
+  }
+  await openPageTab(pageId, pageId, null);
 }
 
 // rebindActiveTab points the tab on screen at the session it now shows. /resume
@@ -1678,7 +1740,7 @@ function rebindActiveTab(sessionId, name) {
   tab.text = "";
   saveTabs();
   renderTabs();
-  syncChatUrl(sessionId, "replace");
+  syncTabUrl(tab, "replace");
 }
 
 // The composer is a single DOM node shared by every instance, so each tab keeps
@@ -1712,12 +1774,21 @@ function loadTabs() {
     if (!Array.isArray(raw)) return [];
     // `fresh` is deliberately never restored: after a reload the session is
     // loaded through /ai/resume like any other history session.
+    //
+    // A record without a `kind` predates pages and is a conversation; a page tab
+    // carries a pageId and no session at all, so each kind is filtered on what
+    // it actually needs.
     return raw
-      .filter((t) => t && t.id && t.sessionId && t.name)
+      .filter((t) => {
+        if (!t || !t.id || !t.name) return false;
+        return t.kind === "page" ? !!t.pageId : !!t.sessionId;
+      })
       .map((t) => ({
         id: t.id,
+        kind: t.kind === "page" ? "page" : "chat",
         skillId: t.skillId || "",
-        sessionId: t.sessionId,
+        sessionId: t.sessionId || "",
+        pageId: t.pageId || "",
         name: t.name,
         text: t.text || "",
       }));
@@ -1769,18 +1840,19 @@ function syncTabActive() {
   tabAddEl.classList.toggle("active", newTabOpen);
 }
 
-// applyLayout switches between the two page contents: a fixed view (graph or a
-// section tree) and a conversation. The conversation takes the whole page while
-// a tab is active; otherwise the side panel behaves as before.
+// applyLayout switches between the page contents: a fixed view (graph or a
+// section tree), a conversation, a page, or the launcher — exactly one at a
+// time, nothing side by side.
 function applyLayout() {
-  const tabMode = !!activeTabId;
-  // Exactly one pane at a time: a fixed view, a conversation, or the new
-  // tab page.
-  leftEl.hidden = tabMode || newTabOpen;
+  const tab = activeTabId ? openTabs.find((t) => t.id === activeTabId) : null;
+  const pageMode = !!tab && tab.kind === "page";
+  const chatMode = !!tab && tab.kind !== "page";
+  leftEl.hidden = pageMode || chatMode || newTabOpen;
   newTabEl.hidden = !newTabOpen;
-  aiEl.classList.toggle("tab-mode", tabMode);
-  aiEl.hidden = !tabMode;
-  if (tabMode) aiResizeInput();
+  pageEl.hidden = !pageMode;
+  aiEl.classList.toggle("tab-mode", chatMode);
+  aiEl.hidden = !chatMode;
+  if (chatMode) aiResizeInput();
   graph?.updateSize();
 }
 
@@ -1788,16 +1860,41 @@ function applyLayout() {
 // created by /ai/skill/run (nothing rendered yet), otherwise the session is
 // loaded like a resumed history session.
 async function openTab({ skillId, sessionId, name, text, fresh }, mode = "push") {
-  let tab = openTabs.find((t) => t.sessionId === sessionId);
+  let tab = openTabs.find((t) => t.kind !== "page" && t.sessionId === sessionId);
   if (!tab) {
     tab = {
       id: `tab_${Math.random().toString(36).slice(2, 10)}`,
+      kind: "chat",
       skillId: skillId || "",
       sessionId,
+      pageId: "",
       name: name || "chat",
       text: text || "",
     };
     if (fresh) tab.fresh = true;
+    openTabs.push(tab);
+  }
+  saveTabs();
+  renderTabs();
+  await activateTab(tab.id, mode);
+}
+
+// openPageTab opens a tab for a blueprint. A page is not an instance of a
+// session: it carries no sessionId, writes no record and has no history — the
+// tab is the whole of its state, and the pane holds an iframe onto the
+// blueprint's files. Opening the same blueprint twice reuses its tab.
+async function openPageTab(pageId, name, mode = "push") {
+  let tab = openTabs.find((t) => t.kind === "page" && t.pageId === pageId);
+  if (!tab) {
+    tab = {
+      id: `tab_${Math.random().toString(36).slice(2, 10)}`,
+      kind: "page",
+      pageId,
+      skillId: "",
+      sessionId: "",
+      name: name || pageId,
+      text: "",
+    };
     openTabs.push(tab);
   }
   saveTabs();
@@ -1812,7 +1909,18 @@ async function activateTab(id, mode = "push") {
   newTabOpen = false;
   applyLayout();
   syncTabActive();
-  syncChatUrl(tab.sessionId, mode);
+  syncTabUrl(tab, mode);
+  if (tab.kind === "page") {
+    // A page has no instance to load: the iframe is pointed at the blueprint
+    // once, and coming back to its tab keeps whatever state it had.
+    aiSwitchDraft(id);
+    renderedTabId = id;
+    if (pageFrameEl.getAttribute("src") !== pageFrameSrc(tab.pageId)) {
+      pageFrameEl.setAttribute("src", pageFrameSrc(tab.pageId));
+    }
+    pushPageTheme();
+    return;
+  }
   // Still rendered from this very tab: nothing to redraw.
   if (renderedTabId === id && aiSession === tab.sessionId) {
     aiInputEl.focus();
@@ -1847,31 +1955,35 @@ async function activateTab(id, mode = "push") {
 function closeTab(id) {
   const idx = openTabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
+  const closed = openTabs[idx];
   openTabs.splice(idx, 1);
   aiDrafts.delete(id); // a closed instance keeps no draft
   saveTabs();
   renderTabs();
   if (activeTabId !== id) return;
-  // The closed tab owned the message area: fall back to the neighbour, or to
+  // The closed tab owned the content area: fall back to the neighbour, or to
   // the graph when it was the last one.
   aiCancelStream();
   renderedTabId = null;
   activeTabId = null;
+  if (closed.kind === "page") pageFrameEl.setAttribute("src", "about:blank");
   const next = openTabs[Math.max(0, idx - 1)];
   if (next) activateTab(next.id, "replace");
   else navigate("/", "replace");
 }
 
-// ---------- new tab page ----------
+// ---------- the launcher ----------
 //
-// `+` turns the content area into the skill picker — a page, not a dialog (the
-// browser new-tab analogy): pick a skill to open as a tab, or describe a new
-// one below. Any tab click leaves the page.
+// `+` turns the content area into the launcher — a page, not a dialog (the
+// browser new-tab analogy): start a blank chat, or open a skill as a chat or a
+// blueprint as a page. Any tab click leaves the page.
 
 let newTabEl = null;
 let newTabOpen = false;
 let newTabReturn = "/"; // the path Esc leaves the new tab page for
+let newTabMode = "home"; // home | skills | blueprints
 let newTabSkills = new Map(); // skill id -> { name, text }
+let newTabBlueprints = new Map(); // blueprint id -> { name, files }
 let newTabSessions = new Map(); // session id -> tab label
 
 function newTabInit() {
@@ -1879,10 +1991,14 @@ function newTabInit() {
   newTabEl.addEventListener("click", newTabClick);
 }
 
-// Deleting a skill deletes a folder in the project, so the row's delete button
-// asks first — a small popover next to it, not a modal: the page stays visible
-// and one more click (or Esc, or a scroll, or clicking anywhere else) is all it
-// takes to back out. `skillConfirm` is the one that is open.
+// A page's document arrives after the frame does, so the theme is written in
+// again on every load (a page reload, or a tab pointed at another blueprint).
+pageFrameEl.addEventListener("load", pushPageTheme);
+
+// Deleting a skill or a blueprint deletes a folder in the project, so the row's
+// delete button asks first — a small popover next to it, not a modal: the page
+// stays visible and one more click (or Esc, or a scroll, or clicking anywhere
+// else) is all it takes to back out. `skillConfirm` is the one that is open.
 let skillConfirm = null;
 
 function skillConfirmClose() {
@@ -1893,13 +2009,14 @@ function skillConfirmClose() {
   el?.remove();
 }
 
-function skillConfirmOpen(button, t) {
+function skillConfirmOpen(button, target) {
   skillConfirmClose();
   const pop = document.createElement("div");
   pop.className = "skill-confirm";
   const msg = document.createElement("div");
   msg.className = "skill-confirm-msg";
-  msg.textContent = `Delete “${t.name}”? Its folder goes with it.`;
+  const what = target.kind === "blueprint" ? "blueprint" : "skill";
+  msg.textContent = `Delete “${target.name}”? Its ${what} folder goes with it.`;
   const actions = document.createElement("div");
   actions.className = "skill-confirm-actions";
   const del = document.createElement("button");
@@ -1907,9 +2024,9 @@ function skillConfirmOpen(button, t) {
   del.className = "skill-confirm-delete";
   del.textContent = "Delete";
   del.addEventListener("click", () => {
-    const id = t.id;
+    const { id, path } = target;
     skillConfirmClose();
-    newTabSend("/ai/skill/delete", { id });
+    newTabSend(path, { id });
   });
   const cancel = document.createElement("button");
   cancel.type = "button";
@@ -1954,23 +2071,40 @@ function skillConfirmOpen(button, t) {
     document.removeEventListener("mousedown", onOutside, true);
     window.removeEventListener("scroll", onScroll, true);
   };
-  skillConfirm = { id: t.id, el: pop, off };
+  skillConfirm = { id: target.id, el: pop, off };
   del.focus();
 }
 
-// openNewTab shows the skill picker at /new. `push` is false when the URL
-// already says /new (a back/forward step re-renders the page); a second `+`
-// click just refreshes the list instead of stacking another entry.
-function openNewTab({ push = true } = {}) {
+// openNewTab shows the launcher at /new (or one of its sub-pages). `push` is
+// false when the URL already says so (a back/forward step re-renders the page);
+// a second `+` click just refreshes it instead of stacking another entry.
+function openNewTab({ push = true, sub = "home" } = {}) {
+  const path = sub === "home" ? NEW_TAB_PATH : `${NEW_TAB_PATH}/${sub}`;
   if (push && !newTabOpen) {
     newTabReturn = location.pathname;
-    history.pushState(null, "", NEW_TAB_PATH);
+    history.pushState(null, "", path);
   }
   newTabOpen = true;
+  newTabMode = sub;
   activeTabId = null;
   applyLayout();
   syncTabActive();
   newTabEl.innerHTML = `<div class="newtab-body"><div class="empty-hint">loading…</div></div>`;
+  newTabReload();
+}
+
+// newTabGo moves within the launcher: the home page, the skills page, the
+// blueprints page. The URL follows, so a reload (or a shared link) lands on the
+// same one.
+function newTabGo(sub, mode = "push") {
+  const path = sub === "home" ? NEW_TAB_PATH : `${NEW_TAB_PATH}/${sub}`;
+  if (!newTabOpen) {
+    openNewTab({ push: mode !== null, sub });
+    return;
+  }
+  if (mode === "push") history.pushState(null, "", path);
+  else if (mode === "replace") history.replaceState(null, "", path);
+  newTabMode = sub;
   newTabReload();
 }
 
@@ -1983,23 +2117,55 @@ function closeNewTab() {
   navigate(newTabReturn, "replace");
 }
 
-function newTabItemHtml(t, suggested) {
-  // Every row can be chatted with; the buttons spell it out next to the list of
-  // things you can do to the skill itself (suggestions: keep it or drop it;
-  // saved skills: delete).
+// One row of the launcher: a **class** you can instantiate. A skill row opens a
+// chat (the buttons spell out what that kind of skill allows — a suggestion can
+// be kept or dropped, a saved one deleted); a blueprint row opens a page.
+function newTabSkillItemHtml(t, suggested) {
   const actions = suggested
     ? `<button type="button" data-action="run" data-id="${t.id}">chat</button>
        <button type="button" data-action="save" data-id="${t.id}">save</button>
        <button type="button" data-action="ignore" data-id="${t.id}">ignore</button>`
     : `<button type="button" data-action="run" data-id="${t.id}">chat</button>
        <button type="button" data-action="delete" data-id="${t.id}">delete</button>`;
-  return `<div class="skill-item" data-action="run" data-id="${t.id}">
-    <div class="skill-main">
-      <div class="skill-name">${escapeHtml(t.name)}</div>
-      <div class="skill-text">${escapeHtml(t.text)}</div>
+  return `<div class="launch-item" data-action="run" data-id="${t.id}">
+    <div class="launch-main">
+      <div class="launch-name">${escapeHtml(t.name)}</div>
+      <div class="launch-desc">${escapeHtml(t.text)}</div>
     </div>
-    <div class="skill-actions">${actions}</div>
+    <div class="launch-actions">${actions}</div>
   </div>`;
+}
+
+function newTabBlueprintItemHtml(b) {
+  const actions = `<button type="button" data-action="page" data-id="${b.id}">page</button>
+       <button type="button" data-action="delete" data-id="${b.id}">delete</button>`;
+  return `<div class="launch-item" data-action="page" data-id="${b.id}">
+    <div class="launch-main">
+      <div class="launch-name">${escapeHtml(b.name)}</div>
+      <div class="launch-desc">${escapeHtml(b.files.join(" · "))}</div>
+    </div>
+    <div class="launch-actions">${actions}</div>
+  </div>`;
+}
+
+// The sub-pages carry a way back of their own, at the top of the pane — the
+// launcher's own "back" (the browser's back would go further out).
+function newTabBackHtml() {
+  return `<button type="button" class="newtab-back" data-action="newtab-back">← back</button>`;
+}
+
+// A section head: the label, its count, and — when the section leads somewhere —
+// an arrow on the right. Only the arrow opens the sub-page: the label is a label,
+// clicking it does nothing.
+function newTabSecHeadHtml(title, count, action) {
+  const note =
+    count === "" || count === undefined
+      ? ""
+      : `<span class="newtab-sec-note">${count}</span>`;
+  const open = action
+    ? `<button type="button" class="newtab-sec-open" data-action="${action}" title="open ${title}">more →</button>`
+    : "";
+  return `<div class="newtab-sec-head"><h3>${title}</h3>${note}${open}</div>`;
 }
 
 function newTabError(message) {  const body = newTabEl?.querySelector(".newtab-body");
@@ -2010,71 +2176,133 @@ function newTabError(message) {  const body = newTabEl?.querySelector(".newtab-b
   body.prepend(note);
 }
 
-// The new tab page is two columns: the **kinds** of conversation you can start
-// on the left (built-in / my skills / suggested — all "classes"), the
-// **instances** you already had on the right (past conversations). They come
-// from two different services (ai owns skills, log owns conversations), which is
-// exactly why they do not belong in one list.
+// The launcher is one column of sections — the blank Chat button, then a
+// preview of the skills, then a preview of the blueprints, then the past
+// conversations. Skills and blueprints are the **classes** you can instantiate
+// (ai owns both, one service, two kinds of class), recent is the **instances**
+// you already had (log owns conversations — a page has no history at all, so it
+// never appears here).
+//
+// The previews show three and lead into a page of their own: a class has more to
+// say than a row (its full list, its candidates, its files).
 const SUGGESTED_SHOWN = 10;
+const NEWTAB_PREVIEW = 3;
 
-async function newTabReload() {
-  const body = newTabEl?.querySelector(".newtab-body");
-  if (!body) return;
-  skillConfirmClose();
-  let skills = [];
+// newTabList posts one list request and returns the items it holds under `key`.
+// A failure is returned, not thrown: one service being down must not take the
+// rest of the launcher with it.
+async function newTabList(path, key) {
   try {
-    const res = await fetch(`${AI_BASE}/ai/skill/list`, {
+    const res = await fetch(`${AI_BASE}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body: "{}",
     });
     const data = yaml.load(await res.text()) || {};
     if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-    skills = data.skills || [];
+    return { items: data[key] || [], error: "" };
   } catch (err) {
-    body.innerHTML = `<div class="empty-hint">${escapeHtml(String(err.message || err))}</div>`;
+    return { items: [], error: String(err.message || err) };
+  }
+}
+
+async function newTabReload() {
+  const body = newTabEl?.querySelector(".newtab-body");
+  if (!body) return;
+  skillConfirmClose();
+  // A sub-page is a list to work through, so the pane top-aligns it: the back
+  // button belongs at the top of the screen, not floating in the middle of it.
+  newTabEl.classList.toggle("subpage", newTabMode !== "home");
+  const [skillRes, blueprintRes] = await Promise.all([
+    newTabList("/ai/skill/list", "skills"),
+    newTabList("/ai/blueprint/list", "blueprints"),
+  ]);
+  const skills = skillRes.items;
+  const blueprints = blueprintRes.items;
+  newTabSkills = new Map(skills.map((t) => [t.id, t]));
+  newTabBlueprints = new Map(blueprints.map((b) => [b.id, b]));
+  const errors = [
+    skillRes.error && `skills: ${skillRes.error}`,
+    blueprintRes.error && `blueprints: ${blueprintRes.error}`,
+  ].filter(Boolean);
+  const note = errors.length
+    ? errors.map((e) => `<div class="empty-hint">${escapeHtml(e)}</div>`).join("")
+    : "";
+
+  if (newTabMode === "skills") {
+    body.innerHTML = note + newTabSkillsHtml(skills);
     return;
   }
-  newTabSkills = new Map(skills.map((t) => [t.id, t]));
-  // my skills are the ones you kept: files in the project. Suggested is a
-  // sample, not an archive — the newest few, the rest stays for later.
-  const mine = skills.filter((t) => t.source === "custom" && t.status === "active");
-  const suggested = skills
-    .filter((t) => t.source === "suggested" && t.status === "active")
-    .slice(0, SUGGESTED_SHOWN);
+  if (newTabMode === "blueprints") {
+    body.innerHTML = note + newTabBlueprintsHtml(blueprints);
+    return;
+  }
   const { recent, sessions } = await recentSessions();
   newTabSessions = sessions;
-  const none = `<div class="empty-hint">nothing here yet</div>`;
-  body.innerHTML = `
-    <div class="newtab-cols">
-      <div class="newtab-col">
-        <div class="newtab-section" data-section="built-in">
-          <h3>built-in</h3>
-          <div class="skill-item" data-action="newchat">
-            <div class="skill-main">
-              <div class="skill-name">Chat</div>
-              <div class="skill-text">a blank conversation — no skill behind it</div>
-            </div>
-          </div>
-        </div>
-        <div class="newtab-section" data-section="mine">
-          <h3>my skills</h3>
-          ${mine.length ? mine.map((t) => newTabItemHtml(t, false)).join("") : none}
-        </div>
-        <div class="newtab-section" data-section="suggested">
-          <h3>suggested</h3>
-          ${suggested.length ? suggested.map((t) => newTabItemHtml(t, true)).join("") : none}
-        </div>
-      </div>
-      <div class="newtab-divider"></div>
-      <div class="newtab-col">
-        <div class="newtab-section" data-section="recent">
-          <h3>recent</h3>
-          ${recent.length ? recent.map((s) => newTabSessionHtml(s)).join("") : none}
+  body.innerHTML = note + newTabHomeHtml(skills, blueprints, recent);
+}
+
+// my skills are the ones you kept: files in the project. Suggested is a sample,
+// not an archive — the newest few, the rest stays for later.
+function newTabMySkills(skills) {
+  return skills.filter((t) => t.source === "custom" && t.status === "active");
+}
+
+function newTabSuggestions(skills) {
+  return skills
+    .filter((t) => t.source === "suggested" && t.status === "active")
+    .slice(0, SUGGESTED_SHOWN);
+}
+
+const NEWTAB_NONE = `<div class="empty-hint">nothing here yet</div>`;
+
+function newTabHomeHtml(skills, blueprints, recent) {
+  const mine = newTabMySkills(skills);
+  return `
+    <section class="newtab-sec" data-section="chat">
+      <div class="launch-item" data-action="newchat">
+        <div class="launch-main">
+          <div class="launch-name">Chat</div>
+          <div class="launch-desc">a blank conversation — no skill behind it</div>
         </div>
       </div>
-    </div>
-  `;
+    </section>
+    <section class="newtab-sec" data-section="skills">
+      ${newTabSecHeadHtml("Skills", mine.length, "open-skills")}
+      ${mine.length ? `<div class="launch-grid">${mine.slice(0, NEWTAB_PREVIEW).map((t) => newTabSkillItemHtml(t, false)).join("")}</div>` : NEWTAB_NONE}
+    </section>
+    <section class="newtab-sec" data-section="blueprints">
+      ${newTabSecHeadHtml("Blueprints", blueprints.length, "open-blueprints")}
+      ${blueprints.length ? `<div class="launch-grid">${blueprints.slice(0, NEWTAB_PREVIEW).map(newTabBlueprintItemHtml).join("")}</div>` : NEWTAB_NONE}
+    </section>
+    <section class="newtab-sec" data-section="recent">
+      ${newTabSecHeadHtml("Recent", "")}
+      ${recent.length ? recent.map((s) => newTabSessionHtml(s)).join("") : NEWTAB_NONE}
+    </section>`;
+}
+
+function newTabSkillsHtml(skills) {
+  const mine = newTabMySkills(skills);
+  const suggested = newTabSuggestions(skills);
+  return `
+    ${newTabBackHtml()}
+    <section class="newtab-sec" data-section="skills-mine">
+      ${newTabSecHeadHtml("My skills", "")}
+      ${mine.length ? mine.map((t) => newTabSkillItemHtml(t, false)).join("") : NEWTAB_NONE}
+    </section>
+    <section class="newtab-sec" data-section="skills-suggested">
+      ${newTabSecHeadHtml("Suggested", "")}
+      ${suggested.length ? suggested.map((t) => newTabSkillItemHtml(t, true)).join("") : NEWTAB_NONE}
+    </section>`;
+}
+
+function newTabBlueprintsHtml(blueprints) {
+  return `
+    ${newTabBackHtml()}
+    <section class="newtab-sec" data-section="blueprints-all">
+      ${newTabSecHeadHtml("Blueprints", "")}
+      ${blueprints.length ? blueprints.map(newTabBlueprintItemHtml).join("") : NEWTAB_NONE}
+    </section>`;
 }
 
 // recentSessions lists past conversations, most recently active first: the ones
@@ -2108,10 +2336,10 @@ async function recentSessions() {
 
 function newTabSessionHtml(s) {
   const name = newTabSessions.get(s.sessionId) || s.sessionId;
-  return `<div class="skill-item" data-action="resume" data-id="${s.sessionId}">
-    <div class="skill-main">
-      <div class="skill-name">${escapeHtml(name)}</div>
-      <div class="skill-text">${s.count} messages · ${escapeHtml(String(s.lastAt || ""))}</div>
+  return `<div class="launch-item" data-action="resume" data-id="${s.sessionId}">
+    <div class="launch-main">
+      <div class="launch-name">${escapeHtml(name)}</div>
+      <div class="launch-desc">${s.count} messages · ${escapeHtml(String(s.lastAt || ""))}</div>
     </div>
   </div>`;
 }
@@ -2168,6 +2396,12 @@ async function newTabResume(sessionId) {
   await openTab({ skillId: "", sessionId, name, text: "" }, "replace");
 }
 
+// newTabOpenPage opens a blueprint as a page tab.
+async function newTabOpenPage(pageId) {
+  const bp = newTabBlueprints.get(pageId);
+  await openPageTab(pageId, bp?.name || pageId, "replace");
+}
+
 function newTabClick(event) {
   const hit = event.target.closest("[data-action]");
   if (!hit) return;
@@ -2176,9 +2410,23 @@ function newTabClick(event) {
   if (action === "newchat") newBlankChat();
   else if (action === "resume") newTabResume(id);
   else if (action === "run") newTabRun(id);
+  else if (action === "page") newTabOpenPage(id);
+  else if (action === "open-skills") newTabGo("skills");
+  else if (action === "open-blueprints") newTabGo("blueprints");
+  else if (action === "newtab-back") newTabGo("home", "replace");
   else if (action === "delete") {
-    const t = newTabSkills.get(id);
-    if (t) skillConfirmOpen(hit, t);
+    const skill = newTabSkills.get(id);
+    const bp = newTabBlueprints.get(id);
+    if (skill) {
+      skillConfirmOpen(hit, { id, name: skill.name, path: "/ai/skill/delete" });
+    } else if (bp) {
+      skillConfirmOpen(hit, {
+        id,
+        name: bp.name,
+        kind: "blueprint",
+        path: "/ai/blueprint/delete",
+      });
+    }
   } else if (action === "ignore") newTabSend("/ai/skill/ignore", { id, ignored: true });
   else if (action === "save") {
     const t = newTabSkills.get(id);
@@ -2186,7 +2434,12 @@ function newTabClick(event) {
   }
 }
 
-tabAddEl.addEventListener("click", () => openNewTab());
+tabAddEl.addEventListener("click", () => {
+  // The launcher has no tab of its own; `+` opens it (or its home page when a
+  // sub-page is showing).
+  if (newTabOpen && newTabMode !== "home") newTabGo("home", "replace");
+  else openNewTab();
+});
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && skillConfirm) {
     event.preventDefault();
@@ -2195,7 +2448,9 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape" && newTabOpen) {
     event.preventDefault();
-    closeNewTab();
+    // Esc backs out one step at a time: a sub-page first, then the launcher.
+    if (newTabMode !== "home") newTabGo("home", "replace");
+    else closeNewTab();
   }
 });
 
@@ -2427,7 +2682,7 @@ async function aiConfirmAccept() {
         renderedTabId = tab.id;
         // The tab was rebound to a fresh session: the address must not keep
         // naming the deleted one.
-        syncChatUrl(tab.sessionId, "replace");
+        syncTabUrl(tab, "replace");
       }
       aiCancelResume();
       return;

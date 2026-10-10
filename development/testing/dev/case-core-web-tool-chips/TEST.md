@@ -143,6 +143,7 @@ echo
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
+  --pages /tmp/engineer-pages-unused \
   --static http://localhost:8699 --ai http://localhost:8611 --log http://localhost:8611 \
   >/tmp/tool-chips-web.log 2>&1 &
 sleep 1

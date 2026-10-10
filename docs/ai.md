@@ -2,7 +2,7 @@
 
 # ai
 
-Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash; also owns the skill system (a skill is one piece of text; running it opens a session with that text) — custom skills are files at .agents/skills/<slug>/SKILL.md, while suggested candidates and the scan bookkeeping over past conversation runs live in its own sqlite (.engineer/skill.db)
+Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash; also owns the skill system (a skill is one piece of text; running it opens a session with that text) — custom skills are files at .agents/skills/<slug>/SKILL.md, while suggested candidates and the scan bookkeeping over past conversation runs live in its own sqlite (.engineer/skill.db); it also owns the blueprint system — a blueprint is a frontend resource, a directory at .agents/blueprints/<slug>/ holding an index.html entry plus assets, written by the agent through save_blueprint, with no discovery and no sqlite, and a page is one blueprint rendered in a tab
 
 - runtime: bun 1.3
 
@@ -408,5 +408,121 @@ scanned: number  # runs included in this scan, 0 when nothing was triggered
 ```bash
 curl -s -X POST <address>/ai/skill/refresh \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+YAML
+```
+
+## ai-blueprint-list
+
+- `POST /ai/blueprint/list` (network / http)
+
+List blueprints owned by the ai service — a blueprint is a frontend resource, a directory under .agents/blueprints/ with an index.html entry and any assets beside it; there is no discovery and no sqlite, the directory listing is the whole truth
+
+### Request body
+
+```yaml
+{}
+```
+
+### Response (status 200)
+
+```yaml
+blueprints:  # newest updated first
+    - id: string  # the blueprint's directory name under .agents/blueprints/
+      name: string  # the index.html <title>, falling back to the id
+      entry: string  # the html entry file, always "index.html"
+      files: [string]  # relative paths inside the directory, sorted
+      createdAt: string  # RFC3339
+      updatedAt: string  # RFC3339
+```
+
+### Errors
+
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/ai/blueprint/list \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+YAML
+```
+
+## ai-blueprint-save
+
+- `POST /ai/blueprint/save` (network / http)
+
+Create or update a blueprint — a frontend resource written to <project>/.agents/blueprints/<id>/; the AI creates blueprints through this interface (there is no other way, and no discovery). A blueprint is one html entry ("index.html") plus whatever files it needs beside it
+
+### Request body
+
+```yaml
+id?: string  # present = write into that blueprint (a directory name), absent = create a new one (id = a slug derived from name)
+name: string  # blueprint display name; for a new blueprint it decides the directory slug
+files:
+    - path: string  # relative path inside the blueprint directory (must include "index.html"; no absolute paths, no "..")
+      content: string  # the file's text
+```
+
+### Response (status 200)
+
+```yaml
+blueprint:
+    id: string  # the blueprint's directory name under .agents/blueprints/
+    name: string  # the index.html <title>, falling back to the id
+    entry: string  # "index.html"
+    files: [string]  # relative paths inside the directory, sorted
+    createdAt: string  # RFC3339
+    updatedAt: string  # RFC3339
+```
+
+### Errors
+
+- 400 `bad_request` — name or files missing, files empty or without index.html, or a path escaping the blueprint directory
+- 404 `not_found` — blueprint to update does not exist
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/ai/blueprint/save \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+id?: string  # present = write into that blueprint (a directory name), absent = create a new one (id = a slug derived from name)
+name: string  # blueprint display name; for a new blueprint it decides the directory slug
+files:
+    - path: string  # relative path inside the blueprint directory (must include "index.html"; no absolute paths, no "..")
+      content: string  # the file's text
+YAML
+```
+
+## ai-blueprint-delete
+
+- `POST /ai/blueprint/delete` (network / http)
+
+Delete a blueprint — its directory under .agents/blueprints/ is removed, assets included
+
+### Request body
+
+```yaml
+id: string  # blueprint id (a directory name under .agents/blueprints/)
+```
+
+### Response (status 200)
+
+```yaml
+blueprintId: string
+```
+
+### Errors
+
+- 400 `bad_request` — id missing
+- 404 `not_found` — blueprint does not exist
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/ai/blueprint/delete \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+id: string  # blueprint id (a directory name under .agents/blueprints/)
 YAML
 ```

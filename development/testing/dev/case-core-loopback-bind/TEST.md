@@ -109,13 +109,13 @@ lsof -nP -iTCP -sTCP:LISTEN | grep engineer || echo "(nothing listening)"
 
 # told the host explicitly, it listens exactly there
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8600 \
-  --assets "$(cd workspace/web && pwd)" \
+  --assets "$(cd workspace/web && pwd)" --pages /tmp/engineer-pages-unused \
   --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
 sleep 1; lsof -nP -iTCP:8600 -sTCP:LISTEN
 ```
 
 Expected: the bare run prints a usage line containing `--bind <host> --port <n>
---assets <dir>` and exits non-zero, with nothing listening; the second run gives
+--assets <dir> --pages <dir>` and exits non-zero, with nothing listening; the second run gives
 one `TCP 127.0.0.1:8600 (LISTEN)` line. (The process name in `lsof` is the
 binary's basename: with the merged binary all four services report as
 `engineer`.)
@@ -124,7 +124,7 @@ binary's basename: with the merged binary all four services report as
 
 ```bash
 /tmp/engineer serve-web --bind 0.0.0.0 --port 8601 \
-  --assets "$(cd workspace/web && pwd)" \
+  --assets "$(cd workspace/web && pwd)" --pages /tmp/engineer-pages-unused \
   --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
 sleep 1; lsof -nP -iTCP:8601 -sTCP:LISTEN
 ```

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>Hello</title>
+  <!-- 初始化：蓝图自己在首帧前把主题设好，读的是同源共享的那个 key（外壳在别处
+       页面改了也由外壳推，这里只负责"第一眼就是对的"，不闪浅色）。 -->
+  <script>
+    document.documentElement.setAttribute(
+      "data-theme", localStorage.getItem("engineer.theme") || "light");
+  </script>
+  <!-- The shell's palette. Linking it is all a blueprint needs to follow the
+       theme: the variables resolve, and the shell writes data-theme into this
+       document when it loads and whenever the user switches (see docs/ai.md). -->
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    /* This is a document of its own — its own :root and body are fine. */
+    body { margin: 0; padding: 24px; font-size: 13px; line-height: 1.6; } /* family comes from /theme.css */
+    h1 { font-size: 15px; margin: 0 0 12px; }
+    dt { color: var(--fg-muted); }
+    dd { margin: 0 0 6px; }
+    /* A swatch that proves the shared palette is live: it must repaint when the
+       shell's theme changes, without this page reloading. */
+    #swatch { display: inline-block; width: 60px; height: 12px; vertical-align: -2px;
+              border: 1px solid var(--border-strong); background: var(--surface-3); }
+    #err { color: var(--err); }
+  </style>
+</head>
+<body>
+  <h1>Hello — this page is a blueprint</h1>
+  <dl>
+    <dt>served from</dt><dd id="path"></dd>
+    <dt>theme</dt><dd><span id="theme">…</span> <span id="swatch"></span></dd>
+    <dt>ai</dt><dd id="ai">…</dd>
+    <dt>blueprints</dt><dd id="bps">…</dd>
+  </dl>
+  <div id="err"></div>
+  <p>Everything here is the page talking to the services the same way the shell
+  does — same origin for <code>/config.js</code> and <code>/theme.css</code>,
+  cross-origin (CORS) for the api. Delete this directory if you don't want it.</p>
+  <script>
+    document.getElementById("path").textContent = location.pathname;
+    const showTheme = () => {
+      document.getElementById("theme").textContent =
+        document.documentElement.getAttribute("data-theme") || "(none)";
+    };
+    showTheme();
+    new MutationObserver(showTheme)
+      .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+    const s = document.createElement("script");
+    s.src = "/config.js";
+    s.onload = async () => {
+      document.getElementById("ai").textContent = window.ENGINEER.ai;
+      try {
+        const r = await fetch(window.ENGINEER.ai + "/ai/blueprint/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/yaml" },
+          body: "{}",
+        });
+        const names = [...(await r.text()).matchAll(/id: (.+)/g)].map((m) => m[1]);
+        document.getElementById("bps").textContent = names.join(", ") + ` (HTTP ${r.status})`;
+      } catch (e) {
+        document.getElementById("err").textContent = "could not reach the ai service: " + e;
+      }
+    };
+    document.head.appendChild(s);
+  </script>
+</body>
+</html>

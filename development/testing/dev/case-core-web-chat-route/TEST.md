@@ -8,7 +8,7 @@ Deep links (`/chat/<id>` opened with no tab for it) resume the session into a
 new tab, and a dead link shows its error rather than a blank page.
 
 Source of truth: `workspace/web/app.js` (`parseRoute` / `route` / `routeChat` /
-`syncChatUrl` / `activateTab` / `openNewTab` / `closeNewTab`) and
+`syncTabUrl` / `activateTab` / `openNewTab` / `closeNewTab`) and
 `workspace/web/server/serve.go` (the SPA fallback that makes a chat URL survive
 a reload). Routing is browser behaviour, so this case runs through a real
 browser (`ego-browser`) rather than curl.
@@ -46,6 +46,7 @@ text: seeded instruction'
 
 # web assets
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8620 --assets "$ROOTDIR/workspace/web" \
+  --pages /tmp/engineer-pages-unused \
   --static http://localhost:8502 --ai http://localhost:8521 --log http://localhost:8523 \
   >/tmp/chat-route-web.log 2>&1 &
 ```
@@ -93,11 +94,12 @@ check("forward returns to the fixed view", (await path()) === "/how-to");
 // 2. /new is the new tab page's own route
 await page.click("#tab-add");
 await page.waitForFunction(() => location.pathname === "/new");
-await page.waitForSelector("#newtab .skill-item", { state: "visible" });
+await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
 check("+ moves the address bar to /new", (await path()) === "/new");
 
 // 3. running a skill from it names that conversation's session in the URL
-await page.click("loc=css:#newtab .skill-item:has-text('Seeded skill') >> nth=0");
+// (one saved skill, so it is among the launcher's preview rows)
+await page.click("loc=css:#newtab [data-section=skills] .launch-item:has-text('Seeded skill') >> nth=0");
 await page.waitForFunction(() => /^\/chat\/.+/.test(location.pathname));
 await page.waitForFunction(
   () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
@@ -194,7 +196,7 @@ check("the /new command rewrites the current entry instead of pushing one",
 
 // 11. closing a tab with a neighbour falls through to that neighbour's URL
 await page.click("#tab-add");
-await page.waitForSelector("#newtab .skill-item", { state: "visible" });
+await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
 await page.click("loc=css:#newtab [data-action=newchat]");
 await page.waitForFunction(() => /^\/chat\/.+/.test(location.pathname));
 const sid3 = chatId(await path());

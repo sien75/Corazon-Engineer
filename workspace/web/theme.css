@@ -1,0 +1,103 @@
+/* The palette, shared by the shell and by blueprints.
+   The shell links this before style.css; a page (a blueprint rendered in an
+   iframe) links it to get the very same variables — `var(--surface)`, `var(--fg)`,
+   … — so it follows the theme without copying a single colour. The attribute
+   (`data-theme`) is set by the shell on both documents; see docs/ai.md. */
+
+/* ---------- themes ---------- */
+
+:root {
+  --bg: #ffffff;
+  --code-bg: #f6f8fa;
+  --surface: #f6f7f9;
+  --surface-2: #ffffff;
+  --surface-3: #eceef1;
+  --surface-inset: #fafbfc;
+  --surface-question: #f5f3ff;
+  --border: #e3e6ea;
+  --border-strong: #d0d7de;
+  --spinner-track: #d0d7de;
+  --fg: #1f2328;
+  --fg-dim: #57606a;
+  --fg-muted: #6e7781;
+  --accent: #0969da;
+  --accent-bg: #ddf4ff;
+  --accent-border: #b6e3ff;
+  --ok: #1a7f37;
+  --err: #cf222e;
+  --danger: #cf222e;
+  --danger-bg: #ffebe9;
+  --danger-fg: #82071e;
+  --danger-bg-hover: #ffd7d5;
+  --question-border: #8250df;
+  --question-btn-bg: #fbefff;
+  --question-btn-border: #d8b9ff;
+  --question-btn-fg: #6639ba;
+  /* The one non-colour token: so a page that links this file looks like the
+     shell, not like the browser's default serif. */
+  --font: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Applied to whatever document links this file — the shell and a blueprint
+   alike. A blueprint is free to override it. */
+html {
+  font-family: var(--font);
+}
+
+html[data-theme="dark"] {
+  --bg: #141416;
+  --code-bg: #141416;
+  --surface: #1c1c20;
+  --surface-2: #202024;
+  --surface-3: #26262b;
+  --surface-inset: #16161a;
+  --surface-question: #202030;
+  --border: #2a2a2e;
+  --border-strong: #3f3f46;
+  --spinner-track: #52525b;
+  --fg: #e4e4e7;
+  --fg-dim: #a1a1aa;
+  --fg-muted: #8b8b93;
+  --accent: #7dd3fc;
+  --accent-bg: #0f3a4d;
+  --accent-border: #155e75;
+  --ok: #4ade80;
+  --err: #f87171;
+  --danger: #ef4444;
+  --danger-bg: #7f1d1d;
+  --danger-fg: #fecaca;
+  --danger-bg-hover: #991b1b;
+  --question-border: #6d28d9;
+  --question-btn-bg: #3b0764;
+  --question-btn-border: #7c3aed;
+  --question-btn-fg: #ede9fe;
+}
+
+html[data-theme="solarized"] {
+  --bg: #fdf6e3;
+  --code-bg: #f2ecdb;
+  --surface: #f9f3e1;
+  --surface-2: #fdf6e3;
+  --surface-3: #f1ebd9;
+  --surface-inset: #f6f0de;
+  --surface-question: #f5efe0;
+  --border: #ddd6c1;
+  --border-strong: #c9c2ab;
+  --spinner-track: #c9c2ab;
+  --fg: #073642;
+  --fg-dim: #586e75;
+  --fg-muted: #93a1a1;
+  --accent: #268bd2;
+  --accent-bg: #d7e8f2;
+  --accent-border: #a8cfe6;
+  --ok: #859900;
+  --err: #dc322f;
+  --danger: #dc322f;
+  --danger-bg: #f6d9d3;
+  --danger-fg: #7a1f1c;
+  --danger-bg-hover: #efc4bc;
+  --question-border: #6c71c4;
+  --question-btn-bg: #e6e3f2;
+  --question-btn-border: #b8b6dd;
+  --question-btn-fg: #4a4f9e;
+}
