@@ -159,6 +159,13 @@ git describe --tags --exact-match    # must print exactly $TAG (off-tag it error
 ls dist/engineer-"$TAG"-*.tar.gz      # nothing to release if this is empty
 ```
 
+**What a release covers: everything since the previous tag — not since the last pack.** A tree in `dist/` is not a release. `engineer-v0.5.0-3-g7676729-…` was packed off `v0.5.0`, never tagged and never published, yet `git describe` names it `v0.5.0` — so it reads as the previous version and the notes get written for the wrong range. The previous *release* is the previous tag; the commits between it and `$TAG` are the ones the notes describe:
+
+```bash
+PREV=$(git describe --tags --abbrev=0 "$TAG^")   # the release this tag follows
+git log --oneline "$PREV".."$TAG"                  # what the notes must cover
+```
+
 **Upload to the release server, clearing its previous packages first.** `dist/` is git-ignored, so the tarballs and the notes file travel by `scp`, not git. Wipe the server's `dist/` so a stale tarball can never be attached to the new release.
 
 ```bash
@@ -182,6 +189,8 @@ ssh "$SRV" "cd $REPO/dist && sha256sum engineer-$TAG-*.tar.gz"
 - <what moved, said directly — no detail, no rationale; that lives in the commits and the code>
 - <...>
 ```
+
+**Short, both parts.** Neither section is a summary of the release. The core is one or two sentences and the list is a handful of bullets — not one per commit, and not a sentence per clause. The notes are a signpost into the release, not an account of it: whoever wants the whole change reads the commits. Anything that needs a second sentence to be understood, or that only interests whoever built it, belongs there instead. When in doubt, cut it.
 
 **One item per change, not per component.** A bullet names a thing that moved, in the user's terms — it carries no subsystem label (`web`, `ai`, `how-to/deploy`) and it does not gather several changes under one heading. Grouping by which binary a change landed in is how the notes turned into a wall of clauses; nothing about a release is easier to read that way. A release whose `Changes` is prose instead of a list is a release whose notes were written from the diff rather than from what moved.
 
