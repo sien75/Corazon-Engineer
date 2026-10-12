@@ -57,13 +57,20 @@ atoms:
           extend:
             path: /ai/resume
             method: POST
-        - id: ai-skill-run
+        - id: ai-stop
           channel: network
           protocol: http
-          contract: ./contracts/ai-skill-run.yaml
+          contract: ./contracts/ai-stop.yaml
           extend:
-            path: /ai/skill/run
+            path: /ai/stop
             method: POST
+        - id: ai-blobs
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-blobs.yaml
+          extend:
+            path: /blobs/{sha256}
+            method: GET
         - id: log-list
           channel: network
           protocol: http

@@ -22,11 +22,7 @@ import {
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
 import { SkillStore } from "./skill/store.ts";
-import {
-  SCAN_THRESHOLD,
-  Suggester,
-  type ScanResult,
-} from "./skill/suggest.ts";
+import { SCAN_THRESHOLD, Suggester } from "./skill/suggest.ts";
 
 // A user turn as received on /ai/ask: ordered text/image blocks. Images carry
 // base64 + mime and are persisted to the blob store; text is the prompt text
@@ -206,18 +202,6 @@ export class Registry {
 
   get modelInfo(): string {
     return this.model ? `${this.model.provider}/${this.model.id}` : "stub";
-  }
-
-  get skills(): SkillStore {
-    if (!this.skillStore) throw new Error("skill store not initialized");
-    return this.skillStore;
-  }
-
-  // scanSkills runs one suggestion scan. The automatic path is fire-and-forget;
-  // this is the manual one behind /ai/skill/refresh.
-  async scanSkills(force = false): Promise<ScanResult> {
-    if (!this.suggester) return { triggered: false, scanned: 0 };
-    return this.suggester.maybeScan({ force });
   }
 
   private scanBudget(): number {

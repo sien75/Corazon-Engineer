@@ -10,8 +10,12 @@ use, and the scan prompt still asks for a capable the same kind of work appearin
 in **three different runs** — a one-off specific operation must never become a
 skill.
 
+There is **no manual trigger**: the pile of runs itself is the trigger, which is
+what this case exercises. One scan consumes 10 runs, so after the first 30 runs
+every further 10 runs fires the next scan.
+
 Run this case in `--stub` mode: the scan then derives a deterministic candidate
-from the oldest run of the batch, so the mechanics (threshold, marking,
+from the oldest run of the batch, so the mechanics (threshold, batching, marking,
 de-duplication) are all observable without a model.
 
 **Run every block below in one shell**: `$AI` is set in one block and used by the
@@ -50,95 +54,105 @@ for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
   sleep 1
 done
+
+# run <text>: one settled run — the unit the queue counts. A run is just a
+# session plus a prompt; in --stub mode it settles synchronously, so the queue
+# is already updated when the call returns.
+run() {
+  SID=$(curl -s -X POST $AI/ai/new -d '{}' \
+    | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+  curl -s -o /dev/null -X POST $AI/ai/ask -d "id: $SID
+blocks:
+  - type: text
+    text: $1"
+}
+
+pending() { python3 -c 'import json;print(len(json.load(open("'"$SCAN"'"))["pending"]))'; }
+
+# wait_pending <n>: the scan is its own async task, so poll until the queue settles
+wait_pending() {
+  for i in $(seq 1 40); do
+    [ "$(pending)" = "$1" ] && return 0
+    sleep 0.25
+  done
+  echo "queue stuck at $(pending), wanted $1"
+  return 1
+}
 ```
 
 ## 1. twenty-nine runs are not enough; the thirtieth fires the scan
 
 ```bash
-for i in $(seq 1 29); do
-  curl -s -X POST $AI/ai/skill/run -d "text: run $i something else" > /dev/null
-done
-sleep 1
-python3 -c 'import json;print("pending:", len(json.load(open("'"$SCAN"'"))["pending"]))'
+for i in $(seq 1 29); do run "check payment-service logs in dev"; done
+pending
 ls "$SUGGESTED" 2>/dev/null || echo "(no candidates yet)"
 ```
 
-Expected: `pending: 29` and no candidate files — the threshold (30) has not been
-reached.
+Expected: `29` and no candidate files — the threshold (30) has not been reached.
 
 ```bash
-curl -s -X POST $AI/ai/skill/run -d 'text: check the payment logs' > /dev/null
-sleep 2
+run "check payment-service logs in dev"
+wait_pending 20
 ls "$SUGGESTED"
 cat "$SUGGESTED"/*.md
-python3 -c 'import json;print("pending:", len(json.load(open("'"$SCAN"'"))["pending"]))'
+pending
 ```
 
-Expected: exactly one file, whose body is `run 1 something else` — the oldest run
-of the batch (the stub derives the candidate from run 1). It is `source:
-suggested` by virtue of where it lives. One scan reads at most the oldest 10, so
-`pending: 20` remain queued for the next scan, not zero.
+Expected: exactly one file, whose body is `check payment-service logs in dev` —
+the oldest run of the batch (the stub derives the candidate from run 1), and whose
+name is that first line cut to 24 characters (`check-payment-service-lo`). It is
+`source: suggested` by virtue of where it lives. One scan reads at most the
+oldest 10, so `20` remain queued for the next scan, not zero.
 
-## 2. the consumed runs are dropped, so they never come back
+## 2. the consumed runs are dropped, and a known candidate is never proposed again
 
 ```bash
-# drain any scan still in flight
-for i in $(seq 1 40); do
-  OUT=$(curl -s -X POST $AI/ai/skill/refresh)
-  echo "$OUT" | grep -q 'triggered: false' && break
-  sleep 0.25
-done
-curl -s -X POST $AI/ai/skill/refresh
-python3 -c 'import json;print("pending:", len(json.load(open("'"$SCAN"'"))["pending"]))'
+for i in $(seq 1 10); do run "check payment-service logs in dev"; done
+wait_pending 20
 ls "$SUGGESTED"
 ```
 
-Expected: `refresh` reports `triggered: false, scanned: 0` — nothing is pending,
-because every queued run was dropped as summarized (refresh forces a scan
-regardless of the threshold, one 10-run batch at a time). The candidate directory
-still holds exactly one file: scanning the same runs twice would otherwise
-duplicate it.
+Expected: still exactly one candidate file, and the queue is back to `20`. The
+ten consumed runs are gone (thirty minus the batch of ten), and the second batch
+proposes the same text as the candidate that is already there — an existing
+candidate is known, so it is dropped instead of written again. Scanning the same
+runs twice can never duplicate a file.
 
-## 3. a known candidate is never proposed again
-
-```bash
-for i in $(seq 1 10); do
-  if [ "$i" = "1" ]; then T="run 1 something else"; else T="later $i other work"; fi
-  curl -s -X POST $AI/ai/skill/run -d "text: $T" > /dev/null
-done
-sleep 1
-for i in $(seq 1 40); do
-  OUT=$(curl -s -X POST $AI/ai/skill/refresh)
-  echo "$OUT" | grep -q 'triggered: false' && break
-  sleep 0.25
-done
-ls "$SUGGESTED"
-```
-
-Expected: still exactly one candidate file. The second batch would propose
-the same text (`run 1 something else`), but every known skill (kept or already
-proposed) is sent to the scan as "do not propose again", and the code side drops
-an exact name/text match.
-
-## 4. promoting a candidate is a move
+## 3. promoting a candidate is a move
 
 ```bash
 SLUG=$(basename "$SUGGESTED"/*.md .md)
 mkdir -p "$ROOT/.agents/skills/$SLUG"
 mv "$SUGGESTED"/*.md "$ROOT/.agents/skills/$SLUG/SKILL.md"
 ls "$ROOT/.agents/skills/$SLUG"
-ls "$SUGGESTED" 2>/dev/null || echo "(candidates empty)"
+ls "$SUGGESTED"
 ```
 
 Expected: the file now lives at `.agents/skills/<slug>/SKILL.md` — the
 kept-skill shape (a directory with one `SKILL.md`) — and the candidates directory
-is empty. That is the whole of "keep this one"; there is no accept endpoint.
+prints nothing: it is empty. That is the whole of "keep this one"; there is no
+accept endpoint.
 
-## 5. a scan never blocks a conversation, and there is no database
+A kept skill is known too:
 
 ```bash
-SID=$(curl -s -X POST $AI/ai/skill/run -d 'text: stream me' \
+for i in $(seq 1 10); do run "check payment-service logs in dev"; done
+wait_pending 20
+ls "$SUGGESTED"
+```
+
+Expected: still nothing — the scan proposes the same text again, and it is
+recognised as the skill the user just kept.
+
+## 4. a scan never blocks a conversation, and there is no database
+
+```bash
+SID=$(curl -s -X POST $AI/ai/new -d '{}' \
   | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+curl -s -o /dev/null -X POST $AI/ai/ask -d "id: $SID
+blocks:
+  - type: text
+    text: stream me"
 curl -s -N -X POST $AI/ai/stream -d "id: $SID" | head -c 400; echo
 ls "$ROOT/.engineer"
 ```
@@ -158,3 +172,4 @@ happen; the scan runs in its own async task and never touches a user session.
   retries (10 → 9 → …); the dropped run stays pending for the next scan.
 - The scan reads its input from the queue file, not from log: the run text is
   captured at settle time, so a scan never races log writes.
+- Runs pile up across sessions and across restarts; only a scan clears the queue.

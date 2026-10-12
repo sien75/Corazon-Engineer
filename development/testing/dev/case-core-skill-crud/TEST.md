@@ -4,7 +4,9 @@ Skills are plain files. A **kept** skill is `<project>/.agents/skills/<slug>/SKI
 a **candidate** is `<project>/.engineer/suggested-skills/<slug>.md`. There is no
 skill database and no CRUD API: static lists and reads the files, and the agent
 changes them with its file tools. This case exercises the read side (static) and
-the file side directly; `/ai/skill/run` still opens a session from a skill.
+the file side directly. Running a skill is not an interface: the shell opens a
+session and the skill's text goes in as the first message, so there is nothing
+here to call either.
 
 ## Setup
 
@@ -119,29 +121,19 @@ under the registered type dir). The ai service's private data is never served.
 ## 5. the ai service has no skill CRUD and no database
 
 ```bash
-for p in list save delete ignore refresh; do
+for p in list save delete ignore refresh run; do
   printf "%-8s " "$p"
   curl -s -o /dev/null -w '%{http_code}\n' -X POST $AI/ai/skill/$p -d '{}'
 done
 ls "$ROOT/.engineer" 2>/dev/null
 ```
 
-Expected: `/ai/skill/save|delete|ignore|list` are 404 `unknown endpoint`;
-`refresh` is **kept** (200, the manual scan trigger). `$ROOT/.engineer` holds no
-`skill.db` — the ai service keeps no skill database.
+Expected: every one of `/ai/skill/save|delete|ignore|list|refresh|run` is 404
+`unknown endpoint` — running a skill is not an interface at all (the shell opens a
+session and sends the text). `$ROOT/.engineer` holds no `skill.db` — the ai
+service keeps no skill database.
 
-## 6. /ai/skill/run still instantiates a skill
-
-```bash
-curl -s -X POST $AI/ai/skill/run -d 'skillId: dev-logs'
-curl -s -X POST $AI/ai/skill/run -d 'skillId: nope' -o /dev/null -w '%{http_code}\n'
-curl -s -X POST $AI/ai/skill/run -d 'text: an ad-hoc skill'
-```
-
-Expected: 200 with a fresh `sessionId` and the echoed `skillId`; a missing skill
-is 404; an ad-hoc text runs without a `skillId`.
-
-## 7. files survive a restart
+## 6. files survive a restart
 
 ```bash
 pkill -f 'main.ts.*--port 8543'

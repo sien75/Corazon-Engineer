@@ -1,0 +1,15 @@
+id: ai-blobs
+description: Read back a stored image by its content address, as raw bytes
+
+request:
+  body:
+    sha256: string  # content address — it is the path segment of /blobs/{sha256}
+
+response:
+  status: 200
+  body: bytes  # the raw image itself, not yaml; Content-Type is the mime it was stored with, Cache-Control is public, max-age=31536000, immutable
+
+errors:
+  - status: 404
+    code: not_found
+    description: no blob is stored under that address

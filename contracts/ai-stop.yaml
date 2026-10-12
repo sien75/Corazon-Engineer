@@ -1,0 +1,19 @@
+id: ai-stop
+description: Abort the run currently streaming in a session; the session itself survives and can be asked again
+
+request:
+  body:
+    id: string  # session id
+
+response:
+  status: 200
+  body:
+    sessionId: string  # same session, now idle
+
+errors:
+  - status: 404
+    code: not_found
+    description: session not found
+  - status: 500
+    code: ai_error
+    description: the abort itself failed

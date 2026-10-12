@@ -121,6 +121,38 @@ curl -s -X POST <address>/ai/stream \
 YAML
 ```
 
+## ai-stop
+
+- `POST /ai/stop` (network / http)
+
+Abort the run currently streaming in a session; the session itself survives and can be asked again
+
+### Request body
+
+```yaml
+id: string  # session id
+```
+
+### Response (status 200)
+
+```yaml
+sessionId: string  # same session, now idle
+```
+
+### Errors
+
+- 404 `not_found` — session not found
+- 500 `ai_error` — the abort itself failed
+
+### Example
+
+```bash
+curl -s -X POST <address>/ai/stop \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+  id: string  # session id
+YAML
+```
+
 ## ai-delete
 
 - `POST /ai/delete` (network / http)
@@ -189,40 +221,32 @@ curl -s -X POST <address>/ai/resume \
 YAML
 ```
 
-## ai-skill-run
+## ai-blobs
 
-- `POST /ai/skill/run` (network / http)
+- `GET /blobs/{sha256}` (network / http)
 
-Instantiate a skill — open a session and hand the skill text to the model as the first prompt; the client then subscribes to ai-stream with the returned sessionId
+Read back a stored image by its content address, as raw bytes
 
 ### Request body
 
 ```yaml
-skillId?: string  # instantiate a saved skill
-name?: string  # or run an ad-hoc skill (text required, name optional)
-text?: string
+sha256: string  # content address — it is the path segment of /blobs/{sha256}
 ```
 
 ### Response (status 200)
 
 ```yaml
-sessionId: string  # the session created for this skill instance
-skillId?: string  # echoed when a saved skill was instantiated
+# the raw image itself, not yaml; Content-Type is the mime it was stored with,
+# Cache-Control is public, max-age=31536000, immutable
+bytes
 ```
 
 ### Errors
 
-- 400 `bad_request` — neither skillId nor text given
-- 404 `not_found` — skill does not exist
-- 500 `internal` — server error
+- 404 `not_found` — no blob is stored under that address
 
 ### Example
 
 ```bash
-curl -s -X POST <address>/ai/skill/run \
-  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
-  skillId?: string  # instantiate a saved skill
-  name?: string  # or run an ad-hoc skill (text required, name optional)
-  text?: string
-YAML
+curl -s -X GET <address>/blobs/<sha256> -o image.png
 ```

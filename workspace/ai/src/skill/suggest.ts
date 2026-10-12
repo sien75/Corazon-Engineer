@@ -162,10 +162,9 @@ function stubSkills(batch: PendingRun[]): { name: string; text: string }[] {
 export class Suggester {
   constructor(private deps: SuggesterDeps) {}
 
-  // maybeScan runs one scan if enough runs are waiting (or force is set) and no
-  // scan is in flight. It never throws: it is called fire-and-forget from the
-  // settle path.
-  async maybeScan(opts: { force?: boolean } = {}): Promise<ScanResult> {
+  // maybeScan runs one scan if enough runs are waiting and no scan is in
+  // flight. It never throws: it is called fire-and-forget from the settle path.
+  async maybeScan(): Promise<ScanResult> {
     const store = this.deps.store;
     // Check-and-set is synchronous, so two callers cannot both enter.
     if (store.getState("in_progress") === "1") {
@@ -173,7 +172,7 @@ export class Suggester {
     }
     const pending = store.openPending();
     if (!pending.length) return { triggered: false, scanned: 0 };
-    if (!opts.force && pending.length < SCAN_THRESHOLD) {
+    if (pending.length < SCAN_THRESHOLD) {
       return { triggered: false, scanned: 0 };
     }
     store.setState("in_progress", "1");

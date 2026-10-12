@@ -202,27 +202,6 @@ export function serve(registry: Registry, addr: string): void {
           return yamlRes({ sessionId: id });
         }
 
-        case "/ai/skill/run": {
-          const skillId = String(body.skillId ?? "");
-          let text = String(body.text ?? "").trim();
-          if (skillId) {
-            const skill = registry.skills.get(skillId);
-            if (!skill) return errRes(404, "not_found", "skill not found");
-            text = skill.text;
-          } else if (!text) {
-            return errRes(400, "bad_request", "skillId or text required");
-          }
-          const sess = await registry.new();
-          registry.ask(sess, [{ type: "text", text }]);
-          return yamlRes(
-            skillId ? { sessionId: sess.id, skillId } : { sessionId: sess.id },
-          );
-        }
-
-        case "/ai/skill/refresh": {
-          return yamlRes(await registry.scanSkills(true));
-        }
-
         default:
           return errRes(404, "not_found", "unknown endpoint");
       }
