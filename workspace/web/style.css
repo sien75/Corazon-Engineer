@@ -1233,6 +1233,20 @@ canvas.layer {
 #ai-input-field:focus {
   border-color: var(--accent);
 }
+/* An off-screen copy of the composer, used to measure which rendered line the
+   caret is on (the textarea has no API for it, and only a layout engine knows
+   how far a soft-wrapped line runs). Sized from the textarea by aiMirrorSync,
+   so it carries no padding or border of its own. */
+.ai-input-mirror {
+  position: absolute;
+  top: 0;
+  left: -10000px;
+  visibility: hidden;
+  box-sizing: content-box;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
 
 #ai-send {
   background: none;

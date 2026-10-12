@@ -615,6 +615,9 @@ const aiMessagesEl = document.getElementById("ai-messages");
 // spans the whole pane, so the wheel works outside the column too.
 const aiScrollEl = document.getElementById("ai-scroll");
 const aiInputEl = document.getElementById("ai-input-field");
+// The composer's row, which is the positioning parent of the measuring mirror
+// (see aiCaretVisualLine).
+const aiInputWrapEl = document.getElementById("ai-input");
 // The input grows with its content — soft-wrapped lines included — from the
 // 2-row minimum (the rows attribute) up to this many rendered lines, then it
 // scrolls inside. The pixel ceiling is derived from the computed style, so
@@ -1606,6 +1609,10 @@ async function aiSend() {
   aiResizeInput();
   await Promise.all(aiImageTasks); // let any in-flight paste finish decoding
   const images = aiImages;
+  // ArrowUp / ArrowDown walk back through the conversation's prompts (see
+  // aiPromptHistory): a prompt that carried a pasted image is not recorded,
+  // because its text alone could not be replayed into the composer.
+  if (!images.length) aiHistoryRecord(aiSession, text);
   aiClearImages();
   const blocks = aiBuildSendBlocks(text, images);
   // Local bubble: text + real images (the [image] tokens are not shown).
@@ -1766,6 +1773,163 @@ function aiRestoreDraft(tabId) {
 function aiSwitchDraft(tabId) {
   if (renderedTabId && renderedTabId !== tabId) aiSnapshotDraft(renderedTabId);
   aiRestoreDraft(tabId);
+}
+
+// The composer's prompt history — ArrowUp / ArrowDown, the way a CLI recalls a
+// line. Keyed by session, not by tab: closing a tab, reopening it from the
+// launcher, switching away and back, reloading, or arriving by deep link must
+// all find the same list again — a tab is only one view of a conversation.
+//
+// Two sources fill it. While the page is open aiSend records what it sends, so
+// an entry is there the moment it was sent. For everything else — prompts sent
+// before this page loaded, from another client, or before this feature existed
+// — aiHistorySeed fills the list from the conversation's own stored messages,
+// which aiLoadSession already walks to replay the view: the same pass, no extra
+// request. What that means concretely: every user *text* turn of this
+// conversation is recallable (a prompt, an ask_user reply, a skill's opening
+// text), and a turn that carried an image is skipped, since its text alone
+// could not bring the image back.
+const aiPromptHistory = new Map(); // session id -> { items, cursor, draft }
+const AI_HISTORY_MAX = 100; // prompts kept per session; the rest fall off the front
+
+function aiHistoryOf(sessionId) {
+  let h = aiPromptHistory.get(sessionId);
+  if (!h) {
+    h = { items: [], cursor: null, draft: "" };
+    aiPromptHistory.set(sessionId, h);
+  }
+  return h;
+}
+
+// aiHistoryRecord appends a prompt that was actually sent from the composer.
+function aiHistoryRecord(sessionId, text) {
+  if (!sessionId || !text.trim()) return;
+  const h = aiHistoryOf(sessionId);
+  h.items.push(text);
+  if (h.items.length > AI_HISTORY_MAX) h.items.shift();
+  h.cursor = null;
+  h.draft = "";
+}
+
+// aiHistorySeed fills the list from a conversation's stored messages the first
+// time this page sees it. A list this page already built is left alone: it
+// cannot be behind the log (a send is recorded before its record is written),
+// and overwriting it would drop the prompts of a run still in flight.
+function aiHistorySeed(sessionId, prompts) {
+  if (!sessionId || !prompts.length) return;
+  const h = aiHistoryOf(sessionId);
+  if (h.items.length) return;
+  h.items = prompts.slice(-AI_HISTORY_MAX);
+}
+
+// aiHistoryEnd leaves browsing with the composer as it stands: an edit during
+// browsing keeps the edited text rather than the recalled entry.
+function aiHistoryEnd(sessionId) {
+  const h = aiPromptHistory.get(sessionId);
+  if (!h) return;
+  h.cursor = null;
+  h.draft = "";
+}
+
+// aiHistoryClear drops a history when its conversation is deleted: the session
+// is gone from the log, so recalling from it would be recalling a ghost.
+function aiHistoryClear(sessionId) {
+  if (sessionId) aiPromptHistory.delete(sessionId);
+}
+
+// aiHistoryShow puts an entry (or the saved draft) back in the composer, caret
+// at the end, the way a recalled CLI line arrives.
+function aiHistoryShow(text) {
+  aiInputEl.value = text;
+  aiInputEl.setSelectionRange(text.length, text.length);
+  aiResizeInput();
+  aiSyncCommandDrawer();
+}
+
+// aiHistoryUp walks towards older prompts; the composer's content when browsing
+// starts is the draft the last ArrowDown hands back. False means "nothing to
+// recall" — the caller lets the caret move.
+function aiHistoryUp(sessionId) {
+  if (!sessionId) return false;
+  const h = aiHistoryOf(sessionId);
+  if (!h.items.length) return false;
+  if (h.cursor === null) {
+    h.draft = aiInputEl.value;
+    h.cursor = h.items.length - 1;
+  } else if (h.cursor > 0) {
+    h.cursor--;
+  }
+  aiHistoryShow(h.items[h.cursor]);
+  return true;
+}
+
+// aiHistoryDown walks towards newer prompts, then restores the draft and stops
+// browsing. False while not browsing, so ArrowDown keeps moving the caret.
+function aiHistoryDown(sessionId) {
+  if (!sessionId) return false;
+  const h = aiHistoryOf(sessionId);
+  if (h.cursor === null) return false;
+  if (h.cursor < h.items.length - 1) {
+    h.cursor++;
+    aiHistoryShow(h.items[h.cursor]);
+    return true;
+  }
+  const draft = h.draft;
+  h.cursor = null;
+  h.draft = "";
+  aiHistoryShow(draft);
+  return true;
+}
+
+// The mirror behind aiCaretVisualLine: an off-screen copy of the composer. A
+// textarea has no API for the caret's box, and counting "\n" would call a long
+// soft-wrapped line a single line — exactly the case where ArrowUp must move
+// the caret instead of swallowing the draft.
+let aiMirrorEl = null;
+
+function aiMirrorSync(cs) {
+  if (!aiMirrorEl) {
+    aiMirrorEl = document.createElement("div");
+    aiMirrorEl.className = "ai-input-mirror";
+    aiInputWrapEl.appendChild(aiMirrorEl);
+  }
+  const st = aiMirrorEl.style;
+  // Same content width as the textarea: clientWidth is content + padding, and
+  // the mirror carries no padding of its own (and no scrollbar of its own).
+  const width =
+    aiInputEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  st.width = Math.max(0, width) + "px";
+  st.fontFamily = cs.fontFamily;
+  st.fontSize = cs.fontSize;
+  st.fontWeight = cs.fontWeight;
+  st.fontStyle = cs.fontStyle;
+  st.lineHeight =
+    cs.lineHeight === "normal" ? `${parseFloat(cs.fontSize) * 1.4}px` : cs.lineHeight;
+  st.letterSpacing = cs.letterSpacing;
+  st.wordSpacing = cs.wordSpacing;
+  st.whiteSpace = cs.whiteSpace;
+  st.overflowWrap = cs.overflowWrap;
+  st.wordBreak = cs.wordBreak;
+  st.tabSize = cs.tabSize;
+}
+
+// aiCaretVisualLine reports whether the caret sits on the first / last rendered
+// line of the composer. Two measurements of the mirror: the text up to the
+// caret, and the whole text. The caret is on the last line exactly when the tail
+// did not push it onto a line of its own.
+function aiCaretVisualLine() {
+  const v = aiInputEl.value;
+  const caret = aiInputEl.selectionStart ?? v.length;
+  const cs = getComputedStyle(aiInputEl);
+  const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
+  aiMirrorSync(cs);
+  const lines = (text) => {
+    aiMirrorEl.textContent = text;
+    return Math.max(1, Math.ceil(aiMirrorEl.scrollHeight / lineHeight - 0.01));
+  };
+  const before = lines(v.slice(0, caret));
+  const all = lines(v);
+  return { first: before <= 1, last: all <= before };
 }
 
 function loadTabs() {
@@ -2618,6 +2782,7 @@ async function aiConfirmAccept() {
       await aiNew();
       if (tab) {
         aiDrafts.delete(tab.id);
+        aiHistoryClear(sessionId);
         tab.sessionId = aiSession;
         tab.skillId = "";
         tab.name = "new chat";
@@ -2780,8 +2945,9 @@ function aiImageSrc(b) {
 }
 
 // aiRenderRaw replays one stored pi message. `tools` carries tool bubbles across
-// messages so a toolResult can fill the block opened by its toolCall.
-function aiRenderRaw(raw, tools) {
+// messages so a toolResult can fill the block opened by its toolCall, and
+// `prompts` collects the user's text turns for the composer's history.
+function aiRenderRaw(raw, tools, prompts) {
   if (!raw || !raw.role) return;
   if (raw.role === "user") {
     const content =
@@ -2796,7 +2962,14 @@ function aiRenderRaw(raw, tools) {
         if (src) parts.push({ type: "image", src });
       }
     }
-    if (parts.length) aiAppendUserParts(parts);
+    if (parts.length) {
+      aiAppendUserParts(parts);
+      // A turn that carried an image is not recallable: its text alone would
+      // come back without the image it named.
+      if (prompts && !parts.some((p) => p.type === "image")) {
+        prompts.push(parts.map((p) => p.text).join(""));
+      }
+    }
     return;
   }
   if (raw.role === "assistant") {
@@ -2835,7 +3008,7 @@ function aiRenderRaw(raw, tools) {
 }
 
 // aiRenderLegacy replays a pre-raw record (msgKind/blocks/content).
-function aiRenderLegacy(m) {
+function aiRenderLegacy(m, prompts) {
   if (m.role === "assistant" || m.msgKind === "assistant") {
     if (m.content) aiStaticMarkdown(m.content);
     return;
@@ -2854,17 +3027,27 @@ function aiRenderLegacy(m) {
       if (src) parts.push({ type: "image", src });
     }
   }
-  if (parts.length) aiAppendUserParts(parts);
+  if (parts.length) {
+    aiAppendUserParts(parts);
+    if (prompts && !parts.some((p) => p.type === "image")) {
+      prompts.push(parts.map((p) => p.text).join(""));
+    }
+  }
 }
 
-// aiRenderHistory replays a session's stored records into the message area.
-function aiRenderHistory(messages) {
+// aiRenderHistory replays a session's stored records into the message area, and
+// seeds the composer's prompt history from the same walk — the user turns are
+// being read here anyway, so the recall list costs no second request and no
+// second parser.
+function aiRenderHistory(messages, sessionId) {
   aiMessagesEl.innerHTML = "";
   const tools = new Map(); // toolCallId -> { block, body }
+  const prompts = [];
   for (const m of messages) {
-    if (m.raw) aiRenderRaw(m.raw, tools);
-    else aiRenderLegacy(m);
+    if (m.raw) aiRenderRaw(m.raw, tools, prompts);
+    else aiRenderLegacy(m, prompts);
   }
+  aiHistorySeed(sessionId, prompts);
 }
 
 async function aiLoadSession(id) {
@@ -2883,7 +3066,9 @@ async function aiLoadSession(id) {
     body: yaml.dump({ sessionId: id }),
   });
   const detail = yaml.load(await detailRes.text()) || {};
-  aiRenderHistory(detail.messages || []);
+  // The session id is passed explicitly: aiSession is only rebound below, and
+  // the replay is what seeds this conversation's recall list.
+  aiRenderHistory(detail.messages || [], id);
   // Continue the same session; skip the events already emitted so a resumed
   // in-memory session does not replay old ones.
   aiSession = id;
@@ -2949,6 +3134,8 @@ aiSendEl.addEventListener("click", aiSend);
 aiStopEl.addEventListener("click", aiStop);
 aiInputEl.addEventListener("input", aiSyncCommandDrawer);
 aiInputEl.addEventListener("input", aiResizeInput);
+// Typing during history browsing leaves it, keeping what was typed (aiHistoryEnd).
+aiInputEl.addEventListener("input", () => aiHistoryEnd(aiSession));
 // Soft wrapping depends on the input's width, so a resized window changes the
 // rendered line count and the box has to be measured again.
 window.addEventListener("resize", aiResizeInput);
@@ -3011,6 +3198,29 @@ aiInputEl.addEventListener("keydown", (event) => {
         aiDrawerHide();
         aiResizeInput();
       }
+      return;
+    }
+  }
+  // ArrowUp / ArrowDown recall the prompts sent from this composer. The command
+  // drawer above owns them while it is open, and a staged image blocks the
+  // recall: a plain-text entry would strip the [image] token that pairs with it.
+  if (
+    (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+    !event.isComposing &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey &&
+    !aiImages.length
+  ) {
+    if (event.key === "ArrowUp" && (aiInputEl.value === "" || aiCaretVisualLine().first)) {
+      if (aiHistoryUp(aiSession)) {
+        event.preventDefault();
+        return;
+      }
+    }
+    if (event.key === "ArrowDown" && aiHistoryDown(aiSession)) {
+      event.preventDefault();
       return;
     }
   }
