@@ -15,6 +15,14 @@ edges:
     channel: network
     protocol: http
     description: Web frontend sends a prompt to ai; ai orchestrates the operation (reply streams back)
+  - id: web-to-ai-stream
+    from: web
+    from_interface: ai-stream
+    to: ai
+    to_interface: ai-stream
+    channel: network
+    protocol: http
+    description: Web frontend consumes the session's SSE event stream; a run ends when ai closes it on agent_settled
   - id: web-to-ai-resume
     from: web
     from_interface: ai-resume

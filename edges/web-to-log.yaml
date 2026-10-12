@@ -6,7 +6,15 @@ edges:
     to_interface: log-query
     channel: network
     protocol: http
-    description: Web frontend queries log records (call / observe / conversation) for the records panel
+    description: Web frontend queries log records (call / observe / conversation) — the log-viewer and service-endpoints blueprints read them in the browser
+  - id: web-to-log-query-detail
+    from: web
+    from_interface: log-query-detail
+    to: log
+    to_interface: log-query-detail
+    channel: network
+    protocol: http
+    description: Web frontend opens one record's full content — the log-viewer blueprint shows the selected record
   - id: web-to-log-list
     from: web
     from_interface: log-list

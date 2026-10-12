@@ -23,3 +23,11 @@ edges:
     channel: network
     protocol: http
     description: Web frontend subscribes to schema file-change events and reloads the graph / views live
+  - id: web-to-static-validate
+    from: web
+    from_interface: static-validate
+    to: static
+    to_interface: static-validate
+    channel: network
+    protocol: http
+    description: Web frontend validates the schema tree on demand — the validate-report blueprint reports atoms / edges / contracts errors
