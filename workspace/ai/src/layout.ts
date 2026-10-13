@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import YAML from "yaml";
 
 // The tab's pane tree: the one piece of state the model owns through a tool.
@@ -6,22 +7,36 @@ import YAML from "yaml";
 // defined here and shown to the model in the tool's description. Two node
 // shapes, recursive:
 //
-//   leaf:  { pane: { content: "chat" | "page", id: string, size?: "fill" | "brief" } }
-//   split: { split: "col" | "row", weight?: 1 | 2 | 3, children: [ <node>, ... ] }
+//   leaf:  { pane: { paneId, contentType: "chat" | "page", contentId, flex? } }
+//   split: { split: { flexDirection: "row" | "column", flex?, children: [ … ] } }
 //
-// `col` splits left/right, `row` splits top/bottom; `weight` is the relative
-// share within one split; `size: brief` marks a short pane and is only valid on
-// a leaf. A pane's id is its content id — a chat's sessionId, a page's blueprint
-// slug — so the same content may appear in two panes.
-
+// A leaf keeps three things apart, and keeping them apart is the point:
+//
+//   paneId       which pane this is — a handle this tool issues, never invented
+//   contentType  what kind of content, with contentId: a session id, or a
+//                blueprint slug
+//   flex         the CSS shorthand for the share this node takes from its parent
+//
+// Because a pane's identity is a field of its own, the same content may appear in
+// two panes and still be two panes — and a pane that only *moves* is the same pane,
+// so the frontend keeps its DOM, its draft, its scroll and its share of the stream.
+// Position in the tree is not identity.
+//
+// `flex` is CSS's `flex` shorthand, validated to a narrow subset: a share is a
+// small integer, and the ratio form ("2 1 0") is what a layout should use. A leaf
+// with no flex shares evenly — the frontend's default, not CSS's `0 1 auto`, which
+// would collapse a chat pane to the width of its content.
 export interface PaneLeaf {
-  pane: { content: "chat" | "page"; id: string; size?: "fill" | "brief" };
+  pane: {
+    paneId: string;
+    contentType: "chat" | "page";
+    contentId: string;
+    flex?: string;
+  };
 }
 
 export interface PaneSplit {
-  split: "col" | "row";
-  weight?: number;
-  children: PaneNode[];
+  split: { flexDirection: "row" | "column"; flex?: string; children: PaneNode[] };
 }
 
 export type PaneNode = PaneLeaf | PaneSplit;
@@ -31,124 +46,182 @@ export type PaneNode = PaneLeaf | PaneSplit;
 export const MAX_PANES = 6;
 
 export interface NormalizeOptions {
-  // Called for a chat pane that names no session: the caller creates one and
-  // its id is written back into the tree, so the frontend gets a pane it can
-  // actually open.
+  // Called for a chat pane that names no session: the caller creates one and its
+  // id is written back into the tree, so the frontend gets a pane it can open.
   newSession?: () => Promise<string>;
   // Tells a handle the tool issued from one the model made up.
   hasSession?: (id: string) => Promise<boolean>;
-  // The chat ids in the tab's current tree. Only used to say what *is* valid
-  // when an id is rejected.
+  // The chat ids, and the pane ids, in the tab's current tree. Used to say what
+  // *is* valid when a handle is rejected.
   currentIds?: string[];
+  currentPaneIds?: string[];
 }
 
 export class LayoutError extends Error {}
 
-// normalizeLayout checks a tree and returns a copy with the weights and sizes
-// filled in, so what the model wrote and what log stores never drift. Session
-// ids for new chat panes are allocated as it walks.
+// newPaneId issues a pane handle. Random, like a session id, so two tabs cannot
+// collide on one value.
+function newPaneId(): string {
+  return `p_${randomBytes(4).toString("hex")}`;
+}
+
+// The flex shorthand, narrowed. The numbers are small on purpose: a layout that
+// says 47 and 39 is not one anybody reads as a proportion.
+const FLEX_RE = /^([0-3])(?:\s+([01]))?(?:\s+(0|auto|\d{1,4}px))?$/;
+
+// checkFlex accepts the ratio form a layout should use, and the fixed basis it may
+// sometimes need; everything else CSS allows is refused with the reason.
+function checkFlex(value: unknown, where: string): string {
+  const s = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  const m = s ? FLEX_RE.exec(s) : null;
+  if (!m) {
+    throw new LayoutError(
+      `${where}: cannot read flex ${JSON.stringify(value)}. Write it the way CSS does, ` +
+        `"<grow> [<shrink>] [<basis>]" — grow 0..3, shrink 0 or 1, basis 0, auto or <n>px. ` +
+        `Reach for the ratio form ("2 1 0"); leave flex out to share the space evenly.`,
+    );
+  }
+  return m[0];
+}
+
+// normalizeLayout checks a tree and returns a copy with pane handles filled in and
+// flex validated, so what the model wrote and what log stores never drift. A leaf
+// that arrives without a paneId is a new pane and is issued one; a leaf that passes
+// an unknown one is a mistake worth reporting, because quietly handing it a fresh
+// handle would rebuild a pane the model meant to keep.
 export async function normalizeLayout(
   raw: unknown,
   opts: NormalizeOptions = {},
 ): Promise<PaneNode> {
   let panes = 0;
+  const usedPaneIds = new Set<string>();
+
   const walk = async (node: unknown, depth: number): Promise<PaneNode> => {
     if (!node || typeof node !== "object") {
       throw new LayoutError("each node must be an object");
     }
     const n = node as Record<string, any>;
+    if (typeof n.split === "string") {
+      throw new LayoutError(
+        `a split carries its direction as CSS does: ` +
+          `{ split: { flexDirection: "${n.split === "col" ? "column" : "row"}", children: [ … ] } }`,
+      );
+    }
     if (n.pane !== undefined) {
       return await leaf(n.pane);
     }
-    if (n.split !== "col" && n.split !== "row") {
-      throw new LayoutError('a split needs split: "col" or "row"');
+    if (n.split === undefined) {
+      throw new LayoutError('each node is either { pane: … } or { split: … }');
     }
-    if (!Array.isArray(n.children) || !n.children.length) {
+    const s = n.split;
+    if (!s || typeof s !== "object") {
+      throw new LayoutError("a split must be an object: { split: { … } }");
+    }
+    if (s.flexDirection !== "row" && s.flexDirection !== "column") {
+      throw new LayoutError(
+        'a split needs flexDirection: "row" (left/right) or "column" (top/bottom)',
+      );
+    }
+    if (!Array.isArray(s.children) || !s.children.length) {
       throw new LayoutError("a split needs at least one child");
     }
     const children: PaneNode[] = [];
-    for (const c of n.children) children.push(await walk(c, depth + 1));
-    const out: PaneSplit = { split: n.split, children };
-    if (n.weight !== undefined) {
-      const w = Number(n.weight);
-      if (!Number.isInteger(w) || w < 1 || w > 3) {
-        throw new LayoutError("weight must be 1, 2 or 3");
-      }
-      out.weight = w;
-    }
+    for (const c of s.children) children.push(await walk(c, depth + 1));
+    const out: PaneSplit = { split: { flexDirection: s.flexDirection, children } };
+    if (s.flex !== undefined) out.split.flex = checkFlex(s.flex, "a split");
     return out;
   };
 
-  const leaf = async (raw: any): Promise<PaneLeaf> => {
-    if (!raw || typeof raw !== "object") {
+  const leaf = async (rawLeaf: any): Promise<PaneLeaf> => {
+    if (!rawLeaf || typeof rawLeaf !== "object") {
       throw new LayoutError("a pane must be an object");
     }
-    if (raw.content !== "chat" && raw.content !== "page") {
-      throw new LayoutError('a pane needs content: "chat" or "page"');
+    if (rawLeaf.content !== undefined || rawLeaf.id !== undefined) {
+      throw new LayoutError(
+        "a pane takes contentType and contentId, not content and id: " +
+          '{ pane: { paneId, contentType: "chat" | "page", contentId, flex? } }',
+      );
     }
-    if (raw.size !== undefined && raw.size !== "fill" && raw.size !== "brief") {
-      throw new LayoutError('size must be "fill" or "brief"');
+    if (rawLeaf.contentType !== "chat" && rawLeaf.contentType !== "page") {
+      throw new LayoutError('a pane needs contentType: "chat" or "page"');
     }
-    let id = typeof raw.id === "string" ? raw.id.trim() : "";
-    if (raw.content === "chat") {
-      // A chat pane's id is a handle this tool issued, not something the model
-      // knows: it either leaves it out (a new conversation) or passes back an id
-      // a previous read or write returned. An id that resolves to nothing is a
-      // mistake worth reporting — silently opening a *different* conversation in
+    let paneId = typeof rawLeaf.paneId === "string" ? rawLeaf.paneId.trim() : "";
+    if (paneId && usedPaneIds.has(paneId)) {
+      throw new LayoutError(
+        `paneId ${paneId} is on two panes — each pane needs its own; leave the id ` +
+          `out for a pane that is new`,
+      );
+    }
+    if (paneId && opts.currentPaneIds && !opts.currentPaneIds.includes(paneId)) {
+      const valid = opts.currentPaneIds.length
+        ? `This tab's panes: ${opts.currentPaneIds.join(", ")}.`
+        : "This tab has no panes yet.";
+      throw new LayoutError(
+        `no pane ${paneId} in this tab — a paneId must be one this tool returned. ${valid} ` +
+          `Leave the id out to open a new pane.`,
+      );
+    }
+    if (!paneId) paneId = newPaneId();
+    usedPaneIds.add(paneId);
+
+    let contentId = typeof rawLeaf.contentId === "string" ? rawLeaf.contentId.trim() : "";
+    if (rawLeaf.contentType === "chat") {
+      // A chat pane's contentId is a handle this tool issued, not something the
+      // model knows: it either leaves it out (a new conversation) or passes back
+      // an id a previous read or write returned. An id that resolves to nothing is
+      // a mistake worth reporting — silently opening a *different* conversation in
       // its place would lose the one the model was trying to keep.
-      if (id && opts.hasSession && !(await opts.hasSession(id))) {
+      if (contentId && opts.hasSession && !(await opts.hasSession(contentId))) {
         const valid = opts.currentIds?.length
           ? `This tab's panes: ${opts.currentIds.join(", ")}.`
           : "This tab has no conversation panes yet.";
         throw new LayoutError(
-          `no conversation ${id} — a chat pane's id must be one this tool returned. ` +
+          `no conversation ${contentId} — a chat pane's contentId must be one this tool returned. ` +
             `${valid} Leave the id out to open a new one.`,
         );
       }
-      if (!id) {
-        if (!opts.newSession) throw new LayoutError("a chat pane needs an id");
-        id = await opts.newSession();
+      if (!contentId) {
+        if (!opts.newSession) throw new LayoutError("a chat pane needs a contentId");
+        contentId = await opts.newSession();
       }
     }
-    if (!id) throw new LayoutError("a page pane needs the blueprint's id");
+    if (!contentId) throw new LayoutError("a page pane needs the blueprint's id as contentId");
+
     panes++;
-    if (panes > MAX_PANES) {
-      throw new LayoutError(`at most ${MAX_PANES} panes`);
-    }
-    const pane: PaneLeaf["pane"] = { content: raw.content, id };
-    if (raw.size === "brief") pane.size = "brief";
+    if (panes > MAX_PANES) throw new LayoutError(`at most ${MAX_PANES} panes`);
+    const pane: PaneLeaf["pane"] = { paneId, contentType: rawLeaf.contentType, contentId };
+    if (rawLeaf.flex !== undefined) pane.flex = checkFlex(rawLeaf.flex, `pane ${paneId}`);
     return { pane };
   };
 
   const tree = await walk(raw, 0);
-  assertBriefIsLeaf(tree);
+  // The root has no parent to take a share from.
+  if ("split" in tree && tree.split.flex) {
+    throw new LayoutError("the tree's root split has no parent to share with: drop its flex");
+  }
   return tree;
 }
 
-// brief pins a pane to the short band at the bottom of its split, which only
-// makes sense for a pane that has a split to sit under.
-function assertBriefIsLeaf(node: PaneNode): void {
-  if ("pane" in node) return;
-  for (const c of node.children) {
-    if ("pane" in c && c.pane.size === "brief" && node.split !== "row") {
-      throw new LayoutError("a brief pane must sit in a row split (it is a short band)");
-    }
-    assertBriefIsLeaf(c);
-  }
-}
-
-// describeLayout is the tree as one line per pane, for the tool's result: the
-// model gets the same picture the frontend will render.
+// describeLayout is the tree as one line per pane, for the tool's result: the model
+// gets the same picture the frontend will render, handles included, so a later
+// write can name the panes it means to keep. Old field names are printed too, for a
+// record written before this shape existed.
 export function describeLayout(node: PaneNode, depth = 0): string {
   const pad = "  ".repeat(depth);
   if ("pane" in node) {
-    const { content, id, size } = node.pane;
-    return `${pad}- ${content} ${id}${size === "brief" ? " (brief)" : ""}`;
+    const p = node.pane as Record<string, any>;
+    const paneId = p.paneId || "(none — a new pane)";
+    const contentType = p.contentType || p.content || "chat";
+    const contentId = p.contentId ?? p.id ?? "";
+    const flex = p.flex ? ` flex="${p.flex}"` : "";
+    return `${pad}- pane ${paneId} ${contentType} ${contentId}${flex}`;
   }
-  const w = node.weight ? ` weight=${node.weight}` : "";
+  const s = node.split as Record<string, any>;
+  const dir = s.flexDirection || (s.direction === "column" ? "column" : "row");
+  const flex = s.flex ? ` flex="${s.flex}"` : "";
   return [
-    `${pad}- split ${node.split}${w}`,
-    ...node.children.map((c) => describeLayout(c, depth + 1)),
+    `${pad}- split ${dir}${flex}`,
+    ...s.children.map((c: PaneNode) => describeLayout(c, depth + 1)),
   ].join("\n");
 }
 

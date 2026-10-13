@@ -66,6 +66,13 @@ printf -- '---\nname: Seeded skill\ndescription: seeded instruction\n---\nseeded
   --pages /tmp/engineer-pages-unused \
   --static http://localhost:8902 --ai http://localhost:8900 --log http://localhost:8901 \
   >/tmp/chat-route-web.log 2>&1 &
+# The browser drives this service a few lines later, so wait for the port instead
+# of hoping it bound in time: a lost race reads as a wrong answer (a refused
+# navigation), not as a missing service.
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 http://localhost:8903/ && break
+  sleep 1
+done
 ```
 
 Expected on startup: the ai service logs `--stub: model calls disabled`, the log

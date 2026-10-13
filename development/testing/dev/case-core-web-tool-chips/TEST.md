@@ -96,6 +96,17 @@ var history = []m{
 	}},
 }
 
+// idOf pulls `id` out of a one-line yaml request body.
+func idOf(r *http.Request) string {
+	b, _ := io.ReadAll(r.Body)
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "id:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 // tabIDOf pulls tabId out of the request body; the fixture speaks yaml, but the
 // bodies it receives are one flat line, so a substring is enough.
 func tabIDOf(r *http.Request, fallback string) string {
@@ -147,6 +158,13 @@ func main() {
 			tabs[id] = tabOf(id, m{"pane": m{"content": "chat", "id": "live-1"}})
 			write(200, m{"sessionId": "live-1"})
 		case "/ai/resume":
+			// The live conversation is the one the canned run belongs to, so it reports a
+			// run in flight — that is what makes the frontend subscribe to /ai/stream.
+			// (Nothing else does: a session says when it is busy.)
+			if idOf(r) == "live-1" {
+				write(200, m{"sessionId": "live-1", "lastSeq": 0, "active": true})
+				return
+			}
 			write(200, m{"sessionId": "history-1", "lastSeq": len(history), "active": false})
 		case "/ai/ask", "/ai/stop":
 			write(200, m{"sessionId": "live-1"})
@@ -302,9 +320,12 @@ const lines = (row) => new Set(row.chips.map((c) => c.top)).size;
 const firstLine = (row) => row.chips.filter((c) => c.top === row.chips[0].top).length;
 // ego-browser locators are single selectors with an optional terminal
 // ">> nth=N", so chips are addressed by :nth-child index — a detail panel
-// becomes a child of the row too, which would break :last-child.
+// becomes a child of the row too, which would break :last-child. The row itself is
+// not pinned with :first-child: the prompt that starts the run is the message
+// before it, so the first *matching* head in the document (nth=0) is the one in
+// the first row.
 const chipHead = (i) =>
-  `css:#ai-messages > .ai-chip-row:first-child > .ai-collapse:nth-child(${i + 1}) > .ai-collapse-head`;
+  `css:#ai-messages > .ai-chip-row > .ai-collapse:nth-child(${i + 1}) > .ai-collapse-head >> nth=0`;
 const FIRST_CHIP_HEAD = chipHead(0);
 const checks = [];
 const check = (name, pass, detail) => checks.push({ name, pass: !!pass, detail });
@@ -312,11 +333,15 @@ const check = (name, pass, detail) => checks.push({ name, pass: !!pass, detail }
 // ---------- live stream ----------
 
 // The "+" page opens a skill or a blank chat; "Chat" is the blank one, which
-// opens a fresh tab and consumes /ai/stream from seq 0.
+// opens a fresh tab. The run — and with it the stream — starts when a prompt is
+// sent: an idle conversation holds no subscription (the server would close one
+// immediately anyway), and this is the same path a real turn takes.
 await page.click("#tab-add");
 await page.waitForSelector('#newtab .launch-item[data-action="newchat"]', { state: "visible" });
 await page.click('#newtab .launch-item[data-action="newchat"]');
 await page.waitForSelector("#ai-input-field", { state: "visible" });
+await page.fill("#ai-input-field", "render the chips");
+await page.click("#ai-send");
 await page.waitForFunction(
   () => document.querySelectorAll("#ai-messages > .ai-chip-row").length >= 2,
   undefined,

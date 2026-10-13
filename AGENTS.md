@@ -22,7 +22,7 @@ General rules:
 
 **Phase 2 — Contracts, tests, code.** Scope: `contracts/`, `atoms/` `edges/`, `development/testing/`, `workspace/`. Order matters: define the **contracts** first, then the static relations (`atoms/` `edges/`), then the tests (`development/testing/`), and only then develop the code (`workspace/`).
 
-**Phase 3 — Build, run, test.** Repack and launch per `how-to/deploy/dev/BOOK.md`, then run the test cases. Pass → continue; fail → return to Phase 2 with the error.
+**Phase 3 — Build, run, test.** Repack and launch per `how-to/deploy/dev/BOOK.md`, then run **the cases that cover what changed** — not the whole suite. Pick them by the same reasoning that produced the change: a case belongs in the run when its assertions read what you touched (the same file, endpoint, DOM or schema). Say which range you are running, and which cases you left out and why, before you start. Pass → continue; fail → return to Phase 2 with the error.
 
 **Phase 4 — Human review & commit.** Stop and wait for human review. Rejected → return to Phase 2. Approved → commit & push on `my-server`, then pull locally (see General rules).
 

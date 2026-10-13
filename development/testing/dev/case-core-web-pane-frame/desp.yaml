@@ -1,0 +1,3 @@
+id: core-web-pane-frame
+description: web pane frame — a layout frame arriving mid-run reconciles panes by paneId: a pane that only moves keeps its element and draft, a dropped pane stops receiving the run, and an added pane is caught up on what already streamed
+atoms: [web, ai, log]

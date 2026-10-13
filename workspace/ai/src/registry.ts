@@ -21,7 +21,6 @@ import {
 } from "./recorder.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import {
-  chatIdsOf,
   describeLayout,
   normalizeLayout,
   readLayout,
@@ -95,11 +94,16 @@ const askUserTool = defineTool({
 // layout: the model's handle on the tab it is talking in. The tab's pane tree is
 // stored by log as opaque text; this tool reads it and rewrites it whole.
 //
-// Writing replaces the tree rather than editing it: the model describes the
-// layout it wants, which is idempotent and survives replay, and which asks it to
-// hold no pane ids at all. The price is that a write without a read silently
-// drops panes, so the description says to read first and the result always echoes
-// the stored tree back.
+// Writing replaces the tree rather than editing it: the model describes the layout
+// it wants, which is idempotent and survives replay.
+//
+// The tree used to hold no pane ids at all. The price was that a write without a
+// read silently dropped panes, and that position in the tree *was* identity — so a
+// pane the model merely moved was rebuilt, losing its draft, its scroll and its
+// place in the run. Now every leaf carries a paneId: this tool issues them, the
+// model passes back the ones it means to keep. A write without a read is still a
+// mistake the description warns about, but a pane that moved is recognized as the
+// same pane.
 //
 // One instance per session: it closes over the session's tabId, the key the tree
 // is stored under.
@@ -123,16 +127,26 @@ function makeLayoutTool(
       "              update, so writing without reading drops panes you never saw).",
       "",
       "A layout is a tree built from two node shapes:",
-      '  { pane: { content: "chat" | "page", id?: string, size?: "fill" | "brief" } }',
-      '  { split: "col" | "row", weight?: 1 | 2 | 3, children: [ ... ] }',
-      "col splits left/right, row splits top/bottom; weight is the relative share",
-      "within one split (1..3, default 1); size brief marks a short band and is",
-      "only valid inside a row split. At most 6 panes.",
+      '  { pane: { paneId, contentType: "chat" | "page", contentId, flex? } }',
+      '  { split: { flexDirection: "row" | "column", flex?, children: [ … ] } }',
+      'flexDirection is the CSS one: "row" puts the children side by side (left/',
+      'right), "column" stacks them (top/bottom). At most 6 panes.',
       "",
-      "A chat pane's id is a handle this tool issued, not something to invent. To",
-      "keep the conversation already in a pane, pass back the id you read there.",
-      "Leave it out to open a new conversation — the id comes back in the result,",
-      "so a later write can keep it. A page pane's id is a blueprint slug.",
+      "A pane says three separate things:",
+      "  paneId      which pane this is — a handle this tool issues, not something to",
+      "              invent. Pass back the paneId you read to KEEP that pane: it is the",
+      "              same pane however you rearrange the tree, and it keeps what is on",
+      "              screen (its half-typed draft, its scroll). Leave the id out and",
+      "              the pane is a new one.",
+      "  contentId   what it shows: a sessionId — a handle this tool issued, or empty",
+      "              for a new conversation — or a blueprint's slug. The same contentId",
+      "              in two panes is one conversation shown twice; the views stay in",
+      "              step.",
+      "  flex        CSS's `flex` shorthand for its share of its parent. Reach for the",
+      '              ratio form: flex: "2 1 0" is twice a sibling that says nothing.',
+      "              A leaf with no flex shares evenly. A fixed basis",
+      '              (flex: "0 0 320px") is legal where the content really is a fixed',
+      "              size, but ratios are what a layout should use.",
       "",
       "Use it when showing beats telling: two things to compare, a page beside the",
       "conversation about it, a short status band under a row of detail. The result",
@@ -185,6 +199,7 @@ function makeLayoutTool(
           newSession: async () => (await newSession()).id,
           hasSession,
           currentIds: current ? chatIdsOf(current.layout) : [],
+          currentPaneIds: current ? paneIdsOf(current.layout) : [],
         });
         const saved = await writeLayout(logBase, tabId(), layout);
         sess.speakingFor = saved.tabId;
@@ -206,13 +221,26 @@ function makeLayoutTool(
   });
 }
 
-// chatIdsOf lists the chat panes' ids in a tree, in order. It is what a rejected
-// write tells the model it *could* have passed.
+// chatIdsOf lists the chat panes' session ids in a tree, in order, and paneIdsOf
+// the pane handles. Both are what a rejected write tells the model it *could* have
+// passed. Old field names are still read, for a record written before the current
+// shape existed.
 function chatIdsOf(node: PaneNode): string[] {
   if ("pane" in node) {
-    return node.pane.content === "chat" ? [node.pane.id] : [];
+    const p = node.pane as Record<string, any>;
+    if ((p.contentType || p.content) !== "chat") return [];
+    const id = p.contentId ?? p.id;
+    return id ? [String(id)] : [];
   }
-  return node.children.flatMap(chatIdsOf);
+  return (node.split?.children ?? []).flatMap(chatIdsOf);
+}
+
+function paneIdsOf(node: PaneNode): string[] {
+  if ("pane" in node) {
+    const id = (node.pane as Record<string, any>).paneId;
+    return id ? [String(id)] : [];
+  }
+  return (node.split?.children ?? []).flatMap(paneIdsOf);
 }
 
 // pi's bundled catalog under-declares some vision models, and its

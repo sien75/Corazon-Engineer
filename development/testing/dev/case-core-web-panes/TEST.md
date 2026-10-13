@@ -1,21 +1,30 @@
 # Test: core-web-panes
 
-A tab's content is a **pane tree**, not one cell: `chat` panes each own a
-conversation (their own message list, composer, session and stream), `page` panes hold an
-iframe onto a blueprint, and a `brief` pane is a short band inside a row split.
-The tree is stored per tab (see `case-core-web-tab-records`) and the model
-changes it through the `layout` tool — this case drives the record side, which is
-the deterministic half: write a tree, open the tab, see it rendered.
+A tab's content is a **pane tree**, not one cell. A leaf states three separate
+things — `paneId` (which pane this is), `contentType` / `contentId` (what it
+shows), and `flex` (the share it takes from its parent) — so the *same*
+conversation may sit in two panes at once, and a layout change can tell one pane
+from another. `chat` panes each own a composer and a draft, `page` panes hold an
+iframe onto a blueprint, and a split hands its children their shares the way
+`flex` says.
 
-What the *model's* frame does on top of that (`tool_execution_start` with
-`toolName: "layout"` → the same `applyPaneLayout`, and no tool chip) needs a real
-provider; it is verified by hand and recorded in
-`development/iterations/2610-24-拆窗渲染与布局工具.md`.
+The tree is stored per tab (see `case-core-web-tab-records`); this case drives
+the record side — write a tree, open the tab, see it rendered — and the side the
+model's frame reaches through the same code (`applyPaneLayout`).
+
+Two conversations on screen at once must stay two conversations (own composer,
+own draft, own scroll) *and* a conversation shown twice must stay one
+conversation (one stream, every view updating). Both halves are here.
 
 Source of truth: `workspace/web/app.js` (`renderPanes` / `ensurePane` /
-`focusPane` / `applyPaneLayout` / `aiStream(pane)`) and `style.css` (`#panes`,
-`.pane-split`, `.pane`). DOM + a service call, so this case runs through a real
-browser (`ego-browser`).
+`focusPane` / `applyPaneLayout` / `aiStream`) and `style.css` (`.pane-split`,
+`.pane`). DOM + a service call, so this case runs through a real browser
+(`ego-browser`).
+
+What the *model's* frame does on top of that (`tool_execution_start` with
+`toolName: "layout"` → the same `applyPaneLayout`) needs a real provider: it is
+covered deterministically by `case-core-web-pane-frame` (a canned provider) and
+verified by hand in `development/iterations/2610-29-pane 共享会话流与格子身份.md`.
 
 ## Setup
 
@@ -98,6 +107,13 @@ const shape = () => page.evaluate(() => ({
   messages: [...document.querySelectorAll(".pane-messages")].map((m) => m.querySelectorAll(".ai-msg").length),
   composerPanes: document.querySelectorAll("#panes .pane-chat #ai-input").length,
 }));
+// Each chat pane's last message, read out of the pane's own list — what makes
+// "the same conversation twice" checkable: same text in both, or not.
+const lasts = () => page.evaluate(() =>
+  [...document.querySelectorAll("#panes .pane-chat")].map((p) => {
+    const msgs = p.querySelectorAll(".ai-msg");
+    return msgs.length ? msgs[msgs.length - 1].textContent.trim().slice(0, 80) : null;
+  }));
 
 await page.goto(`${WEB}/`);
 await page.waitForSelector("#tabs", { state: "visible" });
@@ -118,19 +134,25 @@ check("a new tab is a single chat pane", s.panes === 1 && s.chat === 1 && s.spli
 check("the composer sits inside the focused chat pane", s.composerPanes === 1, s);
 
 const tab = (await tabs())[0];
+const put = (layout) => log({ path: "/log/tab/mutation",
+  body: `tabId: ${tab.tabId}\nlayout:\n${layout}` });
 
-// 2. the model's tree is what renders: write one, reopen the tab
-await log({ path: "/log/tab/mutation", body:
-  `tabId: ${tab.tabId}\nlayout:\n  split: col\n  children:\n` +
-  `    - split: row\n      children:\n` +
-  `        - pane:\n            content: chat\n            id: ${tab.sessionId}\n` +
-  `        - pane:\n            content: page\n            id: demo\n            size: brief\n` +
-  `    - pane:\n        content: chat\n        id: ""\n` });
+// 2. the stored tree is what renders, in the shape the layout tool writes:
+// paneId is the pane's own identity, contentType/contentId its content, and
+// flex the share it takes from its parent (CSS `flex` shorthand; ratio form).
+await put(
+  `  split:\n    flexDirection: row\n    children:\n` +
+  `      - split:\n          flexDirection: column\n          flex: "2 1 0"\n          children:\n` +
+  `            - pane:\n                paneId: p_aa01\n                contentType: chat\n` +
+  `                contentId: ${tab.sessionId}\n` +
+  `            - pane:\n                paneId: p_aa02\n                contentType: page\n` +
+  `                contentId: demo\n                flex: "0 0 132px"\n` +
+  `      - pane:\n          paneId: p_aa03\n          contentType: chat\n`);
 await page.reload();
 await page.waitForSelector("#tabs .tab[data-tab-id]", { state: "visible" });
 await page.waitForTimeout(2500);
 s = await shape();
-check("a two-pane tree renders: one split, one chat and one page pane",
+check("a two-split tree renders: one row split, one chat and one page pane",
   s.splits >= 2 && s.chat === 2 && s.page === 1, s);
 check("each chat pane has its own message list",
   s.messages.length === 2, s);
@@ -146,20 +168,23 @@ const styled = await page.evaluate(() =>
 check("every chat pane's list carries the same styling, focused or not",
   styled.length === 2 && styled[0] === styled[1], { styled });
 
-// 3. brief is a short band, not a proportional share
-const heights = await page.evaluate(() => {
-  const panes = [...document.querySelectorAll("#panes .pane")];
-  const brief = panes.find((p) => p.classList.contains("brief"));
-  const other = panes.find((p) => !p.classList.contains("brief"));
-  return {
-    brief: Math.round(brief.getBoundingClientRect().height),
-    other: Math.round(other.getBoundingClientRect().height),
-  };
+// 2b. flex decides the geometry: "2 1 0" takes twice the share of a pane that
+// says nothing, and "0 0 132px" is a fixed size rather than a share.
+const geom = await page.evaluate(() => {
+  const outer = document.querySelector("#panes > .pane-tree > .pane-split");
+  const [left, right] = [...outer.children].map((c) => c.getBoundingClientRect().width);
+  const col = outer.children[0];
+  const page = col.querySelector(".pane-page").getBoundingClientRect().height;
+  const chat = col.querySelector(".pane-chat").getBoundingClientRect().height;
+  return { left: Math.round(left), right: Math.round(right),
+           ratio: +(left / right).toFixed(2), page: Math.round(page), chat: Math.round(chat) };
 });
-check("a brief pane is much shorter than the pane beside it",
-  heights.brief > 0 && heights.other > heights.brief * 2, heights);
+check("a pane with flex 2 takes about twice the width of one that says nothing",
+  geom.ratio > 1.7 && geom.ratio < 2.3, geom);
+check("a pane with a fixed basis keeps its size instead of taking a share",
+  geom.page > 120 && geom.page < 145 && geom.chat > geom.page * 2, geom);
 
-// 4. every chat pane has its own composer — a conversation you cannot type into
+// 3. every chat pane has its own composer — a conversation you cannot type into
 // is not one you can have — and each keeps its own unsent draft.
 const composers = await page.evaluate(() =>
   [...document.querySelectorAll("#panes .pane-chat")].map((p) => {
@@ -180,27 +205,77 @@ check("two composers hold two drafts at once",
   twoDrafts.length === 2 && twoDrafts[0] === "left draft" && twoDrafts[1] === "right draft",
   { drafts: twoDrafts });
 
-// 4b. panes are independent: sending in one leaves the other alone. Clicking a
-// chat pane makes it the shell's current conversation.
-const before = (await shape()).messages;
+// 4. two panes, one conversation: the same sessionId in two panes is one
+// conversation shown twice — each view has its own list and composer, and a run
+// started in either one lands in both. Seed a long history first, so the pane is
+// taller than the window and the scroll question is a real one.
+const ai = await page.evaluate(() => window.ENGINEER.ai);
+const filler = Array.from({ length: 140 }, (_, i) =>
+  `      filler line ${String(i + 1).padStart(3, "0")}\n`).join("");
+const seeded = await page.fetch(`${ai}/ai/ask`, { method: "POST",
+  headers: { "Content-Type": "application/yaml" },
+  body: `id: ${tab.sessionId}\nblocks:\n  - type: text\n    text: |\n${filler}` });
+check("the long seed prompt was accepted", /sessionId/.test(String(seeded.body)), null);
+
+await put(
+  `  split:\n    flexDirection: row\n    children:\n` +
+  `      - pane:\n          paneId: p_bb01\n          contentType: chat\n          contentId: ${tab.sessionId}\n` +
+  `      - pane:\n          paneId: p_bb02\n          contentType: chat\n          contentId: ${tab.sessionId}\n`);
+await page.reload();
+await page.waitForSelector("#tabs .tab[data-tab-id]", { state: "visible" });
+await page.waitForFunction(() =>
+  [...document.querySelectorAll(".pane-scroll")].every((s) => s.scrollHeight > s.clientHeight + 200),
+  undefined, { timeout: 30_000 });
+
+s = await shape();
+check("one conversation in two panes renders two lists", s.chat === 2 && s.messages.length === 2, s);
+check("both panes replay the same history",
+  s.messages[0] === s.messages[1] && s.messages[0] > 0, s);
+
+// Scroll the left pane up, then send from the right one. The run belongs to the
+// conversation, not to the pane it was typed in: both lists must take the new
+// messages — and only the pane that was following the bottom may move.
+await page.evaluate(() => { document.querySelectorAll(".pane-scroll")[0].scrollTop = 0; });
+await page.waitForTimeout(300);
+const beforeSend = await page.evaluate(() =>
+  [...document.querySelectorAll(".pane-scroll")].map((s) => ({
+    top: Math.round(s.scrollTop),
+    gap: Math.round(s.scrollHeight - s.scrollTop - s.clientHeight),
+  })));
 await page.click("loc=css:#panes .pane-chat >> nth=1");
 await page.waitForTimeout(400);
-await page.fill("#ai-input-field", "second pane speaks");
+await page.fill("loc=css:#panes .pane-chat .ai-input-field >> nth=1", "both panes should see this");
+const beforeCounts = (await shape()).messages;
 await page.click("#ai-send");
-await page.waitForTimeout(3000);
-const after = (await shape()).messages;
-check("sending in the second pane leaves the first one untouched",
-  after[0] === before[0] && after[1] > before[1], { before, after });
-const draftsAfterSend = await page.evaluate(() =>
-  [...document.querySelectorAll("#panes .pane-chat .ai-input-field")].map((i) => i.value));
-check("sending from one composer does not touch the other's draft",
-  draftsAfterSend[0] === "left draft" && draftsAfterSend[1] === "", { draftsAfterSend });
+await page.waitForTimeout(4000);
+
+s = await shape();
+// Typed in the right pane, but the run belongs to the conversation: the user
+// bubble and the reply land in both lists.
+check("sending in one pane of a shared conversation updates both",
+  s.messages[0] >= beforeCounts[0] + 2 && s.messages[1] >= beforeCounts[1] + 2 &&
+  s.messages[0] === s.messages[1], { before: beforeCounts, after: s.messages });
+
+const texts = await lasts();
+check("both panes end on the same message", texts[0] && texts[0] === texts[1], { texts });
+
+const afterSend = await page.evaluate(() =>
+  [...document.querySelectorAll(".pane-scroll")].map((s) => ({
+    top: Math.round(s.scrollTop),
+    gap: Math.round(s.scrollHeight - s.scrollTop - s.clientHeight),
+  })));
+check("a pane the reader scrolled up is not dragged to the bottom by the other pane's send",
+  afterSend[0].top < beforeSend[0].top + 40, { before: beforeSend[0], after: afterSend[0] });
+check("the pane that was following the bottom follows the new messages",
+  afterSend[1].gap <= 24, { before: beforeSend[1], after: afterSend[1] });
+
+// 4b. taking focus does not restyle the pane left behind
+await page.click("loc=css:#panes .pane-chat >> nth=0");
+await page.waitForTimeout(400);
 check("clicking a pane makes it the shell's current conversation",
   await page.evaluate(() =>
     document.getElementById("ai-input").closest(".pane-chat") ===
-    document.querySelectorAll("#panes .pane-chat")[1]));
-// Focusing moves `#ai-messages` to the other pane; the styling must not move
-// with it (checked again after the switch, which is where it broke).
+    document.querySelectorAll("#panes .pane-chat")[0]));
 const styledAfter = await page.evaluate(() =>
   [...document.querySelectorAll(".pane-messages")].map((m) => {
     const cs = getComputedStyle(m);
@@ -210,12 +285,27 @@ check("switching focus does not restyle the pane left behind",
   styledAfter.length === 2 && styledAfter[0] === styledAfter[1] && styledAfter[0] === styled[0],
   { before: styled, after: styledAfter });
 
-// 5. the split survives a reload, and the launcher still lists tabs
+// 5. a tree written before paneId existed still renders: an absent paneId is
+// given one on read, and the old content/id names are read as contentType/contentId.
+await put(
+  `  pane:\n    content: chat\n    id: ${tab.sessionId}\n`);
+await page.reload();
+await page.waitForSelector("#tabs .tab[data-tab-id]", { state: "visible" });
+await page.waitForTimeout(2000);
+s = await shape();
+check("a stored tree without paneId still opens, as a single chat pane",
+  s.panes === 1 && s.chat === 1 && s.page === 0, s);
+
+// 6. the tree survives a reload, and the launcher still lists tabs
+await put(
+  `  split:\n    flexDirection: row\n    children:\n` +
+  `      - pane:\n          paneId: p_cc01\n          contentType: chat\n          contentId: ${tab.sessionId}\n` +
+  `      - pane:\n          paneId: p_cc02\n          contentType: page\n          contentId: demo\n`);
 await page.reload();
 await page.waitForSelector("#tabs .tab[data-tab-id]", { state: "visible" });
 await page.waitForTimeout(2500);
 s = await shape();
-check("the split comes back after a reload", s.chat === 2 && s.page === 1, s);
+check("the split comes back after a reload", s.chat === 1 && s.page === 1, s);
 check("no page errors", errors.length === 0, { errors });
 
 console.log(JSON.stringify({ checks }, null, 2));
@@ -223,11 +313,16 @@ await space.finish({ keep: [] });
 EOF
 ```
 
-Expected: a new tab is one chat pane with the composer inside it; writing a tree
-with two chat panes and a brief page pane makes the tab render two splits and
-three panes, each chat pane with its own message list; the brief pane is a short
-band; sending in the second pane does not touch the first; and the whole thing
-comes back after a reload.
+Expected: a new tab is one chat pane with the composer inside it; a stored tree
+in the current shape (paneId / contentType / contentId / flex) renders one row
+split and one column split holding two chat panes and a page pane, each chat pane
+with its own list, composer and draft, and the `flex` values drive the geometry
+(a `2 1 0` pane is about twice as wide as a pane that says nothing; a `0 0 132px`
+pane keeps its fixed height). With the same `contentId` in both chat panes, the
+two lists replay the same history, a send from the right pane lands in *both*,
+and the left pane — scrolled up by the reader — stays where it was while the
+right one follows the bottom. A tree stored before `paneId` existed still opens,
+and the tree written last is the one that comes back after a reload.
 
 ## Teardown
 

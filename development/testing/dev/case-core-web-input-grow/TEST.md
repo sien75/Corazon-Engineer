@@ -60,6 +60,13 @@ printf -- '---\nname: Input grow\ndescription: placeholder skill\n---\nplacehold
   --pages /tmp/engineer-pages-unused \
   --static http://localhost:8922 --ai http://localhost:8920 --log http://localhost:8921 \
   >/tmp/input-grow-web.log 2>&1 &
+# The browser drives this service a few lines later, so wait for the port instead
+# of hoping it bound in time: a lost race reads as a wrong answer (a refused
+# navigation), not as a missing service.
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 http://localhost:8923/ && break
+  sleep 1
+done
 ```
 
 Expected on startup: `engineer web: http://localhost:8923` (the recorded

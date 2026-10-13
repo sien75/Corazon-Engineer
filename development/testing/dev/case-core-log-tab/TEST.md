@@ -48,13 +48,13 @@ done
 ```bash
 TAB=$(curl -s -X POST http://localhost:8830/log/tab/mutation \
   -H 'Content-Type: application/yaml' \
-  --data-binary $'layout:\n  pane:\n    content: chat\n    id: s_abc123' \
+  --data-binary $'layout:\n  pane:\n    paneId: p_abc123\n    contentType: chat\n    contentId: s_abc123' \
   | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["tabId"])')
 echo "tab=$TAB"
 ```
 
-Expected: `tabId` matching `t_[0-9a-f]+`, `layout.pane.content` is `chat`,
-`layout.pane.id` is `s_abc123`, and both `createdAt` / `updatedAt` are RFC3339.
+Expected: `tabId` matching `t_[0-9a-f]+`, `layout.pane.contentType` is `chat`,
+`layout.pane.contentId` is `s_abc123`, and both `createdAt` / `updatedAt` are RFC3339.
 
 ```bash
 curl -s -X POST http://localhost:8830/log/tab/detail \
@@ -72,11 +72,11 @@ FIRST=$(curl -s -X POST http://localhost:8830/log/tab/detail \
 sleep 1
 curl -s -X POST http://localhost:8830/log/tab/mutation \
   -H 'Content-Type: application/yaml' \
-  --data-binary $'tabId: '"$TAB"$'\nlayout:\n  split: col\n  children:\n    - pane:\n        content: chat\n        id: s_abc123\n    - pane:\n        content: page\n        id: my-blueprint\n        size: brief'
+  --data-binary $'tabId: '"$TAB"$'\nlayout:\n  split:\n    flexDirection: row\n    children:\n      - pane:\n          paneId: p_a1\n          contentType: chat\n          contentId: s_abc123\n      - pane:\n          paneId: p_a2\n          contentType: page\n          contentId: my-blueprint\n          flex: "2 1 0"'
 ```
 
-Expected: 200, `tabId` equals `$TAB`; `layout.split` is `col`;
-`layout.children[1].pane.size` is `brief`; `createdAt` equals `$FIRST` (the first
+Expected: 200, `tabId` equals `$TAB`; `layout.split.flexDirection` is `row`;
+`layout.children[1].pane.flex` is `2 1 0`; `createdAt` equals `$FIRST` (the first
 write) while `updatedAt` is later.
 
 The overwrite did not add a row — the same tabId appears exactly once:
@@ -95,8 +95,8 @@ curl -s -X POST http://localhost:8830/log/tab/detail \
   -H 'Content-Type: application/yaml' --data-binary "tabId: $TAB"
 ```
 
-Expected: 200, body identical to what step 2 wrote: `split: col`, two children,
-the second one a `page` / `my-blueprint` / `size: brief` leaf.
+Expected: 200, body identical to what step 2 wrote: `split` with `flexDirection: row`,
+two children, the second a `page` / `my-blueprint` leaf with `flex: 2 1 0`.
 
 Deeply nested trees survive too — `layout.children[0]` and the leaf's `size` are
 the interesting fields; a naive shallow store would drop them.

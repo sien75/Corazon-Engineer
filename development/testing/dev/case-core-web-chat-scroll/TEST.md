@@ -51,6 +51,14 @@ sleep 1
   --pages /tmp/engineer-pages-unused \
   --static http://localhost:8502 --ai http://localhost:8910 --log http://localhost:8911 \
   >/tmp/chat-scroll-web.log 2>&1 &
+
+# The browser drives this service on the next line, so wait for the port instead
+# of hoping it bound in time: a lost race reads as a wrong answer (a refused
+# navigation), not as a missing service.
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 http://localhost:8912/ && break
+  sleep 1
+done
 ```
 
 Expected on startup: the ai service logs `--stub: model calls disabled`, the log

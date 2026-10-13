@@ -125,7 +125,9 @@ check("a new chat tab stores a server-assigned tabId",
 let recs = await records();
 check("log holds one tab record", recs.length === 1, { recs });
 check("the record is a single chat pane pointed at the session",
-  recs[0]?.layout?.pane?.content === "chat" && recs[0]?.layout?.pane?.id === saved[0]?.sessionId,
+  recs[0]?.layout?.pane?.contentType === "chat" &&
+    recs[0]?.layout?.pane?.contentId === saved[0]?.sessionId &&
+    !!recs[0]?.layout?.pane?.paneId,
   { layout: recs[0]?.layout, sessionId: saved[0]?.sessionId });
 
 // 2. a reload keeps the same record — creation happens once, not per load
@@ -144,9 +146,9 @@ await page.waitForSelector('.launch-item[data-action="page"]', { state: "visible
 await page.click('.launch-item[data-action="page"][data-id="demo-page"]');
 await page.waitForTimeout(1000);
 recs = await records();
-const pageRec = recs.find((r) => r.layout?.pane?.content === "page");
+const pageRec = recs.find((r) => r.layout?.pane?.contentType === "page");
 check("opening a blueprint writes a page-pane record",
-  pageRec?.layout?.pane?.id === "demo-page", { recs });
+  pageRec?.layout?.pane?.contentId === "demo-page", { recs });
 check("there are now two records", recs.length === 2, { recs });
 
 // 4. the launcher's recent section lists tabs, and a closed one comes back

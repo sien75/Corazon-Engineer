@@ -654,20 +654,88 @@ function aiScroll() {
 
 // ---------- the pane tree ----------
 //
-// tab.layout is the stored tree (see the layout tool); tab.panes holds the live
-// pane objects by tree path, so a re-render of the same tree reuses them and a
-// chat pane keeps its conversation. A layout change rebuilds the containers and
-// moves the panes into them: their DOM keeps its state, but a page iframe is
-// loaded again.
+// tab.layout is the stored tree (see the layout tool) and the one description of
+// what a tab holds: which panes exist, what each shows, how they share the space.
+// A leaf states three separate things —
+//
+//   paneId       which pane this is
+//   contentType  chat | page, and contentId: a session id or a blueprint slug
+//   flex         the CSS shorthand for the share this node takes from its parent
+//
+// — so the same conversation may sit in two panes at once and still be two panes.
+// paneId is what makes an edit decidable: the tree says which pane is which, so a
+// pane that merely *moves* is the same pane and keeps its DOM, its draft, its
+// scroll and its place in the stream. Reading position as identity is what made a
+// layout change rebuild panes it never meant to touch.
+//
+// tab.panes maps paneId -> live pane, so re-rendering the same tree reuses them. A
+// layout change rebuilds the containers and moves the panes into them: their DOM
+// keeps its state, but a page iframe is loaded again.
+//
+// aiHubs is the other half: the panes drawing one conversation, keyed by session.
+// See the stream hub below.
+const aiHubs = new Map();
 
-function defaultLayout(tab) {
-  return tab.kind === "page"
-    ? { pane: { content: "page", id: tab.pageId } }
-    : { pane: { content: "chat", id: tab.sessionId } };
+let paneIdSeq = 0;
+
+// mintPaneId issues a pane handle. Like a session id it is a handle, not something
+// the layout is written by hand: random, so two tabs cannot collide on one value.
+function mintPaneId() {
+  const b = new Uint8Array(4);
+  crypto.getRandomValues(b);
+  paneIdSeq += 1;
+  const hex = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `p_${hex}${paneIdSeq.toString(16)}`;
 }
 
+// normalizeTree reads a stored tree into the shape the renderer wants, filling in
+// what an older record does not have. A leaf written before paneId existed gets
+// one here — identity only has to hold for as long as the pane lives, and a reload
+// rebuilds every pane from the record anyway — and the names an older record used
+// (content / id / split: "col" / weight / size: brief) are read as their current
+// equivalents.
+function normalizeTree(node) {
+  if (!node || typeof node !== "object") return null;
+  if (node.pane && typeof node.pane === "object") {
+    const p = node.pane;
+    const leaf = {
+      paneId: typeof p.paneId === "string" && p.paneId ? p.paneId : mintPaneId(),
+      contentType: p.contentType || p.content || "chat",
+      contentId: p.contentId ?? p.id ?? "",
+    };
+    if (p.flex) leaf.flex = String(p.flex);
+    else if (p.size === "brief") leaf.flex = "0 0 132px";
+    return { pane: leaf };
+  }
+  const raw = node.split;
+  const dir = typeof raw === "string" ? raw : (raw && raw.flexDirection) || "row";
+  const children = (node.children || (raw && raw.children) || [])
+    .map(normalizeTree)
+    .filter(Boolean);
+  if (!children.length) return null;
+  const split = {
+    flexDirection: dir === "col" || dir === "column" ? "column" : "row",
+    children,
+  };
+  const flex = (raw && raw.flex) || node.flex || (node.weight ? `${node.weight} 1 0` : "");
+  if (flex) split.flex = String(flex);
+  return { split };
+}
+
+// tabLayoutOf is the single-pane layout a tab gets when it is created: the chat
+// session or the blueprint it was opened for.
+function tabLayoutOf(tab) {
+  return tab.kind === "page"
+    ? { pane: { paneId: mintPaneId(), contentType: "page", contentId: tab.pageId } }
+    : { pane: { paneId: mintPaneId(), contentType: "chat", contentId: tab.sessionId } };
+}
+
+// tabLayout returns the tab's tree, minting the fallback for a tab whose record
+// could not be read. Memoized: a fresh paneId on every call would look like a new
+// pane on every render.
 function tabLayout(tab) {
-  return tab.layout || defaultLayout(tab);
+  if (tab.layout) return tab.layout;
+  return (tab.localLayout ||= tabLayoutOf(tab));
 }
 
 // makeChatPane builds one conversation: the message list, and *its own*
@@ -719,11 +787,9 @@ function makeChatPane(key, contentId) {
     tasks: [],
     drawer: null,
     confirm: null,
+    // The conversation this pane shows. Where it draws it from is the hub's
+    // business (a pane registers after its history is on screen).
     session: contentId,
-    seenSeq: 0,
-    streamCtl: null,
-    streamGen: 0,
-    streaming: false,
   };
   bindComposer(pane);
   return pane;
@@ -787,53 +853,85 @@ function makePagePane(key, contentId) {
   return { key, kind: "page", contentId, el, frameEl };
 }
 
-// ensurePane returns the pane for one leaf, reusing the live one when the path
-// and the content are unchanged.
-function ensurePane(tab, key, content, contentId) {
+// ensurePane returns the pane for one leaf, reusing the live one when its place
+// and its content are unchanged. The key is the pane's paneId, so a pane that
+// moved is found again; the same key with different content is the same pane
+// showing something else, and the old one is taken down first.
+function ensurePane(tab, key, contentType, contentId) {
   const existing = tab.panes.get(key);
-  if (existing && existing.kind === content && existing.contentId === contentId) {
+  if (existing && existing.kind === contentType && existing.contentId === contentId) {
     return existing;
   }
+  if (existing) dropPane(tab, existing);
   // One iframe per page pane: unlike the old single page tab, a pane showing
   // another blueprint is a different document, not the same one re-pointed.
-  const pane = content === "page" ? makePagePane(key, contentId) : makeChatPane(key, contentId);
+  const pane = contentType === "page" ? makePagePane(key, contentId) : makeChatPane(key, contentId);
   tab.panes.set(key, pane);
   return pane;
 }
 
-// Pane ids carry no meaning beyond the tree: a pane is defined by its content
-// and its place in the layout.
-function splitEl(dir, weight) {
+// splitEl builds a split container. Its geometry is the flex value the tree gives
+// it, in the same CSS shorthand a pane uses (see the layout tool).
+function splitEl(dir, flex) {
   const el = document.createElement("div");
-  el.className = `pane-split ${dir}`;
-  el.style.setProperty("--w", String(weight || 1));
+  el.className = `pane-split ${dir === "column" ? "column" : "row"}`;
+  if (flex) el.style.flex = flex;
   return el;
 }
 
-function buildPaneNode(tab, node, path) {
+// buildPaneNode builds one node, registering every leaf it keeps in `seen` — which
+// is how renderPanes learns what the tree still holds.
+function buildPaneNode(tab, node, seen) {
   if (node.pane) {
-    const key = path.join(".");
-    const pane = ensurePane(tab, key, node.pane.content, node.pane.id);
-    pane.el.classList.toggle("brief", node.pane.size === "brief");
+    const pane = ensurePane(tab, node.pane.paneId, node.pane.contentType, node.pane.contentId);
+    seen.add(pane.key);
+    if (node.pane.flex) pane.el.style.flex = node.pane.flex;
+    else pane.el.style.removeProperty("flex");
     return pane.el;
   }
-  const el = splitEl(node.split, node.weight);
-  node.children.forEach((child, i) => {
-    el.appendChild(buildPaneNode(tab, child, [...path, String(i)]));
-  });
+  const el = splitEl(node.split.flexDirection, node.split.flex);
+  for (const child of node.split.children) {
+    const built = buildPaneNode(tab, child, seen);
+    if (built) el.appendChild(built);
+  }
   return el;
 }
 
-// renderPanes builds (or rebuilds) a tab's content area from its layout, and
-// loads every chat pane that has nothing in it yet. A chat pane without a
-// session of its own was just created by a layout change, so it starts a fresh
-// one.
+// renderPanes builds (or rebuilds) a tab's content area from its tree, and loads
+// every chat pane that has nothing on screen yet. A chat pane without a session of
+// its own was just created by a layout change, so it starts a fresh one.
+//
+// The tree is the only authority on what exists: a pane it no longer holds is
+// taken down here, which is what keeps a pane the model dropped from carrying on
+// in the background.
 function renderPanes(tab) {
+  const layout = normalizeTree(tabLayout(tab)) || tabLayoutOf(tab);
+  tab.layout = layout;
+  const seen = new Set();
   const tree = document.createElement("div");
   tree.className = "pane-tree";
-  tree.appendChild(buildPaneNode(tab, tabLayout(tab), []));
+  tree.appendChild(buildPaneNode(tab, layout, seen));
+  for (const [key, pane] of [...tab.panes]) {
+    if (!seen.has(key)) dropPane(tab, pane);
+  }
   tab.paneEl = tree;
   void loadPaneConversations(tab);
+}
+
+// dropPane takes one pane down. It leaves its conversation first: a pane that kept
+// drawing into a detached element would look like the run had stalled, and would
+// hold the subscription open for a view nobody has.
+function dropPane(tab, pane) {
+  if (tab.panes.get(pane.key) === pane) tab.panes.delete(pane.key);
+  if (pane.kind === "chat") aiHubUnregister(pane);
+  pane.el.remove();
+}
+
+// dropTabPanes takes every pane of a tab down. Called when the tab itself goes —
+// closing it, or replacing its instance with a fresh one — so its panes are not
+// left behind holding subscriptions to conversations nothing shows any more.
+function dropTabPanes(tab) {
+  for (const pane of [...(tab.panes?.values() ?? [])]) dropPane(tab, pane);
 }
 
 async function loadPaneConversations(tab) {
@@ -845,14 +943,18 @@ async function loadPaneConversations(tab) {
     pane.loaded = true;
     try {
       if (!pane.session && tab.tabId) {
-        pane.session = await aiNewSession();
+        paneSetSession(pane, await aiNewSession());
       }
       if (!pane.session) continue;
       // A session this tab has just created has nothing recorded behind it:
       // asking the server to replay it would only fetch an empty history (and,
-      // for a skill, race the run the user is about to send). Its stream is
-      // opened by activateTab.
-      if (fresh && pane.session === tab.sessionId) continue;
+      // for a skill, race the run the user is about to send). It still has to be
+      // registered, or a run started in another pane of this tab would never
+      // reach it.
+      if (fresh && pane.session === tab.sessionId) {
+        aiHubRegister(pane);
+        continue;
+      }
       await aiLoadSession(pane, pane.session);
       if (pane === aiPane) aiScrollToBottom();
     } catch (err) {
@@ -870,8 +972,7 @@ async function loadPaneConversations(tab) {
 // rejected write stores nothing at all). Reading it back from the record is the
 // other way in (see syncTabRecord / the launcher), and both go through
 // applyPaneLayout so they cannot drift.
-function applyLayoutFrame(pane, result) {
-  const tab = openTabs.find((t) => t.panes?.get(pane.key) === pane);
+function applyLayoutFrame(tab, result) {
   const layout = result?.details?.layout;
   if (tab && layout) applyPaneLayout(tab, layout);
 }
@@ -907,10 +1008,12 @@ function focusPane(tab, key) {
     p.el.classList.toggle("focused", on);
   }
   if (aiPane) {
-    aiSetStreaming(aiPane, aiPane.streaming);
     aiResizeInput();
     aiInputEl().focus();
   }
+  // The stop control follows the conversation, not the focus: every pane showing
+  // a run in flight offers it.
+  for (const hub of aiHubs.values()) aiSetStreamingFor(hub, hub.streaming);
 }
 
 // applyPaneLayout is the one entry point for a layout change: the model's tool
@@ -949,11 +1052,26 @@ const AI_STREAM_MAX_BACKOFF = 10000;
 // content moves the bottom away and would otherwise read as "not at bottom".
 const AI_STICK_THRESHOLD = 40;
 
+// aiAtBottom / aiScrollToBottom act on the pane being drawn (aiRenderPane), which
+// is what keeps two views of one conversation from scrolling together: each pane
+// decides for itself whether it was following the bottom.
+function paneAtBottom(pane) {
+  const el = pane?.scrollEl;
+  if (!el) return false;
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= AI_STICK_THRESHOLD;
+}
+
+function paneScrollToBottom(pane) {
+  const el = pane?.scrollEl;
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
 function aiAtBottom() {
-  return (
-    aiScroll().scrollHeight - aiScroll().scrollTop - aiScroll().clientHeight <=
-    AI_STICK_THRESHOLD
-  );
+  return paneAtBottom(aiRenderPane ?? aiPane);
+}
+
+function aiScrollToBottom() {
+  paneScrollToBottom(aiRenderPane ?? aiPane);
 }
 
 // Same stick idea for an expanded collapse body: only auto-follow appended
@@ -961,10 +1079,6 @@ function aiAtBottom() {
 // the top (see aiCollapse), so a freshly opened block must not be yanked down.
 function aiBodyAtBottom(el, threshold = 24) {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
-}
-
-function aiScrollToBottom() {
-  aiScroll().scrollTop = aiScroll().scrollHeight;
 }
 
 // Assistant replies render as markdown; user messages stay plain text. Raw
@@ -1002,15 +1116,20 @@ function aiMarkdown() {
   let raw = "";
   let scheduled = false;
   let rafId = 0;
+  const targetPane = aiRenderPane ?? aiPane;
   const render = () => {
     scheduled = false;
     // The markdown render is deferred to an animation frame, so it lands in the
     // DOM after the caller's append/scroll. Decide stickiness and pin to the
     // bottom around the DOM write — pinning before it leaves the view short of
     // the newest content (the stream then reads as "stuck" above the bottom).
-    const stick = aiAtBottom();
+    //
+    // The target is captured here, not looked up when the frame fires: by then
+    // the loop that set aiRenderPane has moved on, and a lookup would pin the
+    // *focused* pane instead of the one this bubble belongs to.
+    const stick = paneAtBottom(targetPane);
     div.innerHTML = renderMarkdown(raw);
-    if (stick) aiScrollToBottom();
+    if (stick) paneScrollToBottom(targetPane);
   };
   return {
     el: div,
@@ -1041,22 +1160,25 @@ function aiStaticMarkdown(text) {
   return m.el;
 }
 
-function aiSetStreaming(pane, v) {
-  if (pane) pane.streaming = v;
-  if (pane !== aiPane) return;
-  aiStopEl().hidden = !v;
-  if (!v) aiStopEl().disabled = false;
+// aiSetStreamingFor shows or hides the stop control in every pane drawing this
+// conversation: the run is the conversation's, so any of them can stop it.
+function aiSetStreamingFor(hub, v) {
+  hub.streaming = !!v;
+  for (const t of hub.targets) {
+    t.pane.stopEl.hidden = !v;
+    if (!v) t.pane.stopEl.disabled = false;
+  }
 }
 
 async function aiStop() {
-  const pane = aiPane;
-  if (!pane?.session || !pane.streaming) return;
-  aiStopEl().disabled = true;
+  const hub = aiPane?.session ? aiHubs.get(aiPane.session) : null;
+  if (!hub || !hub.streaming) return;
+  for (const t of hub.targets) t.pane.stopEl.disabled = true;
   try {
     await fetch(`${AI_BASE}/ai/stop`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
-      body: yaml.dump({ id: pane.session }),
+      body: yaml.dump({ id: hub.id }),
     });
   } catch {
     // The terminal agent_settled closes the stream and resets the UI.
@@ -1274,7 +1396,12 @@ function aiSnapCaretOutOfToken() {
 
 // aiAppendUserParts renders a user bubble from ordered parts:
 //   { type: "text", text } | { type: "image", src }
-function aiAppendUserParts(parts) {
+// aiAppendUserParts draws a user message. `reveal` is for the pane it was typed
+// in: your own message always comes into view there. Every other view of the same
+// conversation treats it like any other arrival and only follows if the reader was
+// already at the bottom — being yanked down is not what "the message is yours" can
+// mean for a pane you are reading history in.
+function aiAppendUserParts(parts, reveal = true) {
   aiChipRowEnd(); // a message is not a chip: it ends the run's chip row
   const div = document.createElement("div");
   div.className = "ai-msg ai-user";
@@ -1292,8 +1419,9 @@ function aiAppendUserParts(parts) {
       div.appendChild(el);
     }
   }
+  const stick = aiAtBottom();
   aiMsgEl().appendChild(div);
-  aiScrollToBottom(); // own message always reveals
+  if (reveal || stick) aiScrollToBottom();
   return div;
 }
 
@@ -1324,15 +1452,19 @@ async function ensureTabId(tab) {
   return tab.tabId;
 }
 
-// tabTalkId is the tab the turn speaks for: what the layout tool acts on. Taken
-// from the pane's own tab, since that is the thing that knows it.
+// tabOfPane is the tab a pane is mounted in, or null. The pane's own tab is the
+// thing that knows: a conversation lives in no tab, a pane does.
+function tabOfPane(pane) {
+  return openTabs.find((t) => pane && t.panes?.get(pane.key) === pane) || null;
+}
+
+// tabTalkId is the tab the turn speaks for: what the layout tool acts on.
 function tabTalkId(pane) {
-  const tab = openTabs.find((t) => t.panes?.get(pane?.key) === pane);
-  return tab?.tabId || "";
+  return tabOfPane(pane)?.tabId || "";
 }
 
 async function aiNew() {
-  if (aiPane) aiCancelStream(aiPane);
+  // The redraw that follows takes the panes down with the tab (renderPanes).
   aiPane = null;
   renderedTabId = null;
 }
@@ -1657,9 +1789,11 @@ function aiAskUser(args, onPick) {
   const row = document.createElement("div");
   row.className = "ai-question-options";
   const done = (value) => {
-    row.querySelectorAll("button, input").forEach((el) => (el.disabled = true));
+    disable();
     onPick(value);
   };
+  const disable = () =>
+    row.querySelectorAll("button, input").forEach((el) => (el.disabled = true));
   const options = (args && args.options) || [];
   if (options.length) {
     for (const o of options) {
@@ -1691,201 +1825,359 @@ function aiAskUser(args, onPick) {
   div.appendChild(row);
   aiMsgEl().appendChild(div);
   if (stick) aiScrollToBottom();
+  // Closeable from outside: a question asked in two panes is one question, and
+  // answering it in either closes both.
+  return { el: div, disable };
 }
 
-// aiStream subscribes to the session's SSE and keeps it alive across connection
-// drops: on failure it reconnects with `since = aiSeenSeq` so the server replays
-// only the events this client missed. The render state (assistant / thinking /
-// tool blocks) lives here, not in the connection, so replayed deltas append to
-// the same bubbles instead of opening new ones.
+// ---------- the stream hub ----------
 //
-// A mid-run ask is steered into the run already covered by the live stream, so
-// for the same session we must not open a second subscription (that would race
-// over aiSeenSeq and re-render). Switching sessions aborts the old stream via
-// aiCancelStream so it cannot keep writing into the now-current view.
-async function aiStream(pane) {
-  const id = pane?.session;
-  if (!id) return;
-  // Already attached to this session (a mid-run ask is steered server-side):
-  // do not open a second subscription, which would race over aiSeenSeq.
-  if (pane.streamCtl && pane.streamCtl.id === id) return;
-  // A stream for another session in the same pane (the user switched it):
-  // drop it before attaching, otherwise it would keep rendering into the
-  // now-current view and its seq would clobber this session's aiSeenSeq.
-  if (pane.streamCtl) aiCancelStream(pane);
-  const gen = ++pane.streamGen;
+// One subscription per conversation, however many panes show it. The hub owns the
+// connection, the watermark, the render state of the run in flight, and the panes
+// drawing it; a pane registers to draw and unregisters when the tab's tree drops
+// it. That is what lets two panes show one conversation and stay one: the events
+// are read once and drawn into every registered list.
+//
+// Nothing here is per tab. The same conversation may be open in two tabs, and both
+// keep drawing for as long as a pane holds it — a background tab is still a view of
+// the run, and the connection lives until the last view of it goes.
+
+function aiHub(session) {
+  let hub = aiHubs.get(session);
+  if (!hub) {
+    hub = {
+      id: session,
+      ctrl: null, // { id, ctrl } — the one connection, when there is one
+      gen: 0, // bumped on every (re)attach: an older read loop stops on it
+      seenSeq: 0, // the watermark of what has been drawn
+      targets: [], // one per pane drawing this conversation, in render order
+      // The pane the turn was sent from. The layout tool acts on that pane's tab,
+      // so the frames it returns belong to that tab and not to whichever pane the
+      // event happens to be drawn into.
+      sender: null,
+      senderTab: null, // the tab `sender` was in, kept in case that pane is dropped
+      streaming: false, // a run is in flight
+      run: [], // the events of the run in flight, for a pane that joins late
+      cards: new Map(), // pane -> disables the ask_user card that pane was given
+    };
+    aiHubs.set(session, hub);
+  }
+  return hub;
+}
+
+// aiHubTarget is one pane's render state. It is per pane because it says where in
+// *this* list the run has got to: which assistant bubble is open, which thinking
+// block, which tool blocks.
+function aiHubTarget(pane) {
+  const t = { pane, assistant: null, thinking: null, tools: new Map() };
+  t.settle = () => {
+    aiRenderPane = pane;
+    if (t.assistant) {
+      t.assistant.flush();
+      t.assistant = null;
+    }
+    if (t.thinking) {
+      aiSettle(t.thinking.block, "done");
+      t.thinking = null;
+    }
+    for (const tool of t.tools.values()) aiSettle(tool.block, "done");
+    t.tools.clear();
+  };
+  return t;
+}
+
+// aiHubRegister adds a pane as a view of its conversation, drawing the run in
+// flight into it if there is one: a pane added while the model is working shows
+// what has already streamed, not only what arrives next.
+function aiHubRegister(pane) {
+  if (!pane.session) return;
+  const hub = aiHub(pane.session);
+  if (hub.targets.some((t) => t.pane === pane)) return;
+  const target = aiHubTarget(pane);
+  hub.targets.push(target);
+  if (hub.run.length) {
+    aiRenderPane = pane;
+    for (const ev of hub.run) aiHandleOne(target, ev);
+    aiRenderPane = null;
+  }
+  aiSetStreamingFor(hub, hub.streaming);
+}
+
+// aiHubUnregister takes a pane out. The connection goes when the last view of it
+// does, and only then: a pane in a background tab is still watching.
+function aiHubUnregister(pane) {
+  const hub = pane?.session ? aiHubs.get(pane.session) : null;
+  if (!hub) return;
+  hub.targets = hub.targets.filter((t) => t.pane !== pane);
+  hub.cards.delete(pane);
+  if (hub.targets.length) return;
+  aiHubClose(hub);
+  aiHubs.delete(hub.id);
+}
+
+// paneSetSession points a pane at a conversation. Every assignment to pane.session
+// goes through here, so a pane never stays registered with the one it left. It does
+// not register the new one: that happens once the history is up (see aiLoadSession),
+// so that a run in flight is drawn on top of the history rather than wiped by it.
+function paneSetSession(pane, id) {
+  if (pane.session === id) return;
+  aiHubUnregister(pane);
+  pane.session = id;
+}
+
+// aiHubClose lets go of a connection without touching the conversation: the run
+// keeps going server-side, and whoever comes back resumes from the watermark.
+function aiHubClose(hub) {
+  hub.gen += 1;
+  if (hub.ctrl) hub.ctrl.abort();
+  hub.ctrl = null;
+  hub.streaming = false;
+  hub.run = [];
+  for (const t of [...hub.targets]) t.settle();
+}
+
+// aiHubAttach opens the subscription if it is not open already. `sender` is the
+// pane the turn was sent from (see hub.sender); `running` says a run is under way,
+// which is what puts the stop control in every pane drawing it.
+function aiHubAttach(hub, sender, running) {
+  if (sender) {
+    hub.sender = sender;
+    hub.senderTab = tabOfPane(sender);
+  }
+  if (running) aiSetStreamingFor(hub, true);
+  if (hub.ctrl) return;
+  const gen = ++hub.gen;
   const ctrl = new AbortController();
-  pane.streamCtl = { id, ctrl };
-  aiSetStreaming(pane, true);
-  // Whatever this stream renders goes into this pane's list, even when another
-  // pane is focused.
-  const render = () => { aiRenderPane = pane; };
-  let assistant = null; // current assistant markdown bubble: { el, append, flush }
-  let thinking = null; // current thinking block: { block, body }
-  const tools = new Map(); // toolCallId -> { block, body }
+  hub.ctrl = { id: hub.id, ctrl };
+  void aiRunStream(hub, ctrl, gen);
+}
 
-  const settleAll = () => {
-    if (assistant) {
-      assistant.flush();
-      assistant = null;
-    }
-    if (thinking) {
-      aiSettle(thinking.block, "done");
-      thinking = null;
-    }
-    for (const t of tools.values()) aiSettle(t.block, "done");
-    tools.clear();
-  };
-
-  const handle = (ev) => {
-    render();
-    // Native pi event: message_update carries the assistant message sub-events.
-    if (ev.type === "message_update") {
-      const ae = ev.assistantMessageEvent || {};
-      if (ae.type === "text_start" || ae.type === "text_delta") {
-        if (!assistant) assistant = aiMarkdown();
-        if (thinking) {
-          aiSettle(thinking.block, "done");
-          thinking = null;
-        }
-      }
-      if (ae.type === "text_delta") {
-        const stick = aiAtBottom();
-        assistant.append(ae.delta || "");
-        if (stick) aiScrollToBottom();
-      } else if (ae.type === "thinking_start" || ae.type === "thinking_delta") {
-        if (!thinking) thinking = aiThinking();
-        if (ae.type === "thinking_delta") {
-          const stick = aiAtBottom();
-          const follow = aiBodyAtBottom(thinking.block.body);
-          thinking.body.textContent += ae.delta || "";
-          if (follow && !thinking.block.body.hidden) {
-            thinking.block.body.scrollTop = thinking.block.body.scrollHeight;
-          }
-          if (stick) aiScrollToBottom();
-        }
-      } else if (ae.type === "error") {
-        aiAppend("assistant", `[error] ${ae.error?.errorMessage || ""}`);
-        assistant = null;
-      }
-      return;
-    }
-    if (ev.type === "message_end") {
-      if (assistant && ev.message?.role === "assistant") assistant.flush();
-      return;
-    }
-    if (ev.type === "turn_start") {
-      // A new LLM turn begins (including a prompt steered in mid-run): start a
-      // fresh assistant bubble so replies keep their place relative to the user.
-      if (assistant) {
-        assistant.flush();
-        assistant = null;
-      }
-      if (thinking) {
-        aiSettle(thinking.block, "done");
-        thinking = null;
-      }
-      return;
-    }
-    if (ev.type === "tool_execution_start") {
-      if (ev.toolName === "ask_user") {
-        aiAskUser(ev.args, aiAnswer);
-      } else if (ev.toolName === "layout") {
-        // Nothing yet: the tree the model *asked* for is not the tree that was
-        // stored. It arrives with the result, and only when the write was
-        // accepted (see tool_execution_end).
-      } else {
-        tools.set(ev.toolCallId, aiTool(ev.toolName, ev.args));
-      }
-      return;
-    }
-    if (ev.type === "tool_execution_update") {
-      const t = tools.get(ev.toolCallId);
-      if (t && ev.partialResult) {
-        const stick = aiAtBottom();
-        const follow = aiBodyAtBottom(t.block.body);
-        t.body.textContent += `\n${aiStringify(ev.partialResult)}`;
-        if (follow && !t.block.body.hidden) t.block.body.scrollTop = t.block.body.scrollHeight;
-        if (stick) aiScrollToBottom();
-      }
-      return;
-    }
-    if (ev.type === "tool_execution_end") {
-      if (ev.toolName === "layout") {
-        // Draw what was stored, not what was asked for: the tool normalizes the
-        // tree (and refuses a write it cannot honour), so the result is the one
-        // description of what this tab now is. A rejected write draws nothing.
-        if (!ev.isError) applyLayoutFrame(pane, ev.result);
-        return;
-      }
-      const t = tools.get(ev.toolCallId);
-      if (t) {
-        const stick = aiAtBottom();
-        const follow = aiBodyAtBottom(t.block.body);
-        t.body.textContent += `\n→ ${ev.isError ? "error" : "done"}: ${aiStringify(ev.result)}`;
-        aiSettle(t.block, ev.isError ? "error" : "done");
-        if (follow && !t.block.body.hidden) t.block.body.scrollTop = t.block.body.scrollHeight;
-        if (stick) aiScrollToBottom();
-      }
-      return;
-    }
-    if (ev.type === "agent_settled") {
-      // End of a run: next text opens a fresh bubble. Settle anything still loading.
-      settleAll();
-      return;
-    }
-    if (ev.type === "error") {
-      aiAppend("assistant", `[error] ${ev.error?.message || ""}`);
-      assistant = null;
-      return;
-    }
-  };
-
+// aiRunStream reads one conversation's events and draws them into every pane that
+// shows it, and keeps reading across connection drops: on a failure it re-derives
+// the watermark first (see aiHubRederive) and the server then replays exactly what
+// this client missed.
+async function aiRunStream(hub, ctrl, gen) {
   let attempt = 0;
   try {
     for (;;) {
-      if (pane.streamGen !== gen) break; // superseded
+      if (hub.gen !== gen) break; // superseded
       let sawSettled = false;
       const onEvent = (ev) => {
-        if (pane.streamGen !== gen) return; // superseded mid-read
+        if (hub.gen !== gen) return; // superseded mid-read
         if (typeof ev.seq === "number") {
-          if (ev.seq <= pane.seenSeq) return; // already rendered from an earlier stream
-          pane.seenSeq = ev.seq;
+          if (ev.seq <= hub.seenSeq) return; // already drawn from an earlier read
+          hub.seenSeq = ev.seq;
         }
         if (ev.type === "agent_settled") sawSettled = true;
-        render();
-        handle(ev);
+        aiHandleEvent(hub, ev);
       };
       try {
-        await aiStreamOnce(id, pane.seenSeq, onEvent, ctrl.signal);
-        if (pane.streamGen !== gen) break;
+        await aiStreamOnce(hub.id, hub.seenSeq, onEvent, ctrl.signal);
+        if (hub.gen !== gen) break;
         // Normal close: either the run settled, or we are caught up and idle.
-        if (!sawSettled) settleAll();
+        if (!sawSettled) aiHubSettle(hub);
         break;
       } catch (err) {
-        if (pane.streamGen !== gen) break; // superseded or aborted
+        if (hub.gen !== gen) break; // superseded or aborted
         if (err && err.name === "AbortError") break;
         if (err && err.fatal) {
-          aiAppend("assistant", `[error] ${err.message}`);
+          aiHubError(hub, err.message);
           break;
         }
-        // Network drop: reattach and let the server replay what we missed.
+        // Network drop: re-derive, reattach, and let the server replay the rest.
         attempt++;
         if (attempt > AI_STREAM_MAX_RETRIES) {
-          aiAppend("assistant", "[error] 连接中断，重连失败");
+          aiHubError(hub, "连接中断，重连失败");
           break;
         }
         await aiSleep(Math.min(500 * 2 ** (attempt - 1), AI_STREAM_MAX_BACKOFF));
+        await aiHubRederive(hub);
       }
     }
   } finally {
-    // Only the current generation owns the pane's streaming state; a superseded
-    // stream must not clear the new session's stop button.
-    if (pane.streamGen === gen) {
-      pane.streamCtl = null;
-      aiSetStreaming(pane, false);
+    // Only the current generation owns the connection: a superseded read must not
+    // clear the stop control of the read that replaced it.
+    if (hub.gen === gen) {
+      hub.ctrl = null;
+      aiHubSettle(hub);
+      aiSetStreamingFor(hub, false);
     }
-    if (aiRenderPane === pane) aiRenderPane = null;
+    if (aiRenderPane && hub.targets.some((t) => t.pane === aiRenderPane)) {
+      aiRenderPane = null;
+    }
+  }
+}
+
+// aiHubRederive re-reads the session's watermark after a drop. A session the
+// server rebuilt numbers its events from 1 again, so the watermark this client
+// holds can be ahead of the server's — and asking for "everything since 300"
+// against a session whose backlog is three events long would drop the whole run
+// and leave the screen standing still.
+async function aiHubRederive(hub) {
+  try {
+    const res = await fetch(`${AI_BASE}/ai/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml.dump({ id: hub.id }),
+    });
+    const data = yaml.load(await res.text()) || {};
+    const last = Number(data.lastSeq) || 0;
+    if (res.ok && last < hub.seenSeq) hub.seenSeq = last;
+  } catch {
+    // Keep the watermark we have; the next attempt tries again.
+  }
+}
+
+// aiHandleEvent splits one event into the part that belongs to the conversation and
+// the part that belongs to each pane drawing it.
+function aiHandleEvent(hub, ev) {
+  const layoutFrame = ev.type === "tool_execution_end" && ev.toolName === "layout";
+  if (layoutFrame && !ev.isError) {
+    // The tree is the tab's business, not a pane's: it is applied once, from the
+    // pane the turn was sent from. It may add or drop panes, so the targets are
+    // read *after* it — a pane it dropped must not receive the rest of the run.
+    applyLayoutFrame(hub.senderTab || tabOfPane(hub.sender), ev.result);
+  }
+  if (ev.type === "agent_settled") hub.run = [];
+  else if (!layoutFrame) hub.run.push(ev);
+  for (const t of [...hub.targets]) aiHandleOne(t, ev);
+  if (ev.type === "agent_settled") aiHubSettle(hub);
+}
+
+// aiHubSettle ends the run in every pane: nothing is left loading, and the run
+// that was in flight can no longer be replayed into a pane that joins.
+function aiHubSettle(hub) {
+  for (const t of [...hub.targets]) t.settle();
+  hub.run = [];
+}
+
+// aiHubError reports a failure of the stream itself into every pane drawing it.
+function aiHubError(hub, message) {
+  for (const t of [...hub.targets]) {
+    aiRenderPane = t.pane;
+    aiAppend("assistant", `[error] ${message}`);
+  }
+  aiRenderPane = null;
+}
+
+// aiHubAnswer answers a pending question once, from whichever pane it was picked
+// in: every card the question put on screen closes, and the answer goes to the
+// conversation.
+function aiHubAnswer(hub, value) {
+  for (const disable of [...hub.cards.values()]) disable();
+  hub.cards.clear();
+  void aiAnswer(hub, value);
+}
+
+// aiHandleOne draws one event into one pane's target. The events themselves are
+// the conversation's; where each one lands is the target's.
+function aiHandleOne(t, ev) {
+  const pane = t.pane;
+  aiRenderPane = pane;
+  const settleAll = () => t.settle();
+
+  // The user's own message is not a server event, so the hub carries it as one of
+  // its own: without it a pane you did not type in would show a reply to a
+  // question it never saw. Replayed into a pane that joins later, it is treated
+  // like any other arrival (`reveal` false) — nothing was typed *there*.
+  if (ev.type === "local_echo") {
+    aiAppendUserParts(ev.parts, false);
+    return;
+  }
+  if (ev.type === "tool_execution_end" && ev.toolName === "layout") return;
+  // Native pi event: message_update carries the assistant message sub-events.
+  if (ev.type === "message_update") {
+    const ae = ev.assistantMessageEvent || {};
+    if (ae.type === "text_start" || ae.type === "text_delta") {
+      if (!t.assistant) t.assistant = aiMarkdown();
+      if (t.thinking) {
+        aiSettle(t.thinking.block, "done");
+        t.thinking = null;
+      }
+    }
+    if (ae.type === "text_delta") {
+      const stick = aiAtBottom();
+      t.assistant.append(ae.delta || "");
+      if (stick) aiScrollToBottom();
+    } else if (ae.type === "thinking_start" || ae.type === "thinking_delta") {
+      if (!t.thinking) t.thinking = aiThinking();
+      if (ae.type === "thinking_delta") {
+        const stick = aiAtBottom();
+        const follow = aiBodyAtBottom(t.thinking.block.body);
+        t.thinking.body.textContent += ae.delta || "";
+        if (follow && !t.thinking.block.body.hidden) {
+          t.thinking.block.body.scrollTop = t.thinking.block.body.scrollHeight;
+        }
+        if (stick) aiScrollToBottom();
+      }
+    } else if (ae.type === "error") {
+      aiAppend("assistant", `[error] ${ae.error?.errorMessage || ""}`);
+      t.assistant = null;
+    }
+    return;
+  }
+  if (ev.type === "message_end") {
+    if (t.assistant && ev.message?.role === "assistant") t.assistant.flush();
+    return;
+  }
+  if (ev.type === "turn_start") {
+    // A new LLM turn begins (including a prompt steered in mid-run): start a
+    // fresh assistant bubble so replies keep their place relative to the user.
+    if (t.assistant) {
+      t.assistant.flush();
+      t.assistant = null;
+    }
+    if (t.thinking) {
+      aiSettle(t.thinking.block, "done");
+      t.thinking = null;
+    }
+    return;
+  }
+  if (ev.type === "tool_execution_start") {
+    if (ev.toolName === "ask_user") {
+      const card = aiAskUser(ev.args, (value) => aiHubAnswer(hub, value));
+      hub.cards.set(pane, card.disable);
+    } else if (ev.toolName === "layout") {
+      // Nothing yet: the tree the model *asked* for is not the tree that was
+      // stored. It arrives with the result, and only when the write was
+      // accepted (see aiHandleEvent).
+    } else {
+      t.tools.set(ev.toolCallId, aiTool(ev.toolName, ev.args));
+    }
+    return;
+  }
+  if (ev.type === "tool_execution_update") {
+    const tool = t.tools.get(ev.toolCallId);
+    if (tool && ev.partialResult) {
+      const stick = aiAtBottom();
+      const follow = aiBodyAtBottom(tool.block.body);
+      tool.body.textContent += `\n${aiStringify(ev.partialResult)}`;
+      if (follow && !tool.block.body.hidden) tool.block.body.scrollTop = tool.block.body.scrollHeight;
+      if (stick) aiScrollToBottom();
+    }
+    return;
+  }
+  if (ev.type === "tool_execution_end") {
+    const tool = t.tools.get(ev.toolCallId);
+    if (tool) {
+      const stick = aiAtBottom();
+      const follow = aiBodyAtBottom(tool.block.body);
+      tool.body.textContent += `\n→ ${ev.isError ? "error" : "done"}: ${aiStringify(ev.result)}`;
+      aiSettle(tool.block, ev.isError ? "error" : "done");
+      if (follow && !tool.block.body.hidden) tool.block.body.scrollTop = tool.block.body.scrollHeight;
+      if (stick) aiScrollToBottom();
+    }
+    return;
+  }
+  if (ev.type === "agent_settled") {
+    // End of a run: next text opens a fresh bubble. Settle anything still loading.
+    settleAll();
+    return;
+  }
+  if (ev.type === "error") {
+    aiAppend("assistant", `[error] ${ev.error?.message || ""}`);
+    t.assistant = null;
+    return;
   }
 }
 
@@ -1893,17 +2185,8 @@ function aiSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// aiCancelStream stops the active SSE stream (if any) and invalidates it so its
-// loop stops rendering. Used when switching sessions or starting a new one.
-function aiCancelStream(pane) {
-  if (!pane) return;
-  pane.streamGen++;
-  if (pane.streamCtl) {
-    pane.streamCtl.ctrl.abort();
-    pane.streamCtl = null;
-  }
-  aiSetStreaming(pane, false);
-}
+  // A pane draws on the hub, not on the connection: the events are read once and
+  // written into every registered list.
 
 // aiStreamOnce opens one SSE connection and drives `onEvent` until the server
 // closes it. A transport/HTTP failure throws so aiStream can reconnect; a
@@ -1964,14 +2247,20 @@ async function aiSend() {
   if (!images.length) aiHistoryRecord(pane.session, text);
   aiClearImages();
   const blocks = aiBuildSendBlocks(text, images);
-  // Local bubble: text + real images (the [image] tokens are not shown).
+  const hub = aiHub(pane.session);
+  // Local bubble: text + real images (the [image] tokens are not shown). The
+  // echo goes into every pane showing this conversation — the message is the
+  // conversation's, not the pane's — and the pane it was typed in is one of them
+  // whether or not it has registered yet.
   const parts = blocks.map((b) =>
     b.type === "text"
       ? { type: "text", text: b.text }
       : { type: "image", src: b.url },
   );
-  aiRenderPane = pane;
-  aiAppendUserParts(parts);
+  for (const p of new Set([...hub.targets.map((t) => t.pane), pane])) {
+    aiRenderPane = p;
+    aiAppendUserParts(parts, p === pane);
+  }
   aiRenderPane = null;
   const wire = blocks.map((b) =>
     b.type === "text"
@@ -1985,40 +2274,43 @@ async function aiSend() {
   });
   const data = yaml.load(await res.text()) || {};
   if (!res.ok) {
-    aiRenderPane = pane;
-    aiAppend("assistant", `[error] ${data.error?.message || res.status}`);
-    aiRenderPane = null;
+    aiHubError(hub, data.error?.message || String(res.status));
     return;
   }
+  // Part of the run from here on: a pane that joins before it settles gets it too.
+  hub.run.push({ type: "local_echo", parts });
   aiLastSend = { pane, text };
-  await aiStream(pane);
+  aiHubAttach(hub, pane, true);
 }
 
 // aiAnswer sends a user's reply to a pending ask_user question as an ordinary
-// text turn on /ai/ask, then consumes the new run's stream.
-async function aiAnswer(answer) {
-  const pane = aiPane;
-  if (!pane) return;
-  aiRenderPane = pane;
-  aiAppend("user", answer);
+// text turn on /ai/ask, from whichever pane it was answered in.
+async function aiAnswer(hub, pane, answer) {
+  if (!hub) return;
+  const sender = pane || hub.sender;
+  const parts = [{ type: "text", text: answer }];
+  for (const p of new Set([...hub.targets.map((t) => t.pane), sender])) {
+    if (!p) continue;
+    aiRenderPane = p;
+    aiAppendUserParts(parts, p === sender);
+  }
   aiRenderPane = null;
   const res = await fetch(`${AI_BASE}/ai/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
     body: yaml.dump({
-      id: pane.session,
-      tabId: tabTalkId(pane),
+      id: hub.id,
+      tabId: tabTalkId(sender),
       blocks: [{ type: "text", text: answer }],
     }),
   });
   const data = yaml.load(await res.text()) || {};
   if (!res.ok) {
-    aiRenderPane = pane;
-    aiAppend("assistant", `[error] ${data.error?.message || res.status}`);
-    aiRenderPane = null;
+    aiHubError(hub, data.error?.message || String(res.status));
     return;
   }
-  await aiStream(pane);
+  hub.run.push({ type: "local_echo", parts });
+  aiHubAttach(hub, sender, true);
 }
 
 // ---------- tab records ----------
@@ -2030,18 +2322,20 @@ async function aiAnswer(answer) {
 // Everything after creation goes through the model's layout tool — the
 // frontend only reads.
 //
-// The tree is not rendered yet: one pane fills the tab exactly as before, so
-// primaryPane() is the whole of what the layout means here.
+// There is more than one pane now, so the tree is rendered elsewhere: see
+// renderPanes (and primaryPane for the launcher, which reads a tree rather than
+// rendering it).
 
-// primaryPane returns the first pane leaf of a layout tree, or null when the
-// tree is unreadable. Until splits are rendered this is the only pane; after
-// that it stays the fallback for a malformed tree.
+// primaryPane returns the first pane leaf of a layout tree, or null when the tree
+// is unreadable. The launcher reads the tree rather than rendering it, so it goes
+// through here.
 function primaryPane(layout) {
   let node = layout;
   for (let depth = 0; node && depth < 16; depth++) {
     if (node.pane) return node.pane;
-    if (!Array.isArray(node.children) || !node.children.length) return null;
-    node = node.children[0];
+    const children = node.split?.children || node.children;
+    if (!Array.isArray(children) || !children.length) return null;
+    node = children[0];
   }
   return null;
 }
@@ -2093,14 +2387,6 @@ async function tabList() {
   return data.tabs || [];
 }
 
-// tabLayoutOf is the single-pane layout a tab gets when it is created: the
-// chat session or the blueprint it was opened for.
-function tabLayoutOf(tab) {
-  return tab.kind === "page"
-    ? { pane: { content: "page", id: tab.pageId } }
-    : { pane: { content: "chat", id: tab.sessionId } };
-}
-
 // syncTabRecord gives a tab its record on first activation — new tabs, deep
 // links, tabs restored from localStorage after a reload (which have no tabId
 // yet), all land here — and reads the layout back the first time an existing
@@ -2115,7 +2401,16 @@ async function syncTabRecord(tab) {
         // yet — and nothing to write either: whoever puts content in the tab
         // writes it (the service via ai-new, or tabPut below for a page).
         if (rec.layout && Object.keys(rec.layout).length) {
-          tab.layout = rec.layout;
+          // Read into the shape in use now, and write it back when that meant
+          // filling something in (a record written before paneId existed, or with
+          // the names in use then). Those ids have to be the ones the layout tool
+          // reads, or the model's next write would look like a different pane and
+          // rebuild a pane it meant to keep.
+          const before = JSON.stringify(rec.layout);
+          tab.layout = normalizeTree(rec.layout) || tabLayoutOf(tab);
+          if (JSON.stringify(tab.layout) !== before) {
+            tabPut(tab.tabId, tab.layout).catch(logTabRecordError);
+          }
           return;
         }
       } catch (err) {
@@ -2539,10 +2834,6 @@ async function openPageTab(pageId, name, mode = "push", recordId = "") {
 async function activateTab(id, mode = "push") {
   const tab = openTabs.find((t) => t.id === id);
   if (!tab) return;
-  const previous = aiPane && openTabs.find((t) => t.panes?.get(aiPane.key) === aiPane);
-  if (previous && previous.id !== id) {
-    aiCancelStreamQuiet(previous);
-  }
   activeTabId = id;
   newTabOpen = false;
   applyLayout();
@@ -2574,11 +2865,9 @@ async function activateTab(id, mode = "push") {
       aiResizeInput();
     }
   }
-  try {
-    if (aiPane) await aiStream(aiPane);
-  } catch (err) {
-    aiAppend("assistant", `[error] ${err.message}`);
-  }
+  // Nothing is attached here: every pane registered itself with its conversation
+  // as it loaded (see aiLoadSession), and entering a tab is not a view change —
+  // a background tab's panes keep drawing.
   if (aiPane) aiInputEl().focus();
 }
 
@@ -2591,31 +2880,20 @@ function firstChatKey(tab) {
   return "";
 }
 
-// Leaving a tab stops the streams the user can no longer see. It is the pane's
-// own abort, not a cancellation of the run: /ai/stream replays from the pane's
-// seq when the tab comes back.
-function aiCancelStreamQuiet(tab) {
-  for (const pane of tab.panes?.values() ?? []) {
-    if (pane.streamCtl) {
-      pane.streamGen++;
-      pane.streamCtl.ctrl.abort();
-      pane.streamCtl = null;
-      pane.streaming = false;
-    }
-  }
-}
-
 function closeTab(id) {
   const idx = openTabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
   const closed = openTabs[idx];
   openTabs.splice(idx, 1);
+  // The tab's panes go with it: nobody is looking at them, and leaving them
+  // registered would keep their conversations streaming into detached elements.
+  dropTabPanes(closed);
+  aiPane = null;
   saveTabs();
   renderTabs();
   if (activeTabId !== id) return;
   // The closed tab owned the content area: fall back to the neighbour, or to
   // the graph when it was the last one.
-  aiCancelStream(aiPane);
   renderedTabId = null;
   activeTabId = null;
   const next = openTabs[Math.max(0, idx - 1)];
@@ -2949,10 +3227,10 @@ async function recentTabs() {
   // first pane holds — a chat's session preview, or the blueprint.
   return list.map((r) => {
     const pane = primaryPane(r.layout);
-    const label = pane?.content === "page"
-      ? newTabBlueprints.get(pane.id)?.name || pane.id
-      : previews.get(pane?.id) || pane?.id || r.tabId;
-    return { ...r, label, kind: pane?.content || "?" };
+    const label = pane?.contentType === "page"
+      ? newTabBlueprints.get(pane.contentId)?.name || pane.contentId
+      : previews.get(pane?.contentId) || pane?.contentId || r.tabId;
+    return { ...r, label, kind: pane?.contentType || "?" };
   });
 }
 
@@ -3040,8 +3318,8 @@ async function newTabOpenTab(recordId) {
     newTabError(`tab ${recordId} has no pane`);
     return;
   }
-  if (pane.content === "page") await openPageTab(pane.id, pane.id, "replace", recordId);
-  else await openTab({ skillId: "", sessionId: pane.id, name: "chat", text: "", recordId }, "replace");
+  if (pane.contentType === "page") await openPageTab(pane.contentId, pane.contentId, "replace", recordId);
+  else await openTab({ skillId: "", sessionId: pane.contentId, name: "chat", text: "", recordId }, "replace");
 }
 
 // newTabOpenPage opens a blueprint as a page tab.
@@ -3301,10 +3579,12 @@ async function aiConfirmAccept() {
       aiHistoryClear(sessionId);
       if (tab?.tabId) {
         const fresh = await aiNewSession();
-        pane.session = fresh;
-        pane.seenSeq = 0;
+        // The pane stays the same pane (same paneId), pointed at a new
+        // conversation: renderPanes takes the old one down and loads this one.
         pane.loaded = false;
-        applyPaneLayout(tab, { pane: { content: "chat", id: fresh } });
+        applyPaneLayout(tab, {
+          pane: { paneId: pane.key, contentType: "chat", contentId: fresh },
+        });
         tab.sessionId = fresh;
         tab.skillId = "";
         tab.name = "new chat";
@@ -3407,8 +3687,10 @@ async function aiCommandNew() {
       openTabs.push(tab);
     } else {
       // The same tab, a fresh instance: it keeps its record (and so its
-      // tabId), and the layout's pane is repointed at the new session below.
+      // tabId), and the layout's pane is repointed at the new session below. The
+      // panes of the instance it replaces go with it — nothing is showing them.
       tab.tabId = openTabs[idx].tabId || "";
+      dropTabPanes(openTabs[idx]);
       openTabs[idx] = tab; // the slot now owns the fresh instance
     }
     if (tab.tabId) {
@@ -3590,7 +3872,9 @@ function aiRenderHistory(pane, messages, sessionId) {
 // server-side context, replays the recorded messages into the pane's own list,
 // and reattaches the pane's stream when a run is still in flight.
 async function aiLoadSession(pane, id) {
-  aiCancelStream(pane);
+  paneSetSession(pane, id);
+  // Out of the old conversation until the history is up: registration follows.
+  aiHubUnregister(pane);
   const res = await fetch(`${AI_BASE}/ai/resume`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
@@ -3605,13 +3889,16 @@ async function aiLoadSession(pane, id) {
   });
   const detail = yaml.load(await detailRes.text()) || {};
   aiRenderHistory(pane, detail.messages || [], id);
-  // Continue the same session; skip the events already emitted so a resumed
-  // in-memory session does not replay old ones.
-  pane.session = id;
-  pane.seenSeq = Number(data.lastSeq) || 0;
-  // The run may still be executing server-side (our stream was cut); reattach so
-  // the events emitted while we were away are replayed from lastSeq.
-  if (data.active) await aiStream(pane);
+  const hub = aiHub(id);
+  // The watermark belongs to the connection, and a resumed session is the
+  // authority on it: take the server's while nothing is attached. A live
+  // connection keeps its own — it has drawn further than the server recorded, and
+  // a rebuilt session numbers its events from 1 again.
+  if (!hub.ctrl) hub.seenSeq = Number(data.lastSeq) || 0;
+  aiHubRegister(pane);
+  // The run may still be executing server-side (our stream was cut, or this pane
+  // is joining late): attach, and what we missed is replayed.
+  if (data.active) aiHubAttach(hub, pane, true);
 }
 
 async function aiResumeSession(id, name) {
