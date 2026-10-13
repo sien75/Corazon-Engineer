@@ -345,3 +345,145 @@ curl -s -X POST <address>/log/stream \
 YAML
 ```
 
+
+## log-tab-new
+
+- `POST /log/tab/new` (network / http)
+
+Create an empty tab record and assign its id; what it holds is written afterwards
+
+### Request body
+
+```yaml
+{}
+```
+
+### Response (status 200)
+
+```yaml
+tabId: string
+```
+
+### Errors
+
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/tab/new \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+YAML
+```
+
+## log-tab-mutation
+
+- `POST /log/tab/mutation` (network / http)
+
+Create a tab record or overwrite an existing one's layout; the layout is a pane tree stored as text and returned as-is — log does not interpret it
+
+### Request body
+
+```yaml
+layout: object
+tabId?: string
+```
+
+### Response (status 200)
+
+```yaml
+createdAt: string
+layout: object
+tabId: string
+updatedAt: string
+```
+
+### Errors
+
+- 400 `bad_request` — layout missing
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/tab/mutation \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+  layout: object
+  tabId?: string
+YAML
+```
+
+## log-tab-detail
+
+- `POST /log/tab/detail` (network / http)
+
+Read one tab record — its pane tree and timestamps
+
+### Request body
+
+```yaml
+tabId: string
+```
+
+### Response (status 200)
+
+```yaml
+createdAt: string
+layout: object
+tabId: string
+updatedAt: string
+```
+
+### Errors
+
+- 400 `bad_request` — tabId missing
+- 404 `not_found` — tab does not exist
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/tab/detail \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+  tabId: string
+YAML
+```
+
+## log-tab-list
+
+- `POST /log/tab/list` (network / http)
+
+List tab records, most recently updated first
+
+### Request body
+
+```yaml
+pageNum?: number
+```
+
+### Response (status 200)
+
+```yaml
+hasMore: boolean
+pageNum: number
+pageSize: 100
+tabs:
+    - createdAt: string
+      layout: object
+      tabId: string
+      updatedAt: string
+```
+
+### Errors
+
+- 400 `bad_request` — bad request
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/tab/list \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+  pageNum?: number
+YAML
+```

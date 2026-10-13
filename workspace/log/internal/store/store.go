@@ -49,6 +49,25 @@ type Store struct {
 	db *sql.DB
 }
 
+// Tab is one tab's layout state: a pane tree stored as text. Unlike Record it is
+// state, not a stream — one row per tab, overwritten in place. The tree is
+// opaque here: log stores and returns it without interpreting its structure.
+type Tab struct {
+	TabID     string      `yaml:"tabId"`
+	Layout    interface{} `yaml:"layout"`
+	CreatedAt string      `yaml:"createdAt"`
+	UpdatedAt string      `yaml:"updatedAt"`
+}
+
+func (t Tab) Body() map[string]interface{} {
+	return map[string]interface{}{
+		"tabId":     t.TabID,
+		"layout":    t.Layout,
+		"createdAt": t.CreatedAt,
+		"updatedAt": t.UpdatedAt,
+	}
+}
+
 func Open(root string) (*Store, error) {
 	dir := filepath.Join(root, ".engineer")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -83,6 +102,17 @@ func Open(root string) (*Store, error) {
 		if _, err := db.Exec(idx); err != nil {
 			return nil, err
 		}
+	}
+	// tabs is separate from records on purpose: a tab's layout is keyed state
+	// (one row, overwritten in place), while records is an append-only stream
+	// whose listing and search would otherwise be polluted by layout rows.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS tabs (
+		tab_id TEXT PRIMARY KEY,
+		layout TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`); err != nil {
+		return nil, err
 	}
 	return &Store{db: db}, nil
 }
@@ -291,6 +321,85 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 		sessions = sessions[:PageSize]
 	}
 	return sessions, hasMore, nil
+}
+
+// PutTab creates a tab or overwrites an existing one's layout, and returns the
+// stored row. An empty tabID allocates one (t_<hex>); createdAt is kept from the
+// first write while updatedAt moves.
+func (s *Store) PutTab(tabID string, layout interface{}) (Tab, error) {
+	if tabID == "" {
+		tabID = "t_" + newID()
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	layoutText, err := marshalYAML(layout)
+	if err != nil {
+		return Tab{}, err
+	}
+	_, err = s.db.Exec(`INSERT INTO tabs (tab_id, layout, created_at, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(tab_id) DO UPDATE SET layout = excluded.layout, updated_at = excluded.updated_at`,
+		tabID, string(layoutText), now, now)
+	if err != nil {
+		return Tab{}, err
+	}
+	return s.GetTab(tabID)
+}
+
+// NewTab creates a tab with no layout yet and returns it. A tab is created
+// before whatever lives in it, so there is an id to hand to the service that
+// opens its conversation.
+func (s *Store) NewTab() (Tab, error) {
+	return s.PutTab("", map[string]interface{}{})
+}
+
+// GetTab returns one tab; sql.ErrNoRows when it does not exist.
+func (s *Store) GetTab(tabID string) (Tab, error) {
+	var t Tab
+	var layoutText string
+	err := s.db.QueryRow(`SELECT tab_id, layout, created_at, updated_at
+		FROM tabs WHERE tab_id = ?`, tabID).
+		Scan(&t.TabID, &layoutText, &t.CreatedAt, &t.UpdatedAt)
+	if err != nil {
+		return Tab{}, err
+	}
+	if err := yaml.Unmarshal([]byte(layoutText), &t.Layout); err != nil {
+		return Tab{}, err
+	}
+	return t, nil
+}
+
+// ListTabs returns one page (pageSize=100) of tabs, most recently updated first.
+func (s *Store) ListTabs(pageNum int) ([]Tab, bool, error) {
+	if pageNum < 1 {
+		pageNum = 1
+	}
+	rows, err := s.db.Query(`SELECT tab_id, layout, created_at, updated_at FROM tabs
+		ORDER BY updated_at DESC, tab_id DESC LIMIT ? OFFSET ?`,
+		PageSize+1, (pageNum-1)*PageSize)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	tabs := []Tab{}
+	for rows.Next() {
+		var t Tab
+		var layoutText string
+		if err := rows.Scan(&t.TabID, &layoutText, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, false, err
+		}
+		if err := yaml.Unmarshal([]byte(layoutText), &t.Layout); err != nil {
+			continue // an unreadable tree is one bad row, not a failed page
+		}
+		tabs = append(tabs, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(tabs) > PageSize
+	if hasMore {
+		tabs = tabs[:PageSize]
+	}
+	return tabs, hasMore, nil
 }
 
 func snippet(s string, max int) string {

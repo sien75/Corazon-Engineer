@@ -1,0 +1,26 @@
+id: log-tab-list
+description: List tab records, most recently updated first
+
+request:
+  body:
+    pageNum?: number  # page number, 1-based, default 1
+
+response:
+  status: 200
+  body:
+    tabs:
+      - tabId: string
+        layout: object  # the pane tree as stored
+        createdAt: string  # first write time, RFC3339
+        updatedAt: string  # latest write time, RFC3339
+    pageNum: number  # echoed page number
+    hasMore: boolean  # whether more pages exist
+    pageSize: 100  # fixed page size, 100 tabs per page
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 500
+    code: internal
+    description: server internal error

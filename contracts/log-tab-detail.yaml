@@ -1,0 +1,25 @@
+id: log-tab-detail
+description: Read one tab record — its pane tree and timestamps
+
+request:
+  body:
+    tabId: string  # tab id
+
+response:
+  status: 200
+  body:
+    tabId: string
+    layout: object  # the pane tree as stored; same shape as log-tab-mutation's layout
+    createdAt: string  # first write time, RFC3339
+    updatedAt: string  # latest write time, RFC3339
+
+errors:
+  - status: 400
+    code: bad_request
+    description: tabId missing
+  - status: 404
+    code: not_found
+    description: tab does not exist
+  - status: 500
+    code: internal
+    description: server internal error

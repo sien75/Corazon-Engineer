@@ -1,0 +1,30 @@
+id: log-tab-mutation
+description: Create a tab record or overwrite an existing one's layout; the layout is a pane tree stored as text and returned as-is — log does not interpret it
+
+request:
+  body:
+    tabId?: string  # existing tab id to overwrite; omitted creates a tab and the server assigns the id (t_<hex>)
+    layout: object  # the pane tree; log stores it without validating its structure
+      # Two node shapes, recursive:
+      #   leaf:  { pane: { content: chat | page, id: string, size?: fill | brief } }
+      #   split: { split: col | row, weight?: 1 | 2 | 3, children: [ <node>, ... ] }
+      # col splits left/right, row splits top/bottom; weight is the relative share
+      # within a split (1..3, default 1); size brief marks a short pane and is only
+      # valid on a leaf; a pane's id is its content id (chat = sessionId,
+      # page = blueprint slug).
+
+response:
+  status: 200
+  body:
+    tabId: string  # echoed, or the assigned id when the request omitted it
+    layout: object  # echoed as written
+    createdAt: string  # first write time, RFC3339
+    updatedAt: string  # latest write time, RFC3339
+
+errors:
+  - status: 400
+    code: bad_request
+    description: layout missing
+  - status: 500
+    code: internal
+    description: server internal error

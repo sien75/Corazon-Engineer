@@ -1,0 +1,3 @@
+id: core-log-tab
+description: log-tab-mutation / log-tab-detail / log-tab-list contract conformance — tab records are keyed by tabId, an upsert overwrites in place, and the pane tree round-trips as stored
+atoms: [log]

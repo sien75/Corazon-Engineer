@@ -64,5 +64,33 @@ atoms:
           extend:
             path: /log/stream
             method: POST
+        - id: log-tab-new
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-new.yaml
+          extend:
+            path: /log/tab/new
+            method: POST
+        - id: log-tab-mutation
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-mutation.yaml
+          extend:
+            path: /log/tab/mutation
+            method: POST
+        - id: log-tab-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-detail.yaml
+          extend:
+            path: /log/tab/detail
+            method: POST
+        - id: log-tab-list
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-list.yaml
+          extend:
+            path: /log/tab/list
+            method: POST
 
       consumes: []

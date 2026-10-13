@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +32,10 @@ func New(st *store.Store) *Server {
 	s.mux.HandleFunc("POST /log/query-detail", s.handleQueryDetail)
 	s.mux.HandleFunc("POST /log/search", s.handleSearch)
 	s.mux.HandleFunc("POST /log/mutation", s.handleMutation)
+	s.mux.HandleFunc("POST /log/tab/new", s.handleTabNew)
+	s.mux.HandleFunc("POST /log/tab/mutation", s.handleTabMutation)
+	s.mux.HandleFunc("POST /log/tab/detail", s.handleTabDetail)
+	s.mux.HandleFunc("POST /log/tab/list", s.handleTabList)
 	s.mux.HandleFunc("POST /log/stream", s.handleStream)
 	return s
 }
@@ -150,6 +156,92 @@ func (s *Server) handleMutation(w http.ResponseWriter, r *http.Request) {
 	}
 	s.broker.Publish(rec)
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"id": rec.ID, "createdAt": rec.CreatedAt})
+}
+
+// ---------- log/tab/* ----------
+//
+// A tab's pane tree is keyed state, not a record: one row per tabId, overwritten
+// in place. Log stores the tree as text and hands it back — it does not read,
+// validate, or default the layout; that belongs to whoever writes it.
+
+func (s *Server) handleTabNew(w http.ResponseWriter, r *http.Request) {
+	var req struct{}
+	if !decode(w, r, &req) {
+		return
+	}
+	tab, err := s.store.NewTab()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"tabId": tab.TabID})
+}
+
+func (s *Server) handleTabMutation(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TabID  string      `yaml:"tabId"`
+		Layout interface{} `yaml:"layout"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Layout == nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "layout missing")
+		return
+	}
+	tab, err := s.store.PutTab(strings.TrimSpace(req.TabID), req.Layout)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, tab.Body())
+}
+
+func (s *Server) handleTabDetail(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TabID string `yaml:"tabId"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.TabID) == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "tabId missing")
+		return
+	}
+	tab, err := s.store.GetTab(req.TabID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "not_found", "tab does not exist")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, tab.Body())
+}
+
+func (s *Server) handleTabList(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PageNum interface{} `yaml:"pageNum"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	tabs, hasMore, err := s.store.ListTabs(pageNum(req.PageNum))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	items := make([]map[string]interface{}, 0, len(tabs))
+	for _, t := range tabs {
+		items = append(items, t.Body())
+	}
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
+		"tabs":     items,
+		"pageNum":  pageNum(req.PageNum),
+		"hasMore":  hasMore,
+		"pageSize": store.PageSize,
+	})
 }
 
 // ---------- log/list ----------
