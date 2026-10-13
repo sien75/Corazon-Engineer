@@ -1,6 +1,6 @@
 atoms:
   - name: ai
-    description: Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash; it also owns automatic skill discovery — a skill is one piece of text, kept as a file at .agents/skills/<slug>/SKILL.md with candidates at .engineer/suggested-skills/<slug>.md, discovered from past conversation runs read back through log, and running one is opening a session whose first message is that text; blueprints are frontend resources under .agents/blueprints/, written by the agent as plain files and served/listed by static — ai has no blueprint interface of its own
+    description: Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash; it owns two custom tools — ask_user (ask and end the turn) and layout, which reads and replaces the pane layout of the tab the session is shown in (a tree of chat / page panes stored per tabId via log, so the model can split the screen instead of only talking about it); it also owns automatic skill discovery — a skill is one piece of text, kept as a file at .agents/skills/<slug>/SKILL.md with candidates at .engineer/suggested-skills/<slug>.md, discovered from past conversation runs read back through log, and running one is opening a session whose first message is that text; blueprints are frontend resources under .agents/blueprints/, written by the agent as plain files and served/listed by static — ai has no blueprint interface of its own
     path: ./workspace/ai
     runtime_type: bun
     runtime_version: "1.3"
@@ -86,4 +86,18 @@ atoms:
           contract: ./contracts/log-session-detail.yaml
           extend:
             path: /log/session-detail
+            method: POST
+        - id: log-tab-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-detail.yaml
+          extend:
+            path: /log/tab/detail
+            method: POST
+        - id: log-tab-mutation
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-mutation.yaml
+          extend:
+            path: /log/tab/mutation
             method: POST

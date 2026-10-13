@@ -23,3 +23,19 @@ edges:
     channel: network
     protocol: http
     description: ai reads a session's conversation messages to rebuild context on resume
+  - id: ai-to-log-tab-detail
+    from: ai
+    from_interface: log-tab-detail
+    to: log
+    to_interface: log-tab-detail
+    channel: network
+    protocol: http
+    description: the layout tool reads the current tab's pane tree before it changes anything
+  - id: ai-to-log-tab-mutation
+    from: ai
+    from_interface: log-tab-mutation
+    to: log
+    to_interface: log-tab-mutation
+    channel: network
+    protocol: http
+    description: the layout tool replaces the current tab's pane tree

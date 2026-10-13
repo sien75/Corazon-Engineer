@@ -10,7 +10,7 @@ Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any 
 
 - `POST /ai/new` (network / http)
 
-Create a new session and return session id
+Create a conversation; where it is shown is the tab's business
 
 ### Request body
 
@@ -21,13 +21,11 @@ Create a new session and return session id
 ### Response (status 200)
 
 ```yaml
-sessionId: string
+sessionId: string  # the new conversation. A conversation belongs to no tab: a tab references conversations, and several tabs may reference the same one
 ```
 
 ### Errors
 
-- 400 `bad_request` — bad request
-- 404 `not_found` — not found
 - 500 `internal` — server error
 
 ### Example
@@ -48,6 +46,7 @@ Ask AI; prompt determines what AI does (qa / plan / act). A reply to an ask_user
 
 ```yaml
 id: string  # session id
+tabId?: string  # the tab this turn is speaking for — the layout tool acts on it. A conversation may be shown in more than one tab, so the caller names the one it is asking from; without it, `layout` has nothing to read or write
 blocks:  # the user turn, in order; a reply to ask_user is just a text block
     - type: text | image  # "text" carries text, "image" carries base64 data + mimeType
       text?: string  # text block: the prompt text
@@ -190,12 +189,12 @@ YAML
 
 - `POST /ai/resume` (network / http)
 
-Resume an existing conversation session, rebuilding its text context from log records
+Resume an existing conversation session, rebuilding its text context from log records; malformed history (orphan tool results, tool calls without a result, duplicate seq) is repaired in memory before it is replayed
 
 ### Request body
 
 ```yaml
-id: string
+id: string  # session id
 ```
 
 ### Response (status 200)
@@ -217,7 +216,7 @@ sessionId: string
 ```bash
 curl -s -X POST <address>/ai/resume \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
-  id: string
+  id: s_1a2b3c
 YAML
 ```
 
@@ -250,3 +249,17 @@ bytes
 ```bash
 curl -s -X GET <address>/blobs/<sha256> -o image.png
 ```
+
+## Tools
+
+Two custom tools beyond the built-in ones (`read` / `grep` / `find` / `ls` / `bash` / `write` / `edit`):
+
+- **`ask_user`** — ask a question and end the turn; the answer arrives as an ordinary text block on `/ai/ask`.
+- **`layout`** — read or replace the **pane layout** of the tab the current turn is speaking for (`/ai/ask`'s `tabId`). `op: read` returns the current tree; `op: write` replaces it with `layout`. The layout is shared by every conversation in that tab, so another pane's session can change it between turns — hence the tool's insistence on reading before writing. An id in the tree is a handle the tool issued (leave a chat pane's id out to open a new conversation; the id comes back in the result); an id it never issued is rejected. The tree is a recursive pair of node shapes:
+
+```yaml
+pane:  { content: chat | page, id: string, size?: fill | brief }
+split: { split: col | row, weight?: 1 | 2 | 3, children: [ ... ] }
+```
+
+  `col` splits left/right and `row` splits top/bottom; `weight` is the relative share inside one split; `size: brief` marks a short band (row splits only). A chat pane with no `id` gets a fresh session; a page pane's `id` is a blueprint slug. At most 6 panes. The tree is stored per tab via `log-tab-mutation`, keyed by the session's `tabId`; a write replaces the whole tree, which is why the tool tells the model to read first — and why the result always echoes what was stored. The frontend applies the tree when the tool's frame arrives, so what the model asks for is what the screen shows.

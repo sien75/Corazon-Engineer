@@ -20,6 +20,14 @@ import {
   type StoredRecord,
 } from "./recorder.ts";
 import { loadImage, saveImage } from "./blobs.ts";
+import {
+  chatIdsOf,
+  describeLayout,
+  normalizeLayout,
+  readLayout,
+  writeLayout,
+  type PaneNode,
+} from "./layout.ts";
 import { dbg } from "./debug.ts";
 import { SkillStore } from "./skill/store.ts";
 import { SCAN_THRESHOLD, Suggester } from "./skill/suggest.ts";
@@ -84,6 +92,129 @@ const askUserTool = defineTool({
   },
 });
 
+// layout: the model's handle on the tab it is talking in. The tab's pane tree is
+// stored by log as opaque text; this tool reads it and rewrites it whole.
+//
+// Writing replaces the tree rather than editing it: the model describes the
+// layout it wants, which is idempotent and survives replay, and which asks it to
+// hold no pane ids at all. The price is that a write without a read silently
+// drops panes, so the description says to read first and the result always echoes
+// the stored tree back.
+//
+// One instance per session: it closes over the session's tabId, the key the tree
+// is stored under.
+function makeLayoutTool(
+  logBase: string,
+  sess: Sess,
+  newSession: () => Promise<Sess>,
+  hasSession: (id: string) => Promise<boolean>,
+) {
+  const tabId = () => sess.speakingFor;
+  return defineTool({
+    name: "layout",
+    label: "Layout",
+    description: [
+      "Read or replace the pane layout of the tab you are talking in. The layout",
+      "is shared by every conversation in that tab, so another pane's session can",
+      "change it between your turns: ALWAYS read before you write, every time.",
+      "",
+      "  op=read   — returns the current tree.",
+      '  op=write  — replaces it with `layout` (the whole tree; there is no partial',
+      "              update, so writing without reading drops panes you never saw).",
+      "",
+      "A layout is a tree built from two node shapes:",
+      '  { pane: { content: "chat" | "page", id?: string, size?: "fill" | "brief" } }',
+      '  { split: "col" | "row", weight?: 1 | 2 | 3, children: [ ... ] }',
+      "col splits left/right, row splits top/bottom; weight is the relative share",
+      "within one split (1..3, default 1); size brief marks a short band and is",
+      "only valid inside a row split. At most 6 panes.",
+      "",
+      "A chat pane's id is a handle this tool issued, not something to invent. To",
+      "keep the conversation already in a pane, pass back the id you read there.",
+      "Leave it out to open a new conversation — the id comes back in the result,",
+      "so a later write can keep it. A page pane's id is a blueprint slug.",
+      "",
+      "Use it when showing beats telling: two things to compare, a page beside the",
+      "conversation about it, a short status band under a row of detail. The result",
+      "echoes the tree as stored.",
+    ].join("\n"),
+    promptSnippet: "layout: read (op=read) or replace (op=write) the tab's pane layout",
+    parameters: Type.Object({
+      op: Type.Union([Type.Literal("read"), Type.Literal("write")], {
+        description: "read the current layout, or write the one in `layout`",
+      }),
+      // The tree is validated by normalizeLayout, which reports what it did not
+      // like in words the model can act on; a schema here would only duplicate
+      // that in a poorer vocabulary.
+      layout: Type.Optional(
+        Type.Any({ description: "the whole pane tree; required when op=write" }),
+      ),
+    }),
+    executionMode: "sequential",
+    execute: async (_toolCallId, params) => {
+      const fail = (text: string) => ({
+        content: [{ type: "text" as const, text }],
+        isError: true,
+      });
+      if (!tabId()) {
+        return fail(
+          "No tab is in scope for this turn: the caller did not say which tab it is " +
+            "asking from, so there is no layout to read or write.",
+        );
+      }
+      try {
+        if (params.op === "read") {
+          const current = await readLayout(logBase, tabId());
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: current
+                  ? `Current layout of tab ${tabId()}:\n${describeLayout(current.layout)}`
+                  : `Tab ${tabId()} has no layout record yet: one pane, this conversation.`,
+              },
+            ],
+            details: { tabId: tabId(), layout: current?.layout },
+          };
+        }
+        if (params.layout === undefined) {
+          return fail("op=write needs `layout`: the whole pane tree to store.");
+        }
+        const current = await readLayout(logBase, tabId());
+        const layout = await normalizeLayout(params.layout, {
+          newSession: async () => (await newSession()).id,
+          hasSession,
+          currentIds: current ? chatIdsOf(current.layout) : [],
+        });
+        const saved = await writeLayout(logBase, tabId(), layout);
+        sess.speakingFor = saved.tabId;
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Layout applied to tab ${saved.tabId}:\n${describeLayout(saved.layout)}`,
+            },
+          ],
+          details: { tabId: saved.tabId, layout: saved.layout },
+        };
+      } catch (err) {
+        return fail(
+          `Layout rejected: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+  });
+}
+
+// chatIdsOf lists the chat panes' ids in a tree, in order. It is what a rejected
+// write tells the model it *could* have passed.
+function chatIdsOf(node: PaneNode): string[] {
+  if ("pane" in node) {
+    return node.pane.content === "chat" ? [node.pane.id] : [];
+  }
+  return node.children.flatMap(chatIdsOf);
+}
+
 // pi's bundled catalog under-declares some vision models, and its
 // openai-completions adapter silently strips images unless the model's declared
 // `input` includes "image" (pi-ai: openai-completions.js). DeepSeek Flash
@@ -105,6 +236,12 @@ function withVisionCapability(model: Model | undefined): Model | undefined {
 
 interface Sess {
   id: string;
+  // The tab the *current run* is speaking for. Not an ownership link: the
+  // association lives on the tab (a tab references conversations; several tabs
+  // may reference the same conversation), so a session has no tab of its own.
+  // The caller says which tab it is asking from, and the layout tool acts on
+  // that one.
+  speakingFor: string;
   agent?: AgentSession; // undefined in stub mode (no API key)
   events: EngineerEvent[];
   listeners: Set<Listener>;
@@ -113,15 +250,10 @@ interface Sess {
   // Text of the whole run (user turns + assistant prose, never tool traffic),
   // queued for the suggestion scan when the run settles.
   runText: string;
-  turns: number; // turns elapsed in the in-flight prompt (loop cap)
   recordSeq: number;
   sawSettled: boolean; // whether pi emitted agent_settled for the current run
   active: boolean; // a run is scheduled or in flight (used by resume/stream)
 }
-
-// pi's agent loop has no built-in round cap; stop a runaway turn loop
-// gracefully after this many turns.
-const MAX_TURNS = 100;
 
 // Default model when --model is not given: DeepSeek Flash.
 const DEFAULT_MODEL = "deepseek/deepseek-flash";
@@ -243,8 +375,19 @@ export class Registry {
     return out;
   }
 
+  // new opens a conversation. It belongs to no tab: where it is shown is the
+  // frontend's business, recorded on the tab side (log-tab-mutation).
   async new(): Promise<Sess> {
     return this.build(`s_${randomBytes(8).toString("hex")}`);
+  }
+
+  // sessionExists answers "would /ai/resume find this?" — a live session, or one
+  // with recorded history to rebuild from. The layout tool uses it to tell a
+  // real session id from one the model made up.
+  private async sessionExists(id: string): Promise<boolean> {
+    if (this.sessions.has(id)) return true;
+    const history = await fetchRecords(this.opts.logBase, id);
+    return history.length > 0;
   }
 
   // resume rebuilds a session that is no longer in memory from its log records.
@@ -263,12 +406,12 @@ export class Registry {
   ): Promise<Sess> {
     const sess: Sess = {
       id,
+      speakingFor: "",
       events: [],
       listeners: new Set(),
       tail: Promise.resolve(),
       turnText: "",
       runText: "",
-      turns: 0,
       // Continue the recorder's per-session sequence after a resume.
       recordSeq: history.reduce((max, m) => Math.max(max, m.seq), 0),
       sawSettled: false,
@@ -297,8 +440,8 @@ export class Registry {
         settingsManager: this.settings,
         // Capability surface: read/grep/find/ls + bash (execution, including
         // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
-        // is the one custom tool and must be in the allowlist to stay enabled;
-        // skills and blueprints are plain files the agent writes itself.
+        // and layout are the custom tools and must be in the allowlist to stay
+        // enabled; skills and blueprints are plain files the agent writes itself.
         tools: [
           "read",
           "grep",
@@ -308,11 +451,19 @@ export class Registry {
           "write",
           "edit",
           "ask_user",
+          "layout",
         ],
-        customTools: [askUserTool],
+        customTools: [
+          askUserTool,
+          makeLayoutTool(
+            this.opts.logBase,
+            sess,
+            () => this.new(),
+            (id) => this.sessionExists(id),
+          ),
+        ],
       });
       sess.agent = session;
-      session.agent.shouldStopAfterTurn = () => ++sess.turns >= MAX_TURNS;
       session.subscribe((ev) => {
         dbg(
           sess.id,
@@ -423,7 +574,11 @@ export class Registry {
   // before the next LLM call) and the in-flight run stays the sole owner of the
   // terminal agent_settled event. Otherwise a fresh run is started, serialized
   // on the tail chain so two idle asks cannot race.
-  ask(sess: Sess, incoming: IncomingBlock[]): void {
+  ask(sess: Sess, incoming: IncomingBlock[], tabId = ""): void {
+    // Which tab this turn is speaking for — the layout tool's target. The same
+    // conversation may be shown in several tabs, so it is named per turn rather
+    // than remembered on the session.
+    if (tabId) sess.speakingFor = tabId;
     // `content` is pi-shaped user content (text blocks; images as sha refs);
     // `piImages` re-inlines the base64 bytes for the prompt call.
     const content: any[] = [];
@@ -522,7 +677,6 @@ export class Registry {
     images: any[] = [],
   ): Promise<void> {
     sess.turnText = "";
-    sess.turns = 0;
     sess.sawSettled = false;
     dbg(sess.id, "runTurn start", prompt.slice(0, 60));
     try {

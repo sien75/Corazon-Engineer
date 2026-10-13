@@ -127,7 +127,9 @@ export function serve(registry: Registry, addr: string): void {
           }
           const sess = registry.get(String(body.id ?? ""));
           if (!sess) return errRes(404, "not_found", "session not found");
-          registry.ask(sess, blocks);
+          // The tab this turn speaks for: the layout tool's target, named by the
+          // caller because a conversation may be shown in more than one tab.
+          registry.ask(sess, blocks, String(body.tabId ?? "").trim());
           return yamlRes({ sessionId: sess.id });
         }
 

@@ -4,6 +4,7 @@ description: Ask AI; prompt determines what AI does (qa / plan / act). A reply t
 request:
   body:
     id: string  # session id
+    tabId?: string  # the tab this turn is speaking for. The layout tool acts on it — a conversation may be shown in more than one tab, so the caller names the one it is asking from. Without it, `layout` has nothing to read or write
     blocks:  # the user turn, in order; a reply to ask_user is just a text block
       - type: text | image  # "text" carries text, "image" carries base64 data + mimeType
         text?: string  # text block: the prompt text

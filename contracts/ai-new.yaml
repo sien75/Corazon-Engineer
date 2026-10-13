@@ -1,20 +1,14 @@
 id: ai-new
-description: Create a new session and return session id
+description: Create a conversation; where it is shown is the tab's business
 
 request: {}
 
 response:
   status: 200
   body:
-    sessionId: string
+    sessionId: string  # the new conversation. A conversation belongs to no tab: a tab references conversations, and several tabs may reference the same one
 
 errors:
-  - status: 400
-    code: bad_request
-    description: bad request
-  - status: 404
-    code: not_found
-    description: not found
   - status: 500
     code: internal
     description: server error
