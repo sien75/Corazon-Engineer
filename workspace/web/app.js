@@ -790,6 +790,10 @@ function makeChatPane(key, contentId) {
     // The conversation this pane shows. Where it draws it from is the hub's
     // business (a pane registers after its history is on screen).
     session: contentId,
+    // Whether this pane was following the bottom the last time it had a layout.
+    // showPanes reads it when the tab is left, because a hidden pane has nothing
+    // left to measure (see showPanes).
+    stick: true,
   };
   bindComposer(pane);
   return pane;
@@ -914,7 +918,11 @@ function renderPanes(tab) {
   for (const [key, pane] of [...tab.panes]) {
     if (!seen.has(key)) dropPane(tab, pane);
   }
+  // The tree this one replaces goes whole: a tab keeps exactly one of them.
+  tab.paneEl?.remove();
   tab.paneEl = tree;
+  // A rebuild of a background tab must not become visible by accident.
+  tree.hidden = tab.id !== activeTabId;
   void loadPaneConversations(tab);
 }
 
@@ -932,6 +940,10 @@ function dropPane(tab, pane) {
 // left behind holding subscriptions to conversations nothing shows any more.
 function dropTabPanes(tab) {
   for (const pane of [...(tab.panes?.values() ?? [])]) dropPane(tab, pane);
+  // The tree itself goes with them: it sits in the document (hidden or not), and
+  // a tab that is gone must not leave one behind.
+  tab.paneEl?.remove();
+  tab.paneEl = null;
 }
 
 async function loadPaneConversations(tab) {
@@ -977,11 +989,24 @@ function applyLayoutFrame(tab, result) {
   if (tab && layout) applyPaneLayout(tab, layout);
 }
 
-// showPanes puts the active tab's tree on screen. Only one tab's tree is in the
-// document at a time; switching tabs moves the other out whole.
+// showPanes puts a tab's tree on screen. Every open tab's tree stays in the
+// document: the browser throws away the scroll position of a detached scroller
+// and loads a detached iframe again the moment it is put back, so a tab that is
+// not on screen is *hidden*, not taken out.
 function showPanes(tab) {
   if (!tab.paneEl) renderPanes(tab);
-  panesEl.replaceChildren(tab.paneEl);
+  if (tab.paneEl.parentNode !== panesEl) panesEl.appendChild(tab.paneEl);
+  for (const t of openTabs) {
+    if (!t.paneEl) continue;
+    const on = t.id === tab.id;
+    // Leaving a tab: note which panes were following the bottom. This is the
+    // last reading anyone can take while they still have a layout.
+    if (!on) for (const p of t.panes.values()) if (p.kind === "chat") p.stick = paneAtBottom(p);
+    t.paneEl.hidden = !on;
+  }
+  // A pane that was following the live run follows it again: the run kept
+  // drawing into it while the tab was away.
+  for (const p of tab.panes.values()) if (p.kind === "chat" && p.stick) paneScrollToBottom(p);
 }
 
 // focusPane points the composer at one chat pane. The focused pane's message
@@ -995,17 +1020,22 @@ function focusPane(tab, key) {
   const next = pane && pane.kind === "chat" ? pane : null;
   if (aiPane === next) return;
   aiPane = next;
-  for (const p of tab?.panes.values() ?? []) {
-    const on = p === aiPane;
-    if (!p.messagesEl) continue;
-    p.messagesEl.id = on ? "ai-messages" : "";
-    p.scrollEl.id = on ? "ai-scroll" : "";
-    p.composerEl.id = on ? "ai-input" : "";
-    p.inputEl.id = on ? "ai-input-field" : "";
-    p.cmdEl.id = on ? "ai-cmd" : "";
-    p.sendEl.id = on ? "ai-send" : "";
-    p.stopEl.id = on ? "ai-stop" : "";
-    p.el.classList.toggle("focused", on);
+  // Every open tab's tree is in the document now (see showPanes), so the clear
+  // runs across all of them: the borrowed ids are the document's only handle on
+  // a pane, and two panes answering to #ai-input would be styled and found wrong.
+  for (const t of openTabs) {
+    for (const p of t.panes?.values() ?? []) {
+      const on = p === aiPane;
+      if (!p.messagesEl) continue;
+      p.messagesEl.id = on ? "ai-messages" : "";
+      p.scrollEl.id = on ? "ai-scroll" : "";
+      p.composerEl.id = on ? "ai-input" : "";
+      p.inputEl.id = on ? "ai-input-field" : "";
+      p.cmdEl.id = on ? "ai-cmd" : "";
+      p.sendEl.id = on ? "ai-send" : "";
+      p.stopEl.id = on ? "ai-stop" : "";
+      p.el.classList.toggle("focused", on);
+    }
   }
   if (aiPane) {
     aiResizeInput();
@@ -1025,7 +1055,7 @@ function applyPaneLayout(tab, layout) {
   renderPanes(tab);
   if (activeTabId === tab.id) showPanes(tab);
   const first = primaryPane(layout);
-  const key = first && first.content === "chat" ? paneKeyOf(tab, first.id) : "";
+  const key = first && first.contentType === "chat" ? paneKeyOf(tab, first.contentId) : "";
   if (activeTabId === tab.id) focusPane(tab, key);
 }
 
@@ -1476,16 +1506,22 @@ async function aiNew() {
 // one compact block. Anything that is not a chip ends the row, so the next
 // chip starts a new one.
 let aiChipRowEl = null;
+// …and the list it lives in: every open tab's tree stays in the document (see
+// showPanes), so a row that is still connected may belong to *another* pane.
+// Reusing that one would draw this run's chips into the pane the user left.
+let aiChipRowFor = null;
 
 // aiChipRow returns the open chip row, opening one if needed. The row is
 // recreated lazily, so clearing #ai-messages needs no separate bookkeeping.
 function aiChipRow() {
-  if (aiChipRowEl && aiChipRowEl.isConnected) return aiChipRowEl;
+  const list = aiMsgEl();
+  if (aiChipRowEl && aiChipRowEl.isConnected && aiChipRowFor === list) return aiChipRowEl;
   const row = document.createElement("div");
   row.className = "ai-msg ai-chip-row";
   const stick = aiAtBottom();
-  aiMsgEl().appendChild(row);
+  list.appendChild(row);
   aiChipRowEl = row;
+  aiChipRowFor = list;
   if (stick) aiScrollToBottom();
   return row;
 }
@@ -1493,6 +1529,7 @@ function aiChipRow() {
 // aiChipRowEnd closes the current row; the next chip opens a new one.
 function aiChipRowEnd() {
   aiChipRowEl = null;
+  aiChipRowFor = null;
 }
 
 // Chip icons: 24×24 line geometry rendered at 12px, stroked in currentColor.
@@ -1897,7 +1934,9 @@ function aiHubRegister(pane) {
   hub.targets.push(target);
   if (hub.run.length) {
     aiRenderPane = pane;
-    for (const ev of hub.run) aiHandleOne(target, ev);
+    // Same arity as the live path: the run is replayed *into* this pane, and the
+    // hub it belongs to is the one it just joined.
+    for (const ev of hub.run) aiHandleOne(hub, target, ev);
     aiRenderPane = null;
   }
   aiSetStreamingFor(hub, hub.streaming);
@@ -2332,9 +2371,11 @@ async function aiAnswer(hub, pane, answer) {
 
 // primaryPane returns the first pane leaf of a layout tree, or null when the tree
 // is unreadable. The launcher reads the tree rather than rendering it, so it goes
-// through here.
+// through here. The tree is normalized first: a record read back from log may
+// still carry the old shape (`content` / `id`), and every caller here reads the
+// current field names (contentType / contentId).
 function primaryPane(layout) {
-  let node = layout;
+  let node = normalizeTree(layout);
   for (let depth = 0; node && depth < 16; depth++) {
     if (node.pane) return node.pane;
     const children = node.split?.children || node.children;

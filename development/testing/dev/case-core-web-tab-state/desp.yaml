@@ -1,0 +1,3 @@
+id: core-web-tab-state
+description: web tab state — switching tabs keeps the live layout: a chat pane comes back at the scroll position it was left at (or at the bottom when it was following the run), a page pane's iframe is not reloaded, and the borrowed #ai-* ids stay unique while every open tab's tree sits in the document
+atoms: [web, ai, log]

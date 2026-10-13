@@ -577,6 +577,12 @@ canvas.layer {
   min-height: 0;
 }
 
+/* Every open tab's tree lives in #panes; only the active tab's is shown. This
+   has to be spelled out: the author rule above beats the UA's `[hidden]`. */
+.pane-tree[hidden] {
+  display: none;
+}
+
 .pane-split.row {
   flex-direction: row;
 }
