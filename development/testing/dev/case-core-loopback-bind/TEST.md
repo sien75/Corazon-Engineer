@@ -108,33 +108,34 @@ how-to/deploy/dev/stop.sh
 lsof -nP -iTCP -sTCP:LISTEN | grep engineer || echo "(nothing listening)"
 
 # told the host explicitly, it listens exactly there
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8600 \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8841 \
   --assets "$(cd workspace/web && pwd)" --pages /tmp/engineer-pages-unused \
   --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
-sleep 1; lsof -nP -iTCP:8600 -sTCP:LISTEN
+sleep 1; lsof -nP -iTCP:8841 -sTCP:LISTEN
 ```
 
 Expected: the bare run prints a usage line containing `--bind <host> --port <n>
 --assets <dir> --pages <dir>` and exits non-zero, with nothing listening; the second run gives
-one `TCP 127.0.0.1:8600 (LISTEN)` line. (The process name in `lsof` is the
+one `TCP 127.0.0.1:8841 (LISTEN)` line. (The process name in `lsof` is the
 binary's basename: with the merged binary all four services report as
 `engineer`.)
 
 ## 3b. --bind 0.0.0.0 opens a single service  (opt-in, ⚠️ triggers the alarm)
 
 ```bash
-/tmp/engineer serve-web --bind 0.0.0.0 --port 8601 \
+/tmp/engineer serve-web --bind 0.0.0.0 --port 8842 \
   --assets "$(cd workspace/web && pwd)" --pages /tmp/engineer-pages-unused \
   --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
-sleep 1; lsof -nP -iTCP:8601 -sTCP:LISTEN
+sleep 1; lsof -nP -iTCP:8842 -sTCP:LISTEN
 ```
 
-Expected: `TCP *:8601 (LISTEN)` — `--bind 0.0.0.0` is how a single service is
+Expected: `TCP *:8842 (LISTEN)` — `--bind 0.0.0.0` is how a single service is
 opened up without the launcher.
 
 ## 4. teardown
 
 ```bash
-pkill -f 'serve-web.*--port 86'
+pkill -f 'serve-web.*--port 8841'
+pkill -f 'serve-web.*--port 8842'
 how-to/deploy/dev/stop.sh
 ```

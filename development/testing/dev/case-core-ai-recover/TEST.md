@@ -30,18 +30,32 @@ ROOT="$ROOTDIR/.engineer/.recover-test"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
 printf 'project: recover-test\n' > "$ROOT/engineer.yaml"
 
+# Guard first: with an empty $ROOT the pattern below degrades to
+# "serve-log --root " and kills every service on the machine —
+# including the one running the agent. Fail loudly instead.
+: "${ROOT:?this case must set ROOT before reclaiming}"
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-static --root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+for p in 8810 8811 8812 8813; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
+
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 
 # the log service the crafted history is written to
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8521 >/tmp/recover-log.log 2>&1 &
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8810 >/tmp/recover-log.log 2>&1 &
 
 # ai A — the real thing, against the real log service. Not --stub: the provider
 # rejection this case is about can only happen with a real provider. Without one
 # the service falls back to the echo stub, and section 2's provider check is
 # reported as skipped instead (see the note at the end of Run).
 ENGINEER_AI_DEBUG=/tmp/recover-ai-debug.log \
-  bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8522 --root "$ROOT" \
-  --log http://localhost:8521 --static http://localhost:8502 \
+  bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8811 --root "$ROOT" \
+  --log http://localhost:8810 --static http://localhost:8502 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/recover-ai.log 2>&1 &
 
@@ -74,26 +88,26 @@ python3 /tmp/recover-fake-log.py 8599 /tmp/recover-flaky-count.txt flaky &
 python3 /tmp/recover-fake-log.py 8597 /tmp/recover-reject-count.txt reject &
 
 # ai B — writes through the flaky endpoint (first two requests 500, then 200)
-bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8523 --root "$ROOT" --stub \
+bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8812 --root "$ROOT" --stub \
   --log http://localhost:8599 --static http://localhost:8502 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/recover-retry.log 2>&1 &
 
 # ai C — writes through an endpoint that answers 400 to everything
-bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8524 --root "$ROOT" --stub \
+bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8813 --root "$ROOT" --stub \
   --log http://localhost:8597 --static http://localhost:8502 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/recover-reject.log 2>&1 &
 
 sleep 2
-curl -s -o /dev/null -w 'log %{http_code}\n' -X POST http://localhost:8521/log/list -d ''
-curl -s -o /dev/null -w 'ai A %{http_code}\n' -X POST http://localhost:8522/ai/new
-curl -s -o /dev/null -w 'ai B %{http_code}\n' -X POST http://localhost:8523/ai/new
-curl -s -o /dev/null -w 'ai C %{http_code}\n' -X POST http://localhost:8524/ai/new
+curl -s -o /dev/null -w 'log %{http_code}\n' -X POST http://localhost:8810/log/list -d ''
+curl -s -o /dev/null -w 'ai A %{http_code}\n' -X POST http://localhost:8811/ai/new
+curl -s -o /dev/null -w 'ai B %{http_code}\n' -X POST http://localhost:8812/ai/new
+curl -s -o /dev/null -w 'ai C %{http_code}\n' -X POST http://localhost:8813/ai/new
 ```
 
 Expected on startup: all four print `200`, `/tmp/recover-flaky-count.txt` does not
-exist yet, and `/tmp/recover-ai.log` ends with `engineer ai: log=http://localhost:8521`.
+exist yet, and `/tmp/recover-ai.log` ends with `engineer ai: log=http://localhost:8810`.
 
 ## 1. craft a damaged conversation
 
@@ -113,7 +127,7 @@ lost write leaves behind. Row order is insertion order (`seq` 8 appears twice):
 | 8 | user | `again` (byte-identical repeat) | **dropped (duplicate seq)** |
 
 ```bash
-B=http://localhost:8521/log/mutation
+B=http://localhost:8810/log/mutation
 row() { curl -s -o /dev/null -X POST "$B" -d "$1"; }
 
 row 'op: add
@@ -241,7 +255,7 @@ payload:
     timestamp: 1759200000007'
 done
 
-curl -s -X POST http://localhost:8521/log/session-detail -d 'sessionId: s_recover_bad' \
+curl -s -X POST http://localhost:8810/log/session-detail -d 'sessionId: s_recover_bad' \
   | grep -c '^    seq:'
 ```
 
@@ -250,13 +264,13 @@ Expected: 200 on every mutation; the last command prints `9`.
 ## 2. the damaged session resumes and answers
 
 ```bash
-curl -s -X POST http://localhost:8522/ai/resume -d 'id: s_recover_bad'
-curl -s -X POST http://localhost:8522/ai/ask -d 'id: s_recover_bad
+curl -s -X POST http://localhost:8811/ai/resume -d 'id: s_recover_bad'
+curl -s -X POST http://localhost:8811/ai/ask -d 'id: s_recover_bad
 blocks:
   - type: text
     text: reply with the single word ok'
 sleep 20
-curl -s -N -X POST http://localhost:8522/ai/stream -d 'id: s_recover_bad
+curl -s -N -X POST http://localhost:8811/ai/stream -d 'id: s_recover_bad
 since: 0' > /tmp/recover-stream.txt
 grep -c 'type: text_delta' /tmp/recover-stream.txt
 grep -c 'stopReason: error' /tmp/recover-stream.txt
@@ -322,13 +336,13 @@ demands.
 ## 4. a healthy session is left alone
 
 ```bash
-SID=$(curl -s -X POST http://localhost:8522/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
-curl -s -X POST http://localhost:8522/ai/ask -d "id: $SID
+SID=$(curl -s -X POST http://localhost:8811/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+curl -s -X POST http://localhost:8811/ai/ask -d "id: $SID
 blocks:
   - type: text
     text: reply with the single word ok"
 sleep 15
-curl -s -X POST http://localhost:8522/ai/resume -d "id: $SID"
+curl -s -X POST http://localhost:8811/ai/resume -d "id: $SID"
 grep -c "history repair $SID" /tmp/recover-ai.log
 ```
 
@@ -342,8 +356,8 @@ ai B writes through an endpoint that answers `500` to the first two requests and
 `200` afterwards.
 
 ```bash
-RID=$(curl -s -X POST http://localhost:8523/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
-curl -s -X POST http://localhost:8523/ai/ask -d "id: $RID
+RID=$(curl -s -X POST http://localhost:8812/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+curl -s -X POST http://localhost:8812/ai/ask -d "id: $RID
 blocks:
   - type: text
     text: hello"
@@ -364,8 +378,8 @@ ai C writes through an endpoint that answers `400` to everything. A 4xx is the
 client's fault, so it is not retried — but it is no longer silent.
 
 ```bash
-CID=$(curl -s -X POST http://localhost:8524/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
-curl -s -X POST http://localhost:8524/ai/ask -d "id: $CID
+CID=$(curl -s -X POST http://localhost:8813/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+curl -s -X POST http://localhost:8813/ai/ask -d "id: $CID
 blocks:
   - type: text
     text: hello"
@@ -428,7 +442,7 @@ payload:
     content: [{ type: text, text: again }]
     timestamp: 1759200000002'
 
-curl -s -X POST http://localhost:8522/ai/resume -d 'id: s_recover_hole'
+curl -s -X POST http://localhost:8811/ai/resume -d 'id: s_recover_hole'
 grep 'history repair s_recover_hole' /tmp/recover-ai.log
 ```
 
@@ -537,15 +551,15 @@ payload:
     isError: false
     timestamp: 1759200000005'
 
-curl -s -X POST http://localhost:8522/ai/resume -d 'id: s_recover_compact'
+curl -s -X POST http://localhost:8811/ai/resume -d 'id: s_recover_compact'
 grep -c 'history repair s_recover_compact' /tmp/recover-ai.log
 
-curl -s -X POST http://localhost:8522/ai/ask -d 'id: s_recover_compact
+curl -s -X POST http://localhost:8811/ai/ask -d 'id: s_recover_compact
 blocks:
   - type: text
     text: reply with the single word ok'
 sleep 20
-curl -s -N -X POST http://localhost:8522/ai/stream -d 'id: s_recover_compact
+curl -s -N -X POST http://localhost:8811/ai/stream -d 'id: s_recover_compact
 since: 0' > /tmp/recover-compact-stream.txt
 grep -c 'data: type: error' /tmp/recover-compact-stream.txt
 grep -c 'type: agent_settled' /tmp/recover-compact-stream.txt
@@ -559,9 +573,9 @@ never re-sent, and the intact pair after it is left untouched.
 
 ```bash
 pkill -f '/tmp/engineer serve-log --root .*recover-test'
-pkill -f 'main.ts.*--port 8522'
-pkill -f 'main.ts.*--port 8523'
-pkill -f 'main.ts.*--port 8524'
+pkill -f 'main.ts.*--port 8811'
+pkill -f 'main.ts.*--port 8812'
+pkill -f 'main.ts.*--port 8813'
 pkill -f 'recover-fake-log.py'
 rm -rf .engineer/.recover-test
 ```

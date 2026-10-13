@@ -26,21 +26,35 @@ printf 'project: chat-route-test\n' > "$ROOT/engineer.yaml"
 
 # log + ai on their own ports (different from the other web cases, so this one
 # can run next to them); ai in stub mode, so the run is deterministic and offline
+# Guard first: with an empty $ROOT the pattern below degrades to
+# "serve-log --root " and kills every service on the machine —
+# including the one running the agent. Fail loudly instead.
+: "${ROOT:?this case must set ROOT before reclaiming}"
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-static --root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+for p in 8900 8901 8902 8903; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
+
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8523 >/tmp/chat-route-log.log 2>&1 &
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8901 >/tmp/chat-route-log.log 2>&1 &
 # its own static, rooted at $ROOT: the launcher reads skills from static now, so
 # a seeded skill must live in the scratch tree static serves
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8524 >/tmp/chat-route-static.log 2>&1 &
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8902 >/tmp/chat-route-static.log 2>&1 &
 
-(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8521 --stub \
-  --log http://localhost:8523 --static http://localhost:8524 \
+(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8900 --stub \
+  --log http://localhost:8901 --static http://localhost:8902 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/chat-route-ai.log 2>&1 &)
 
 # one saved skill, so the new tab page has something to run — a plain file
 # wait for ai first: the write must not race the boot
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8521/ai/new -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8900/ai/new -d '{}' && break
   sleep 1
 done
 mkdir -p "$ROOT/.agents/skills/seeded-skill"
@@ -48,21 +62,21 @@ printf -- '---\nname: Seeded skill\ndescription: seeded instruction\n---\nseeded
   > "$ROOT/.agents/skills/seeded-skill/SKILL.md"
 
 # web assets
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8620 --assets "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8903 --assets "$ROOTDIR/workspace/web" \
   --pages /tmp/engineer-pages-unused \
-  --static http://localhost:8524 --ai http://localhost:8521 --log http://localhost:8523 \
+  --static http://localhost:8902 --ai http://localhost:8900 --log http://localhost:8901 \
   >/tmp/chat-route-web.log 2>&1 &
 ```
 
 Expected on startup: the ai service logs `--stub: model calls disabled`, the log
-server logs its address on `:8523`, the static server on `:8524`, and the web
-server logs `engineer web: http://localhost:8620`.
+server logs its address on `:8901`, the static server on `:8902`, and the web
+server logs `engineer web: http://localhost:8903`.
 
 ## Run
 
 ```bash
-WEB_URL=http://localhost:8620 ego-browser nodejs <<'EOF'
-const WEB = process.env.WEB_URL || "http://localhost:8620";
+WEB_URL=http://localhost:8903 ego-browser nodejs <<'EOF'
+const WEB = process.env.WEB_URL || "http://localhost:8903";
 const space = await taskSpace("core-web-chat-route");
 const page = space.page("p1");
 const checks = [];
@@ -149,7 +163,7 @@ const deep = await page.evaluate((id) => ({
   path: location.pathname,
   tab: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
   user: document.querySelector("#ai-messages .ai-user")?.textContent.trim(),
-  tabMode: document.getElementById("ai").classList.contains("tab-mode"),
+  tabMode: !document.getElementById("panes").hidden,
 }), sid1);
 check("a deep link opens the session as a tab",
   deep.path === `/chat/${sid1}` && deep.tabMode === true && !!deep.tab, deep);
@@ -158,7 +172,7 @@ check("the deep-linked conversation replays its history",
 
 // 8. a reload stays on the conversation (the URL is the state)
 await page.reload();
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
+await page.waitForFunction(() => !document.getElementById("panes").hidden,
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
@@ -177,7 +191,7 @@ await page.keyboard.press("Escape");
 await page.waitForFunction((id) => location.pathname === `/chat/${id}`, sid1);
 const afterEsc = await page.evaluate(() => ({
   path: location.pathname,
-  tabMode: document.getElementById("ai").classList.contains("tab-mode"),
+  tabMode: !document.getElementById("panes").hidden,
   newTabHidden: document.getElementById("newtab").hidden,
 }));
 check("Esc leaves the new tab page for the conversation it came from",
@@ -254,7 +268,7 @@ exist shows its error on screen. Exit code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'serve-web.*--port 8620'
+pkill -f 'serve-web.*--port 8903'
 pkill -f '/tmp/engineer serve-log --root .*chat-route-test'
-pkill -f 'main.ts.*--port 8521'
+pkill -f 'main.ts.*--port 8900'
 ```

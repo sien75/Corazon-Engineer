@@ -6,11 +6,14 @@ other, and it is created from a **blueprint** — a frontend resource: a directo
 under `.agents/blueprints/<slug>/` with an `index.html` entry plus assets. The
 web server serves those files under `/pages/…` (its second root), and the tab
 renders one in an iframe. There is no page without a blueprint, no session
-behind a page and no page in `recent`.
+behind a page. A page is a *tab* like any other, so `recent` lists it and it can
+be reopened; what it has instead of a conversation is a layout.
 
 Source of truth: `workspace/web/server/serve.go` (the `--pages` root),
 `workspace/web/app.js` (page tabs, `/pages/<id>`, the blueprints pages) and
-`workspace/web/index.html` (`#page`). The behaviour is DOM + URL, so this case
+`workspace/web/index.html` (`#panes`). A page is a **pane** like any other — the
+tab's tree holds it (see `case-core-web-panes`) — and one tab holds one
+blueprint. The behaviour is DOM + URL, so this case
 runs through a real browser (`ego-browser`).
 
 ## Setup
@@ -84,20 +87,34 @@ for n in alpha beta gamma; do
 done
 
 # log + ai on their own ports; ai in stub mode, so no model is ever needed
-(cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8522 >/tmp/page-log.log 2>&1 &
-# its own static, rooted at $ROOT: the launcher reads skills and blueprints from it
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8524 >/tmp/page-static.log 2>&1 &
+# Guard first: with an empty $ROOT the pattern below degrades to
+# "serve-log --root " and kills every service on the machine —
+# including the one running the agent. Fail loudly instead.
+: "${ROOT:?this case must set ROOT before reclaiming}"
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-static --root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+for p in 8940 8941 8942 8943; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
 
-(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8521 --stub \
-  --log http://localhost:8522 --static http://localhost:8524 \
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8941 >/tmp/page-log.log 2>&1 &
+# its own static, rooted at $ROOT: the launcher reads skills and blueprints from it
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8942 >/tmp/page-static.log 2>&1 &
+
+(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8940 --stub \
+  --log http://localhost:8941 --static http://localhost:8942 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/page-ai.log 2>&1 &)
 
 # one saved skill, so the skills page has something of the user's own to show —
 # a plain file, exactly what the agent would write
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8521/ai/new -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8940/ai/new -d '{}' && break
   sleep 1
 done
 mkdir -p "$ROOT/.agents/skills/seeded-skill"
@@ -105,19 +122,19 @@ printf -- '---\nname: Seeded skill\ndescription: seeded instruction\n---\nseeded
   > "$ROOT/.agents/skills/seeded-skill/SKILL.md"
 
 # web assets + the blueprint root (--pages)
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8641 --assets "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8943 --assets "$ROOTDIR/workspace/web" \
   --pages "$BPS" \
-  --static http://localhost:8524 --ai http://localhost:8521 --log http://localhost:8522 \
+  --static http://localhost:8942 --ai http://localhost:8940 --log http://localhost:8941 \
   >/tmp/page-web.log 2>&1 &
 ```
 
-Expected on startup: the web server logs `engineer web: http://localhost:8641`.
+Expected on startup: the web server logs `engineer web: http://localhost:8943`.
 
 ## Run
 
 ```bash
-WEB_URL=http://localhost:8641 ego-browser nodejs <<'EOF'
-const WEB = process.env.WEB_URL || "http://localhost:8641";
+WEB_URL=http://localhost:8943 ego-browser nodejs <<'EOF'
+const WEB = process.env.WEB_URL || "http://localhost:8943";
 const space = await taskSpace("core-web-page");
 const page = space.page("p1");
 const checks = [];
@@ -192,29 +209,29 @@ await page.waitForFunction(() => location.pathname === "/new", undefined, { time
 await page.click("loc=css:#newtab [data-section=blueprints] .newtab-sec-open");
 await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
 await page.click("loc=css:#newtab [data-section=blueprints-all] .launch-item:has-text('Hello Page')");
-await page.waitForSelector("#page:not([hidden])", { state: "visible", timeout: 10_000 });
+await page.waitForSelector("#panes .pane-page:not(:empty)", { state: "visible", timeout: 10_000 });
 const opened = await page.evaluate(() => ({
   tab: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
-  src: document.getElementById("page-frame").getAttribute("src"),
-  ai: document.getElementById("ai").hidden,
+  src: document.querySelector("#panes .pane-page .pane-frame").getAttribute("src"),
+  chat: document.querySelectorAll("#panes .pane-chat").length,
   left: document.getElementById("left").hidden,
   path: location.pathname,
 }));
 check("a blueprint opens a page tab named after it",
   opened.tab.startsWith("Hello Page") && opened.path === "/pages/hello", opened);
 check("the page pane holds an iframe on the blueprint's files",
-  /^\/pages\/hello\/$/.test(opened.src) && opened.ai === true && opened.left === true, opened);
+  /^\/pages\/hello\/$/.test(opened.src) && opened.chat === 0 && opened.left === true, opened);
 
-// 4. the blueprint is a real page: it reads /config.js and calls the ai api
-// cross-origin, and its own assets come from the same directory
+// 4. the blueprint is a real page: it reads /config.js and calls the static
+// api cross-origin, and its own assets come from the same directory
 await page.waitForFunction(() => {
-  const f = document.getElementById("page-frame");
+  const f = document.querySelector("#panes .pane-page .pane-frame");
   const d = f?.contentDocument;
-  return d?.getElementById("runtime")?.textContent?.startsWith("ai=http") &&
+  return d?.getElementById("runtime")?.textContent?.startsWith("static=http") &&
     /^list=\d+$/.test(d?.getElementById("list")?.textContent || "");
 }, undefined, { timeout: 15_000 });
 const inside = await page.evaluate(() => {
-  const d = document.getElementById("page-frame").contentDocument;
+  const d = document.querySelector("#panes .pane-page .pane-frame").contentDocument;
   return {
     runtime: d.getElementById("runtime").textContent,
     list: d.getElementById("list").textContent,
@@ -222,17 +239,17 @@ const inside = await page.evaluate(() => {
   };
 });
 check("a blueprint reads the runtime addresses and calls the services",
-  inside.runtime === "ai=http://localhost:8521" && inside.list === "list=200", inside);
+  inside.runtime === "static=http://localhost:8942" && inside.list === "list=200", inside);
 
 // 5. the address bar is the page's own route, and a reload lands back on the tab
 await page.reload();
-await page.waitForSelector("#page:not([hidden])", { state: "visible", timeout: 10_000 });
+await page.waitForSelector("#panes .pane-page:not(:empty)", { state: "visible", timeout: 10_000 });
 await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-id]").length === 1,
   undefined, { timeout: 10_000 });
 const reloaded = await page.evaluate(() => ({
   path: location.pathname,
   tab: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
-  iframe: document.getElementById("page-frame").getAttribute("src"),
+  iframe: document.querySelector("#panes .pane-page .pane-frame").getAttribute("src"),
 }));
 check("reloading /pages/<id> keeps the tab, it does not fall into the bare blueprint",
   reloaded.path === "/pages/hello" && reloaded.tab.startsWith("Hello Page") && reloaded.iframe === "/pages/hello/",
@@ -243,11 +260,11 @@ check("reloading /pages/<id> keeps the tab, it does not fall into the bare bluep
 // shared /theme.css palette repaints with it — without reloading the page.
 // The reload in step 5 restarts the frame, so wait for its document to be back.
 await page.waitForFunction(() => {
-  const d = document.getElementById("page-frame")?.contentDocument;
+  const d = document.querySelector("#panes .pane-page .pane-frame")?.contentDocument;
   return !!d?.getElementById("swatch") && !!d.documentElement.getAttribute("data-theme");
 }, undefined, { timeout: 10_000 });
 const themeBefore = await page.evaluate(() => {
-  const d = document.getElementById("page-frame").contentDocument;
+  const d = document.querySelector("#panes .pane-page .pane-frame").contentDocument;
   const swatch = d.getElementById("swatch");
   return {
     shell: document.documentElement.getAttribute("data-theme"),
@@ -273,10 +290,10 @@ await page.click("#theme-toggle");
 await page.waitForSelector("#theme-menu:not([hidden])", { state: "visible" });
 await page.click("loc=css:#theme-menu button[data-theme='dark']");
 await page.waitForFunction(() =>
-  document.getElementById("page-frame")?.contentDocument
+  document.querySelector("#panes .pane-page .pane-frame")?.contentDocument
     ?.documentElement?.getAttribute("data-theme") === "dark", undefined, { timeout: 5_000 });
 const themeAfter = await page.evaluate(() => {
-  const d = document.getElementById("page-frame").contentDocument;
+  const d = document.querySelector("#panes .pane-page .pane-frame").contentDocument;
   return {
     frame: d.documentElement.getAttribute("data-theme"),
     scheme: d.documentElement.style.colorScheme,
@@ -296,14 +313,19 @@ await page.waitForSelector("#theme-menu:not([hidden])", { state: "visible" });
 await page.click("loc=css:#theme-menu button[data-theme='light']");
 await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light");
 
-// 7. a page is not a conversation: nothing about it reaches recent
+// 7. a page is a *tab*, so recent treats it like any other: while it is open it
+// is on the tab bar and *not* in recent (step 9 closes it, and it comes back).
 await page.click("#tab-add");
 await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
-const recent = await page.evaluate(() => ({
-  texts: document.querySelector("#newtab [data-section=recent]").textContent,
-  count: document.querySelectorAll("#newtab [data-section=recent] .launch-item").length,
-}));
-check("recent holds no page", recent.count === 0 && !/Hello Page/.test(recent.texts), recent);
+const recent = await page.evaluate(() => {
+  const open = JSON.parse(localStorage.getItem("engineer.tabs") || "[]")
+    .map((t) => t.tabId).filter(Boolean);
+  const rows = [...document.querySelectorAll("#newtab [data-section=recent] .launch-item")]
+    .map((e) => e.dataset.id);
+  return { open, rows, texts: document.querySelector("#newtab [data-section=recent]").textContent };
+});
+check("recent does not list the page tab while it is open",
+  recent.open.length === 1 && recent.rows.every((id) => !recent.open.includes(id)), recent);
 
 // 8. the blueprints page is read-only: a row opens the page and nothing else.
 // There is no delete button and no confirm popover — removing a blueprint is a
@@ -317,16 +339,30 @@ check("the blueprints page offers no delete affordance",
 // 9. closing the page tab falls back to the graph (closing it while it is the
 // one on screen — a tab that is not active just disappears from the bar)
 await page.click("loc=css:#tabs .tab[data-tab-id]");
-await page.waitForSelector("#page:not([hidden])", { state: "visible", timeout: 10_000 });
+await page.waitForSelector("#panes .pane-page:not(:empty)", { state: "visible", timeout: 10_000 });
 await page.click("loc=css:#tabs .tab[data-tab-id] .tab-close");
 await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-id]").length === 0,
   undefined, { timeout: 5_000 });
 const closed = await page.evaluate(() => ({
-  page: document.getElementById("page").hidden,
+  tab: document.querySelectorAll("#tabs .tab[data-tab-id]").length,
+  panesHidden: document.getElementById("panes").hidden,
   active: document.querySelector("#tabs .tab.active")?.textContent.trim(),
 }));
 check("closing the page tab falls back to the graph",
-  closed.page === true && closed.active === "graph", closed);
+  closed.tab === 0 && closed.panesHidden === true && closed.active === "graph", closed);
+
+// 9b. ... and the closed page is now in recent, named after its blueprint
+await page.click("#tab-add");
+await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
+await page.waitForFunction(() =>
+  document.querySelectorAll("#newtab [data-section=recent] .launch-item").length > 0,
+  undefined, { timeout: 5_000 });
+const back = await page.evaluate(() => ({
+  count: document.querySelectorAll("#newtab [data-section=recent] .launch-item").length,
+  texts: document.querySelector("#newtab [data-section=recent]").textContent,
+}));
+check("the closed page is back in recent, named after its blueprint",
+  back.count === 1 && /Hello Page/.test(back.texts), back);
 
 const ok = checks.every((c) => c.pass);
 console.log(JSON.stringify({ ok, checks }, null, 2));
@@ -347,7 +383,7 @@ and the page drops the row on its own:
 ```bash
 rm -rf "$BPS/alpha"
 sleep 2   # the watcher polls once a second
-curl -s -X POST http://localhost:8524/static/query -d '{}' | grep -A6 '^blueprints:'
+curl -s -X POST http://localhost:8942/static/query -d '{}' | grep -A6 '^blueprints:'
 ls "$BPS"
 ```
 
@@ -357,8 +393,8 @@ Expected: the listing no longer holds `alpha`; `ls` shows `hello`, `beta`,
 ## Teardown
 
 ```bash
-pkill -f 'serve-web.*--port 8641'
+pkill -f 'serve-web.*--port 8943'
 pkill -f '/tmp/engineer serve-log --root .*page-test'
-pkill -f 'main.ts.*--port 8521'
+pkill -f 'main.ts.*--port 8940'
 rm -rf "$ROOTDIR/.engineer/.page-test"
 ```

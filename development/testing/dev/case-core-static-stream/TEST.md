@@ -12,12 +12,21 @@ rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/
 # Start the server under test with .engineer/.playground as project root — with the
 # same binary the launcher runs. `workspace/static` has no main package, so building
 # inside it yields an archive, not a runnable ./engineer.
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $PWD/.engineer/.playground" 2>/dev/null || true
+pkill -f "serve-static --root $PWD/.engineer/.playground" 2>/dev/null || true
+for p in 8880; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
+
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-static --root "$PWD/.engineer/.playground" --bind 127.0.0.1 --port 8514 &
+/tmp/engineer serve-static --root "$PWD/.engineer/.playground" --bind 127.0.0.1 --port 8880 &
 
 # wait for it before streaming: the blocks below run back to back
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8514/static/query -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8880/static/query -d '{}' && break
   sleep 1
 done
 ```
@@ -27,7 +36,7 @@ done
 Terminal A (subscribe):
 
 ```bash
-curl -N -X POST http://localhost:8514/static/stream \
+curl -N -X POST http://localhost:8880/static/stream \
   -H 'Content-Type: application/yaml' --data-binary ''
 ```
 
@@ -58,7 +67,7 @@ Expected: terminal A receives an `update` event with `payload.type: atom` and `p
 ## 3. event kinds filter
 
 ```bash
-curl -N -X POST http://localhost:8514/static/stream \
+curl -N -X POST http://localhost:8880/static/stream \
   -H 'Content-Type: application/yaml' --data-binary 'kinds: how-to'
 ```
 

@@ -19,22 +19,36 @@ run is deterministic and offline.
 
 ```bash
 ROOTDIR="$PWD"
-ROOT="$ROOTDIR/.engineer/.skill-test"
+ROOT="$ROOTDIR/.engineer/.input-grow"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
-printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
+printf 'project: input-grow\n' > "$ROOT/engineer.yaml"
+
+# Guard first: with an empty $ROOT the pattern below degrades to
+# "serve-log --root " and kills every service on the machine —
+# including the one running the agent. Fail loudly instead.
+: "${ROOT:?this case must set ROOT before reclaiming}"
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-static --root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+for p in 8920 8921 8922 8923; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8513 >/tmp/input-grow-log.log 2>&1 &
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8921 >/tmp/input-grow-log.log 2>&1 &
 # its own static, rooted at $ROOT: the launcher reads skills from static now
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8514 >/tmp/input-grow-static.log 2>&1 &
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8922 >/tmp/input-grow-static.log 2>&1 &
 
-(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8511 --stub \
-  --log http://localhost:8513 --static http://localhost:8514 \
+(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8920 --stub \
+  --log http://localhost:8921 --static http://localhost:8922 \
   --agents "$ROOTDIR/agents/AGENTS.md" >/tmp/input-grow-ai.log 2>&1 &)
 sleep 2
 # one skill, so the new tab page has something to open — a plain file
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8511/ai/new -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8920/ai/new -d '{}' && break
   sleep 1
 done
 mkdir -p "$ROOT/.agents/skills/input-grow"
@@ -42,20 +56,20 @@ printf -- '---\nname: Input grow\ndescription: placeholder skill\n---\nplacehold
   > "$ROOT/.agents/skills/input-grow/SKILL.md"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8923 --assets "$ROOTDIR/workspace/web" \
   --pages /tmp/engineer-pages-unused \
-  --static http://localhost:8514 --ai http://localhost:8511 --log http://localhost:8513 \
+  --static http://localhost:8922 --ai http://localhost:8920 --log http://localhost:8921 \
   >/tmp/input-grow-web.log 2>&1 &
 ```
 
-Expected on startup: `engineer web: http://localhost:8610` (the recorded
+Expected on startup: `engineer web: http://localhost:8923` (the recorded
 conversation is not read back here, so `--log` only needs to point anywhere).
 
 ## Run
 
 ```bash
-WEB_URL=http://localhost:8610 ego-browser nodejs <<'EOF'
-const WEB = process.env.WEB_URL || "http://localhost:8610";
+WEB_URL=http://localhost:8923 ego-browser nodejs <<'EOF'
+const WEB = process.env.WEB_URL || "http://localhost:8923";
 const task = await taskSpace("core-web-input-grow");
 const page = task.page("p1");
 await page.goto(`${WEB}/`);
@@ -169,7 +183,7 @@ clearing returns to 2 rows. Exit code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'serve-web.*--port 8610'
-pkill -f 'main.ts.*--port 8511'
-pkill -f 'serve-log.*--port 8513'
+pkill -f 'serve-web.*--port 8923'
+pkill -f 'main.ts.*--port 8920'
+pkill -f 'serve-log.*--port 8921'
 ```

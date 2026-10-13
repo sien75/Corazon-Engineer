@@ -24,24 +24,38 @@ printf 'project: chat-scroll-test\n' > "$ROOT/engineer.yaml"
 
 # log + ai on their own ports; ai in stub mode, so the run is deterministic and
 # offline. The conversation itself is seeded from the test (see Run).
-(cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8533 >/tmp/chat-scroll-log.log 2>&1 &
+# Guard first: with an empty $ROOT the pattern below degrades to
+# "serve-log --root " and kills every service on the machine —
+# including the one running the agent. Fail loudly instead.
+: "${ROOT:?this case must set ROOT before reclaiming}"
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-static --root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+for p in 8910 8911 8912; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
 
-(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8531 --stub \
-  --log http://localhost:8533 --static http://localhost:8502 \
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8911 >/tmp/chat-scroll-log.log 2>&1 &
+
+(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8910 --stub \
+  --log http://localhost:8911 --static http://localhost:8502 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/chat-scroll-ai.log 2>&1 &)
 
 # web assets
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8630 --assets "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8912 --assets "$ROOTDIR/workspace/web" \
   --pages /tmp/engineer-pages-unused \
-  --static http://localhost:8502 --ai http://localhost:8531 --log http://localhost:8533 \
+  --static http://localhost:8502 --ai http://localhost:8910 --log http://localhost:8911 \
   >/tmp/chat-scroll-web.log 2>&1 &
 ```
 
 Expected on startup: the ai service logs `--stub: model calls disabled`, the log
-server logs its address on `:8533`, and the web server logs
-`engineer web: http://localhost:8630`. (`--static` is only referenced by the
+server logs its address on `:8911`, and the web server logs
+`engineer web: http://localhost:8912`. (`--static` is only referenced by the
 frontend, never called here, so any address — or none — is fine.)
 
 ## Run
@@ -51,8 +65,8 @@ which the dev stub echoes back as the reply, so the replay is far taller than th
 window. It is then opened as a deep link (`/chat/<sessionId>`).
 
 ```bash
-WEB_URL=http://localhost:8630 ego-browser nodejs <<'EOF'
-const WEB = process.env.WEB_URL || "http://localhost:8630";
+WEB_URL=http://localhost:8912 ego-browser nodejs <<'EOF'
+const WEB = process.env.WEB_URL || "http://localhost:8912";
 const space = await taskSpace("core-web-chat-scroll");
 const page = space.page("p1");
 const checks = [];
@@ -70,7 +84,8 @@ await page.waitForSelector("#tabs", { state: "visible" });
 await page.evaluate(() => localStorage.clear());
 const ai = await page.evaluate(() => window.ENGINEER.ai);
 
-// 1. seed a conversation much taller than the window (the stub echoes the prompt)
+// 1. seed a conversation much taller than the window (the stub echoes the prompt).
+// A conversation belongs to no tab, so this needs no tab id.
 const created = await post(`${ai}/ai/new`, "{}");
 const sid = (created.match(/sessionId:\s*(\S+)/) || [])[1];
 check("the seed session was created", !!sid, { response: String(created).trim() });
@@ -90,7 +105,7 @@ await page.waitForFunction(
 
 // 3. the geometry: full-width scroller, capped centred column
 const geo = await page.evaluate(() => {
-  const host = document.getElementById("ai").getBoundingClientRect();
+  const host = document.querySelector("#panes .pane-chat").getBoundingClientRect();
   const s = document.getElementById("ai-scroll").getBoundingClientRect();
   const t = document.getElementById("ai-messages").getBoundingClientRect();
   const i = document.getElementById("ai-input").getBoundingClientRect();
@@ -195,7 +210,7 @@ code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'serve-web.*--port 8630'
+pkill -f 'serve-web.*--port 8912'
 pkill -f '/tmp/engineer serve-log --root .*chat-scroll-test'
-pkill -f 'main.ts.*--port 8531'
+pkill -f 'main.ts.*--port 8910'
 ```

@@ -25,35 +25,49 @@ ROOT="$ROOTDIR/.engineer/.input-history-test"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
 printf 'project: input-history-test\n' > "$ROOT/engineer.yaml"
 
-(cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8525 >/tmp/input-history-log.log 2>&1 &
-# its own static, rooted at $ROOT: the launcher reads skills from static
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8526 >/tmp/input-history-static.log 2>&1 &
+# Guard first: with an empty $ROOT the pattern below degrades to
+# "serve-log --root " and kills every service on the machine —
+# including the one running the agent. Fail loudly instead.
+: "${ROOT:?this case must set ROOT before reclaiming}"
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-static --root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+for p in 8930 8931 8932 8933; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
 
-(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8527 --stub \
-  --log http://localhost:8525 --static http://localhost:8526 \
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8930 >/tmp/input-history-log.log 2>&1 &
+# its own static, rooted at $ROOT: the launcher reads skills from static
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8931 >/tmp/input-history-static.log 2>&1 &
+
+(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8932 --stub \
+  --log http://localhost:8930 --static http://localhost:8931 \
   --agents "$ROOTDIR/agents/AGENTS.md" >/tmp/input-history-ai.log 2>&1 &)
 sleep 2
 # wait for ai: the first /ai/new must not race the boot
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8527/ai/new -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8932/ai/new -d '{}' && break
   sleep 1
 done
 
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8630 --assets "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8933 --assets "$ROOTDIR/workspace/web" \
   --pages /tmp/engineer-pages-unused \
-  --static http://localhost:8526 --ai http://localhost:8527 --log http://localhost:8525 \
+  --static http://localhost:8931 --ai http://localhost:8932 --log http://localhost:8930 \
   >/tmp/input-history-web.log 2>&1 &
 ```
 
 Expected on startup: `engineer ai: --stub: model calls disabled (echo stub)`,
-`engineer web: http://localhost:8630`.
+`engineer web: http://localhost:8933`.
 
 ## Run
 
 ```bash
-WEB_URL=http://localhost:8630 ego-browser nodejs <<'EOF'
-const WEB = process.env.WEB_URL || "http://localhost:8630";
+WEB_URL=http://localhost:8933 ego-browser nodejs <<'EOF'
+const WEB = process.env.WEB_URL || "http://localhost:8933";
 const space = await taskSpace("core-web-input-history");
 const page = space.page("p1");
 const checks = [];
@@ -84,7 +98,7 @@ const newChat = async () => {
   await openLauncher();
   await page.click('#newtab [data-action="newchat"]');
   await page.waitForSelector("#ai-input-field", { state: "visible" });
-  await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"));
+  await page.waitForFunction(() => !document.getElementById("panes").hidden);
 };
 
 await page.goto(`${WEB}/`);
@@ -202,9 +216,11 @@ await page.fill("#ai-input-field", "");
 await page.click("loc=css:#tabs .tab[data-tab-id].active .tab-close");
 await page.waitForFunction((id) => location.pathname !== `/chat/${id}`, tabA, { timeout: 5_000 });
 await openLauncher();
-await page.waitForSelector(`#newtab [data-section="recent"] .launch-item[data-id="${tabA}"]`,
+// recent lists *tab records* (the key is a tabId, not the session id): the one
+// just closed is the only one there, so the row is taken by position.
+await page.waitForSelector('#newtab [data-section="recent"] .launch-item[data-action="opentab"]',
   { state: "visible", timeout: 15_000 });
-await page.click(`#newtab [data-section="recent"] .launch-item[data-id="${tabA}"]`);
+await page.click('#newtab [data-section="recent"] .launch-item[data-action="opentab"] >> nth=0');
 await replayed("prompt three");
 await page.waitForSelector("#ai-input-field", { state: "visible" });
 await up();
@@ -214,7 +230,7 @@ await page.fill("#ai-input-field", "");
 
 // 10. so does a reload — the tab comes back and the replay reseeds the list
 await page.reload();
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
+await page.waitForFunction(() => !document.getElementById("panes").hidden,
   undefined, { timeout: 10_000 });
 await replayed("prompt three");
 await page.waitForSelector("#ai-input-field", { state: "visible" });
@@ -282,8 +298,8 @@ recorded, and the arrows do not recall while an image is staged in the composer
 ## Teardown
 
 ```bash
-pkill -f 'serve-web.*--port 8630'
-pkill -f 'main.ts.*--port 8527'
-pkill -f 'serve-log.*--port 8525'
-pkill -f 'serve-static.*--port 8526'
+pkill -f 'serve-web.*--port 8933'
+pkill -f 'main.ts.*--port 8932'
+pkill -f 'serve-log.*--port 8930'
+pkill -f 'serve-static.*--port 8931'
 ```

@@ -15,6 +15,13 @@ Source of truth for behaviour and CLI: `workspace/web/server` (Go), started as t
 ## Setup
 
 ```bash
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+for p in 8960; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
+
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 
 # a scratch blueprint root: one blueprint with an entry and an asset
@@ -24,18 +31,18 @@ printf '<!doctype html>\n<html><head><title>Demo</title></head><body>demo</body>
   > "$PAGES/demo/index.html"
 printf 'body { margin: 0 }\n' > "$PAGES/demo/app.css"
 
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8600 \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8960 \
   --assets "$(cd workspace/web && pwd)" --pages "$PAGES" \
   --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
 ```
 
-Expected on startup: a log line `engineer web: http://localhost:8600`.
+Expected on startup: a log line `engineer web: http://localhost:8960`.
 
 ## 1. the app shell is served
 
 ```bash
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/index.html
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/index.html
 ```
 
 Expected: both `200 text/html; charset=utf-8`, and both bodies are byte-identical
@@ -44,10 +51,10 @@ Expected: both `200 text/html; charset=utf-8`, and both bodies are byte-identica
 ## 2. assets are served with their own content types
 
 ```bash
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/app.js
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/style.css
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/theme.css
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/vendor/dompurify.js
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/app.js
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/style.css
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/theme.css
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/vendor/dompurify.js
 ```
 
 Expected: `200 text/javascript; charset=utf-8`, `200 text/css; charset=utf-8`,
@@ -57,7 +64,7 @@ Expected: `200 text/javascript; charset=utf-8`, `200 text/css; charset=utf-8`,
 ## 3. /config.js carries the addresses it was started with
 
 ```bash
-curl -s http://localhost:8600/config.js
+curl -s http://localhost:8960/config.js
 ```
 
 Expected: `200 text/javascript; charset=utf-8`, body exactly
@@ -72,9 +79,9 @@ reads `window.ENGINEER` to reach the other services.
 ## 4. /pages/ is the second root: blueprints are served from --pages
 
 ```bash
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/pages/demo/
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/pages/demo/app.css
-curl -s http://localhost:8600/pages/demo/
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/pages/demo/
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/pages/demo/app.css
+curl -s http://localhost:8960/pages/demo/
 ```
 
 Expected: `200 text/html; charset=utf-8` for the directory (the trailing slash
@@ -89,10 +96,10 @@ for `/pages/<id>/`. The slash is the whole difference, and it is what keeps the
 tab bar on screen when a page url is reloaded.
 
 ```bash
-curl -s http://localhost:8600/pages/demo > /tmp/pages-demo-noslash
-curl -s http://localhost:8600/ > /tmp/pages-shell
+curl -s http://localhost:8960/pages/demo > /tmp/pages-demo-noslash
+curl -s http://localhost:8960/ > /tmp/pages-shell
 cmp -s /tmp/pages-demo-noslash /tmp/pages-shell && echo "same as the shell" || echo "DIFFERENT"
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/pages/demo
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/pages/demo
 ```
 
 Expected: `same as the shell` and `200 text/html; charset=utf-8` — `/pages/demo`
@@ -102,8 +109,8 @@ tab; `/pages/demo/` is the blueprint itself.
 ## 6. unknown paths fall back to the app shell (SPA routing)
 
 ```bash
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/nope
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8600/pages/not-a-blueprint/
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/nope
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/pages/not-a-blueprint/
 ```
 
 Expected: both `200 text/html; charset=utf-8` — the shell, not a 404.
@@ -111,11 +118,11 @@ Expected: both `200 text/html; charset=utf-8` — the shell, not a 404.
 ## 7. traversal and favicon
 
 ```bash
-curl -s --path-as-is -o /dev/null -w '%{http_code}\n' 'http://localhost:8600/../etc/passwd'
-curl -s --path-as-is -o /dev/null -w '%{http_code}\n' 'http://localhost:8600/..%2f..%2fetc%2fpasswd'
-curl -s --path-as-is -o /dev/null -w '%{http_code}\n' 'http://localhost:8600/pages/../etc/passwd'
-curl -s --path-as-is -o /dev/null -w '%{http_code}\n' 'http://localhost:8600/pages/..%2f..%2fetc%2fpasswd'
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8600/favicon.ico
+curl -s --path-as-is -o /dev/null -w '%{http_code}\n' 'http://localhost:8960/../etc/passwd'
+curl -s --path-as-is -o /dev/null -w '%{http_code}\n' 'http://localhost:8960/..%2f..%2fetc%2fpasswd'
+curl -s --path-as-is -o /dev/null -w '%{http_code}\n' 'http://localhost:8960/pages/../etc/passwd'
+curl -s --path-as-is -o /dev/null -w '%{http_code}\n' 'http://localhost:8960/pages/..%2f..%2fetc%2fpasswd'
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8960/favicon.ico
 ```
 
 Expected: `403`, `403`, `403`, `403`, `404` — nothing outside the root in play is
@@ -124,6 +131,6 @@ ever served, and the pages root is guarded exactly like the assets root.
 ## 8. teardown
 
 ```bash
-pkill -f 'serve-web.*--port 8600'
+pkill -f 'serve-web.*--port 8960'
 rm -rf /tmp/web-serve-pages /tmp/pages-demo-noslash /tmp/pages-shell
 ```

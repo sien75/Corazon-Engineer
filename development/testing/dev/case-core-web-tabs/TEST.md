@@ -6,13 +6,15 @@ message — and a blank chat needs no skill) or a **page** (a blueprint rendered
 an iframe, covered by `case-core-web-page`). The fixed views (graph / how-to /
 development / contracts / docs / notes) are tabs too, but they can never be
 closed. `+` opens the launcher: Chat, then the Skills and Blueprints sections
-(three each, with a heading to open the full list), then `recent`. `/new`
+(three each, with a heading to open the full list), then `recent` — the tab
+records you closed, which is how a workspace is found again (`case-core-web-tab-records`,
+which also covers the record behind every tab). `/new`
 cancels the active instance and opens a fresh generic chat, and each instance
 keeps its own unsent composer draft.
 
 Source of truth: `workspace/web/index.html` (`#tabs`), `workspace/web/app.js`
 (`openTab` / `activateTab` / `closeTab` / the launcher) and
-`workspace/web/style.css` (`.newtab-*`, `#ai.tab-mode`). Tab switching, layout
+`workspace/web/style.css` (`.newtab-*`, `#panes`). Tab switching, layout
 and the page are DOM behaviour, so this case runs through a real browser
 (`ego-browser`) rather than curl.
 
@@ -23,25 +25,39 @@ Prerequisite: `ego-browser` on `PATH` (`ego-browser --version`).
 ```bash
 # A scratch project root: the case must not touch the real .agents/ or .engineer/
 ROOTDIR="$PWD"
-ROOT="$ROOTDIR/.engineer/.skill-test"
+ROOT="$ROOTDIR/.engineer/.tabs"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
-printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
+printf 'project: tabs\n' > "$ROOT/engineer.yaml"
 mkdir -p "$ROOT/.agents/blueprints"
 
 # log + ai on their own ports; ai in stub mode, so skill runs are deterministic and offline
-(cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8513 >/tmp/tabs-log.log 2>&1 &
-# its own static, rooted at $ROOT: the launcher reads skills from static now
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8514 >/tmp/tabs-static.log 2>&1 &
+# Guard first: with an empty $ROOT the pattern below degrades to
+# "serve-log --root " and kills every service on the machine —
+# including the one running the agent. Fail loudly instead.
+: "${ROOT:?this case must set ROOT before reclaiming}"
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-static --root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+for p in 8980 8981 8982 8983; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
 
-(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8511 --stub \
-  --log http://localhost:8513 --static http://localhost:8514 \
+(cd how-to/deploy/prod && go build -o /tmp/engineer .)
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8981 >/tmp/tabs-log.log 2>&1 &
+# its own static, rooted at $ROOT: the launcher reads skills from static now
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8982 >/tmp/tabs-static.log 2>&1 &
+
+(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8980 --stub \
+  --log http://localhost:8981 --static http://localhost:8982 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/tabs-ai.log 2>&1 &)
 
 # wait for ai first: the writes below must not race the boot
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8511/ai/new -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8980/ai/new -d '{}' && break
   sleep 1
 done
 # four saved skills, so the launcher's three-at-a-time preview is exercised —
@@ -61,21 +77,21 @@ for i in $(seq 1 12); do
 done
 
 # web assets + the blueprint root (empty here; pages have their own case)
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8983 --assets "$ROOTDIR/workspace/web" \
   --pages "$ROOT/.agents/blueprints" \
-  --static http://localhost:8514 --ai http://localhost:8511 --log http://localhost:8513 \
+  --static http://localhost:8982 --ai http://localhost:8980 --log http://localhost:8981 \
   >/tmp/tabs-web.log 2>&1 &
 ```
 
 Expected on startup: the ai service logs `--stub: model calls disabled`, the
-log server logs its address on `:8513`, the static server on `:8514`, and the web
-server logs `engineer web: http://localhost:8610`.
+log server logs its address on `:8981`, the static server on `:8982`, and the web
+server logs `engineer web: http://localhost:8983`.
 
 ## Run
 
 ```bash
-WEB_URL=http://localhost:8610 ego-browser nodejs <<'EOF'
-const WEB = process.env.WEB_URL || "http://localhost:8610";
+WEB_URL=http://localhost:8983 ego-browser nodejs <<'EOF'
+const WEB = process.env.WEB_URL || "http://localhost:8983";
 const space = await taskSpace("core-web-tabs");
 const page = space.page("p1");
 const checks = [];
@@ -194,7 +210,8 @@ check("+ stays the active tab on the skills page",
   await page.evaluate(() => document.getElementById("tab-add").classList.contains("active") &&
     document.querySelectorAll("#tabs .tab.active").length === 0));
 await page.click("loc=css:#newtab .newtab-back");
-await page.waitForFunction(() => location.pathname === "/new", undefined, { timeout: 5_000 });
+await page.waitForFunction(() => location.pathname === "/new" &&
+  document.querySelectorAll("#newtab .newtab-sec").length === 4, undefined, { timeout: 5_000 });
 check("the back button returns to the launcher",
   await page.evaluate(() => document.getElementById("newtab").hidden === false &&
     document.querySelectorAll("#newtab .newtab-sec").length === 4));
@@ -206,7 +223,7 @@ const rowActions = await page.evaluate(() =>
   [...document.querySelectorAll("#newtab .launch-item")].map((e) => e.dataset.action));
 check("every launcher row is exactly one action (run / page / suggest / resume / newchat)",
   rowActions.length > 0 && rowActions.every((a) =>
-    ["run", "page", "suggest", "resume", "newchat"].includes(a)),
+    ["run", "page", "suggest", "opentab", "newchat"].includes(a)),
   { actions: [...new Set(rowActions)] });
 check("no row carries a delete / save / ignore button",
   await page.evaluate(() =>
@@ -214,18 +231,21 @@ check("no row carries a delete / save / ignore button",
 check("no delete affordance and no popover code path",
   await page.evaluate(() => document.querySelector(".skill-confirm") === null));
 
-// 3. the launcher can start a blank conversation (no skill behind it)
+// 3. the launcher can start a blank conversation (no skill behind it).
+// The launcher home is already showing: the back button belongs to the skills
+// page, which step 3 left.
 await page.cdp("Emulation.clearDeviceMetricsOverride", {});
-await page.click("loc=css:#newtab .newtab-back");
 await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
 await page.click("loc=css:#newtab [data-action=newchat]");
 await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
+// Wait for the conversation itself: the tab's panes (and their composers) are
+// built after its record has been read back, which is a request later.
+await page.waitForFunction(() => !!document.querySelector("#panes .pane-chat .ai-input"),
   undefined, { timeout: 10_000 });
 const blank = await page.evaluate(() => ({
   tab: document.querySelector("#tabs .tab[data-tab-id].active")?.textContent.trim(),
   messages: document.querySelectorAll("#ai-messages .ai-msg").length,
-  inputVisible: !document.getElementById("ai-input").hidden,
+  inputVisible: document.querySelector("#panes .pane-chat .ai-input").getBoundingClientRect().height > 0,
   newTabHidden: document.getElementById("newtab").hidden,
 }));
 check("the blank Chat button opens a blank conversation tab",
@@ -244,7 +264,7 @@ await page.click("loc=css:#newtab [data-section=skills] .newtab-sec-open");
 await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
 await page.click("loc=css:#newtab [data-section=skills-mine] .launch-item[data-id='seeded-skill']");
 await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
+await page.waitForFunction(() => !document.getElementById("panes").hidden,
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => (document.getElementById("ai-input-field")?.value || "").includes("seeded instruction"),
@@ -254,7 +274,7 @@ const run = await page.evaluate(() => ({
   input: document.getElementById("ai-input-field").value,
   messages: (document.querySelector("#ai-messages")?.textContent || "").trim(),
   leftHidden: document.getElementById("left").hidden,
-  width: document.getElementById("ai").getBoundingClientRect().width,
+  width: document.querySelector("#panes .pane-chat").getBoundingClientRect().width,
   viewport: window.innerWidth,
   newTabHidden: document.getElementById("newtab").hidden,
 }));
@@ -283,7 +303,7 @@ check("sending runs the prefilled skill text",
 // and composer aligned.
 check("the conversation column is capped at 1000px and centred",
   await page.evaluate(() => {
-    const host = document.getElementById("ai").getBoundingClientRect();
+    const host = document.querySelector("#panes .pane-chat").getBoundingClientRect();
     return ["ai-messages", "ai-input"].every((id) => {
       const b = document.getElementById(id).getBoundingClientRect();
       return b.width <= 1001 &&
@@ -291,21 +311,26 @@ check("the conversation column is capped at 1000px and centred",
     });
   }));
 
-// 4b. recent is the way back to a *closed* conversation: the one that is open
-// as a tab right now is filtered out of it.
+// 4b. recent is the way back to a *closed* tab: the tab that is open right now
+// is filtered out of it (the blank chat closed in step 3 is still listed — that
+// is what recent is for).
 await page.click("#tab-add");
 await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
-check("recent does not list the conversation that is open as a tab",
-  await page.evaluate(() =>
-    document.querySelectorAll("#newtab [data-section=recent] .launch-item").length === 0 &&
-    document.querySelector("#newtab [data-action=resume]") === null));
+check("recent does not list the tab that is open",
+  await page.evaluate(() => {
+    const open = JSON.parse(localStorage.getItem("engineer.tabs") || "[]")
+      .map((t) => t.tabId).filter(Boolean);
+    const recent = [...document.querySelectorAll("#newtab [data-section=recent] .launch-item")]
+      .map((e) => e.dataset.id);
+    return open.length > 0 && recent.every((id) => !open.includes(id));
+  }));
 await page.click("loc=css:#tabs .tab[data-tab-id]");
 await page.waitForFunction(() => document.getElementById("newtab").hidden === true,
   undefined, { timeout: 5_000 });
 
 // 5. a fixed tab leaves tab mode but keeps the tab
 await page.click("loc=css:#tabs button[data-view='graph']");
-await page.waitForFunction(() => !document.getElementById("ai").classList.contains("tab-mode"),
+await page.waitForFunction(() => !!document.getElementById("panes").hidden,
   undefined, { timeout: 5_000 });
 await page.screenshot({ path: "/tmp/tabs-graph.png" });
 const back = await page.evaluate(() => ({
@@ -318,7 +343,7 @@ check("a fixed tab leaves tab mode and keeps the tab",
 
 // 6. reopening the tab re-renders the conversation (from /ai/resume + log)
 await page.click("loc=css:.tab[data-tab-id]");
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
+await page.waitForFunction(() => !document.getElementById("panes").hidden,
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
@@ -333,17 +358,17 @@ await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-
 const closed = await page.evaluate(() => ({
   tabs: document.querySelectorAll("#tabs .tab[data-tab-id]").length,
   active: document.querySelector("#tabs .tab.active")?.textContent.trim(),
-  tabMode: document.getElementById("ai").classList.contains("tab-mode"),
+  tabMode: !document.getElementById("panes").hidden,
 }));
 check("closing the last tab falls back to the graph",
   closed.tabs === 0 && closed.tabMode === false && closed.active === "graph", closed);
 
 // 8. a closed conversation is reachable again from the recent list
 await page.click("#tab-add");
-await page.waitForSelector("#newtab [data-action=resume]", { state: "visible" });
-await page.click("loc=css:#newtab [data-action=resume]:has-text('seeded instruction') >> nth=0");
+await page.waitForSelector("#newtab [data-action=opentab]", { state: "visible" });
+await page.click("loc=css:#newtab [data-action=opentab]:has-text('seeded instruction') >> nth=0");
 await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
+await page.waitForFunction(() => !document.getElementById("panes").hidden,
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
@@ -353,18 +378,24 @@ await page.click("loc=css:.tab[data-tab-id] .tab-close");
 await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-id]").length === 0,
   undefined, { timeout: 5_000 });
 
-// 9. open tabs survive a reload
+// 9. open tabs survive a reload. The skill opens a *fresh* instance — its text
+// sits unsent in the composer — so send it first: a session with no messages has
+// no conversation to survive, and a reload deliberately drops the draft.
 await page.click("#tab-add");
 await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
 await page.click("loc=css:#newtab [data-section=skills] .newtab-sec-open");
 await page.waitForSelector("#newtab .newtab-back", { state: "visible" });
 await page.click("loc=css:#newtab .launch-item:has-text('Seeded skill') >> nth=0");
 await page.waitForSelector(".tab[data-tab-id].active", { state: "visible" });
+await page.click("#ai-send");
+await page.waitForFunction(
+  () => (document.querySelector("#ai-messages")?.textContent || "").includes("dev stub"),
+  undefined, { timeout: 30_000 });
 await page.reload();
 await page.waitForSelector("#tabs", { state: "visible" });
 await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-tab-id]").length === 1,
   undefined, { timeout: 10_000 });
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
+await page.waitForFunction(() => !document.getElementById("panes").hidden,
   undefined, { timeout: 10_000 });
 check("open tabs and the active tab survive a reload", true);
 
@@ -418,10 +449,10 @@ check("/new replaces the tab with a fresh generic chat",
 await page.click("#tab-add");
 await page.waitForSelector("#newtab .newtab-sec", { state: "visible" });
 await page.click("loc=css:#newtab [data-action=newchat]");
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
+await page.waitForFunction(() => !document.getElementById("panes").hidden,
   undefined, { timeout: 10_000 });
 await page.click("loc=css:#tabs .tab[data-tab-id] >> nth=0");
-await page.waitForFunction(() => document.getElementById("ai").classList.contains("tab-mode"),
+await page.waitForFunction(() => !document.getElementById("panes").hidden,
   undefined, { timeout: 10_000 });
 await page.waitForFunction(
   () => document.querySelectorAll("#ai-messages .ai-msg").length === 0,
@@ -483,8 +514,9 @@ input, and a saved skill's `chat` button opening a closable tab that fills the
 page (the conversation itself capped at 1000px and centred, tool / thinking
 blocks being 300px chips that widen when opened, the scrolling spanning the whole
 pane with no bubble touching its scrollbar) showing the skill text as the first
-message and streaming the reply; `recent` leaving out the conversation that is
-open as a tab; a fixed tab leaving tab mode without losing the tab; reopening the
+message and streaming the reply; `recent` leaving out the tab that is
+open right now; a fixed tab leaving tab mode without losing the tab; reopening
+the
 tab re-rendering the conversation; closing the last tab falling back to the graph
 and the conversation being reopenable from `recent`; open tabs surviving a
 reload; `/new` replacing the active tab with a fresh generic chat that never
@@ -493,7 +525,7 @@ comes back; and the unsent draft being per instance. Exit code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'serve-web.*--port 8610'
-pkill -f '/tmp/engineer serve-log --root .*skill-test'
-pkill -f 'main.ts.*--port 8511'
+pkill -f 'serve-web.*--port 8983'
+pkill -f '/tmp/engineer serve-log --root .*tabs'
+pkill -f 'main.ts.*--port 8980'
 ```

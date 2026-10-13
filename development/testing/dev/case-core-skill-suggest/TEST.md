@@ -32,9 +32,9 @@ out of that range. Override these to run two stacks side by side:
 PORT="${AI_PORT:-8547}"   # e.g. AI_PORT=8557 for a second stack
 LOG_PORT="${LOG_PORT:-8548}"
 AI="http://localhost:$PORT"
-ROOT="$(pwd)/.engineer/.skill-test"
+ROOT="$(pwd)/.engineer/.skill-suggest"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
-printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
+printf 'project: skill-suggest\n' > "$ROOT/engineer.yaml"
 
 # A log service of its own: the ai service refuses to start without a --log
 # address, and the real one must not be handed to it.

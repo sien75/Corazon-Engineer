@@ -31,6 +31,12 @@ Prerequisite: `ego-browser` on `PATH` (`ego-browser --version`).
 ```bash
 ROOTDIR="$PWD"
 
+# Reclaim the previous run's fixture before writing this one's: it binds the same
+# port, so a leftover would keep serving the old script (the new one then fails
+# to bind, buried in a log, and the case tests the wrong thing).
+pkill -f "tool-chips-fake" 2>/dev/null || true
+sleep 1
+
 # The fake provider is a fixture, not part of the system: it answers the ai / log
 # endpoints with a canned event script so the run is deterministic and offline.
 # Kept in /tmp — outside the project, so this case stays desp.yaml + TEST.md.
@@ -40,9 +46,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 )
 
 type m = map[string]any
@@ -88,7 +96,33 @@ var history = []m{
 	}},
 }
 
+// tabIDOf pulls tabId out of the request body; the fixture speaks yaml, but the
+// bodies it receives are one flat line, so a substring is enough.
+func tabIDOf(r *http.Request, fallback string) string {
+	b, _ := io.ReadAll(r.Body)
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "tabId:"); ok {
+			if id := strings.TrimSpace(v); id != "" {
+				return id
+			}
+		}
+	}
+	return fallback
+}
+
+// tabOf is one stored tab record; historyTab is the one already in log, so the
+// launcher's recent section has something to reopen.
+var historyTab = map[string]any{"tabId": "t_history",
+	"layout":    m{"pane": m{"content": "chat", "id": "history-1"}},
+	"createdAt": "2026-10-01T10:00:00Z", "updatedAt": "2026-10-01T10:00:00Z"}
+
+func tabOf(id string, layout m) map[string]any {
+	return map[string]any{"tabId": id, "layout": layout,
+		"createdAt": "2026-10-01T10:00:00Z", "updatedAt": "2026-10-01T10:00:00Z"}
+}
+
 func main() {
+	tabs := map[string]map[string]any{}
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -107,11 +141,40 @@ func main() {
 		case "/static/query":
 			write(200, m{"skills": []any{}, "suggested-skills": []any{}, "blueprints": []any{}})
 		case "/ai/new":
+			// tabId is an input now: the tab exists before the conversation, and
+			// the service records what it holds (as the real one does).
+			id := tabIDOf(r, "t_live")
+			tabs[id] = tabOf(id, m{"pane": m{"content": "chat", "id": "live-1"}})
 			write(200, m{"sessionId": "live-1"})
 		case "/ai/resume":
 			write(200, m{"sessionId": "history-1", "lastSeq": len(history), "active": false})
 		case "/ai/ask", "/ai/stop":
 			write(200, m{"sessionId": "live-1"})
+		// Tabs: the frontend keeps a pane layout per tab, so the fixture stores
+		// one too — otherwise the launcher's recent section has nothing to
+		// reopen the recorded conversation from (and the live tab needs an id
+		// the same way).
+		case "/log/tab/new":
+			id := "t_live"
+			tabs[id] = tabOf(id, m{})
+			write(200, m{"tabId": id})
+		case "/log/tab/mutation":
+			id := tabIDOf(r, "t_live")
+			tabs[id] = tabOf(id, m{"pane": m{"content": "chat", "id": "live-1"}})
+			write(200, tabs[id])
+		case "/log/tab/detail":
+			id := tabIDOf(r, "t_history")
+			if t, ok := tabs[id]; ok {
+				write(200, t)
+				return
+			}
+			write(200, historyTab)
+		case "/log/tab/list":
+			rows := []any{historyTab}
+			for _, t := range tabs {
+				rows = append(rows, t)
+			}
+			write(200, m{"tabs": rows, "pageNum": 1, "hasMore": false, "pageSize": 100})
 		case "/ai/stream":
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
@@ -136,28 +199,36 @@ func main() {
 }
 GO
 go build -o /tmp/tool-chips-fake /tmp/tool-chips-fake.go
-/tmp/tool-chips-fake 127.0.0.1:8611 >/tmp/tool-chips-fake.log 2>&1 &
+/tmp/tool-chips-fake 127.0.0.1:8991 >/tmp/tool-chips-fake.log 2>&1 &
 sleep 1
-curl -s -X POST http://localhost:8611/ai/new -d '{}'   # {"sessionId":"live-1"}
+curl -s -X POST http://localhost:8991/log/tab/new -d '{}'          # {"tabId":"t_live"}
+curl -s -X POST http://localhost:8991/ai/new -d 'tabId: t_live'    # {"sessionId":"live-1"}
 echo
 
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+for p in 8990; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
+
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8610 --assets "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-web --bind 127.0.0.1 --port 8990 --assets "$ROOTDIR/workspace/web" \
   --pages /tmp/engineer-pages-unused \
-  --static http://localhost:8699 --ai http://localhost:8611 --log http://localhost:8611 \
+  --static http://localhost:8699 --ai http://localhost:8991 --log http://localhost:8991 \
   >/tmp/tool-chips-web.log 2>&1 &
 sleep 1
 ```
 
 Expected on startup: the fixture answering `{"sessionId":"live-1"}` and
-`engineer web: http://localhost:8610`. Nothing needs to listen on 8699 (the graph
+`engineer web: http://localhost:8990`. Nothing needs to listen on 8699 (the graph
 view is not exercised here).
 
 ## Run
 
 ```bash
-WEB_URL=http://localhost:8610 ego-browser nodejs <<'EOF'
-const WEB = process.env.WEB_URL || "http://localhost:8610";
+WEB_URL=http://localhost:8990 ego-browser nodejs <<'EOF'
+const WEB = process.env.WEB_URL || "http://localhost:8990";
 
 const task = await taskSpace("core-web-tool-chips");
 const page = task.page("p1");
@@ -243,8 +314,8 @@ const check = (name, pass, detail) => checks.push({ name, pass: !!pass, detail }
 // The "+" page opens a skill or a blank chat; "Chat" is the blank one, which
 // opens a fresh tab and consumes /ai/stream from seq 0.
 await page.click("#tab-add");
-await page.waitForSelector("#newtab .skill-item[data-action='newchat']", { state: "visible" });
-await page.click("#newtab .skill-item[data-action='newchat']");
+await page.waitForSelector('#newtab .launch-item[data-action="newchat"]', { state: "visible" });
+await page.click('#newtab .launch-item[data-action="newchat"]');
 await page.waitForSelector("#ai-input-field", { state: "visible" });
 await page.waitForFunction(
   () => document.querySelectorAll("#ai-messages > .ai-chip-row").length >= 2,
@@ -386,8 +457,11 @@ check("the live run rendered its text", live.text.includes("看完了"), { text:
 // ---------- history replay ----------
 
 await page.click("#tab-add");
-await page.waitForSelector("#newtab .skill-item[data-action='resume']", { state: "visible" });
-await page.click("#newtab .skill-item[data-action='resume']");
+// recent lists tab records, so the closed conversation is reopened by opening
+// its tab again (data-id is a tabId, not the session id).
+await page.waitForSelector('#newtab [data-section="recent"] .launch-item[data-action="opentab"]',
+  { state: "visible" });
+await page.click('#newtab [data-section="recent"] .launch-item[data-action="opentab"] >> nth=0');
 // Wait for a label only the replayed session has — the live rows are still on
 // screen when the click returns, so a row count alone would race ahead.
 await page.waitForFunction(
@@ -433,6 +507,6 @@ becoming a chip. Exit code `0`.
 ## Teardown
 
 ```bash
-pkill -f 'serve-web.*--port 8610'
-pkill -f 'tool-chips-fake 127.0.0.1:8611'
+pkill -f 'serve-web.*--port 8990'
+pkill -f 'tool-chips-fake 127.0.0.1:8991'
 ```

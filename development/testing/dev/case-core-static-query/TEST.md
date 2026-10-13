@@ -12,12 +12,21 @@ rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/
 # Start the server under test with .engineer/.playground as project root — with the
 # same binary the launcher runs. `workspace/static` has no main package, so building
 # inside it yields an archive, not a runnable ./engineer.
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $PWD/.engineer/.playground" 2>/dev/null || true
+pkill -f "serve-static --root $PWD/.engineer/.playground" 2>/dev/null || true
+for p in 8870; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
+
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-static --root "$PWD/.engineer/.playground" --bind 127.0.0.1 --port 8512 &
+/tmp/engineer serve-static --root "$PWD/.engineer/.playground" --bind 127.0.0.1 --port 8870 &
 
 # wait for it before querying: the blocks below run back to back
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8512/static/query -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8870/static/query -d '{}' && break
   sleep 1
 done
 ```
@@ -25,7 +34,7 @@ done
 ## 1. static-query full query
 
 ```bash
-curl -s -X POST http://localhost:8512/static/query \
+curl -s -X POST http://localhost:8870/static/query \
   -H 'Content-Type: application/yaml' --data-binary ''
 ```
 
@@ -40,7 +49,7 @@ Expected: 200, body contains:
 ## 2. static-query-detail how-to content
 
 ```bash
-curl -s -X POST http://localhost:8512/static/query-detail \
+curl -s -X POST http://localhost:8870/static/query-detail \
   -H 'Content-Type: application/yaml' --data-binary $'type: how-to\nid: how-to/README.md'
 ```
 
@@ -49,7 +58,7 @@ Expected: 200, `how-to` is the raw file text starting with `# how-to`.
 ## 3. static-query-detail contract content
 
 ```bash
-curl -s -X POST http://localhost:8512/static/query-detail \
+curl -s -X POST http://localhost:8870/static/query-detail \
   -H 'Content-Type: application/yaml' --data-binary $'type: contract\nid: contracts/demo-api.yaml'
 ```
 
@@ -58,7 +67,7 @@ Expected: 200, `contract.id` is `demo-api`, `contract.response.body.ok` is `bool
 ## 4. static-query-detail development raw text
 
 ```bash
-curl -s -X POST http://localhost:8512/static/query-detail \
+curl -s -X POST http://localhost:8870/static/query-detail \
   -H 'Content-Type: application/yaml' --data-binary $'type: development\nid: development/note.md'
 ```
 
@@ -67,14 +76,14 @@ Expected: 200, `development` is the raw markdown starting with `# Playground Not
 ## 5. static-query-detail error branches
 
 ```bash
-curl -s -X POST http://localhost:8512/static/query-detail \
+curl -s -X POST http://localhost:8870/static/query-detail \
   -H 'Content-Type: application/yaml' --data-binary $'type: atom\nid: atoms/demo-service.yaml'
 ```
 
 Expected: 400, `error.code` is `bad_request` (atom is not a leaf file type).
 
 ```bash
-curl -s -X POST http://localhost:8512/static/query-detail \
+curl -s -X POST http://localhost:8870/static/query-detail \
   -H 'Content-Type: application/yaml' --data-binary $'type: contract\nid: contracts/nope.yaml'
 ```
 

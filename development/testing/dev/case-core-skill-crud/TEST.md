@@ -14,27 +14,41 @@ here to call either.
 ROOTDIR="$PWD"
 # Isolated scratch project root: the test must never touch the real .agents/skills
 # or .engineer.
-ROOT="$ROOTDIR/.engineer/.skill-test"
+ROOT="$ROOTDIR/.engineer/.skill-crud"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
-printf 'project: skill-test\n' > "$ROOT/engineer.yaml"
+printf 'project: skill-crud\n' > "$ROOT/engineer.yaml"
 
 # A scratch log service (ai refuses to start without --log) and a scratch static
 # service rooted at $ROOT, so the read side reads this scratch tree and not the
 # real project.
+# Guard first: with an empty $ROOT the pattern below degrades to
+# "serve-log --root " and kills every service on the machine —
+# including the one running the agent. Fail loudly instead.
+: "${ROOT:?this case must set ROOT before reclaiming}"
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-static --root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+for p in 8850 8851 8852; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
+
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8544 \
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8851 \
   >/tmp/skill-crud-log.log 2>&1 &
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8545 \
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8852 \
   >/tmp/skill-crud-static.log 2>&1 &
 
 (cd workspace/ai && bun install && bun run src/main.ts \
-  --bind 127.0.0.1 --port 8543 --root "$ROOT" --stub \
-  --log http://localhost:8544 --static http://localhost:8545 \
+  --bind 127.0.0.1 --port 8850 --root "$ROOT" --stub \
+  --log http://localhost:8851 --static http://localhost:8852 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/skill-crud-ai.log 2>&1 &)
 
-AI=http://localhost:8543
-STATIC=http://localhost:8545
+AI=http://localhost:8850
+STATIC=http://localhost:8852
 SKILLS="$ROOT/.agents/skills"
 SUGGESTED="$ROOT/.engineer/suggested-skills"
 
@@ -136,11 +150,11 @@ service keeps no skill database.
 ## 6. files survive a restart
 
 ```bash
-pkill -f 'main.ts.*--port 8543'
+pkill -f 'main.ts.*--port 8850'
 
 (cd workspace/ai && bun run src/main.ts \
-  --bind 127.0.0.1 --port 8543 --root "$ROOT" --stub \
-  --log http://localhost:8544 --static http://localhost:8545 \
+  --bind 127.0.0.1 --port 8850 --root "$ROOT" --stub \
+  --log http://localhost:8851 --static http://localhost:8852 \
   --agents "$ROOTDIR/agents/AGENTS.md" \
   >/tmp/skill-crud-ai.log 2>&1 &)
 for i in $(seq 1 60); do
@@ -157,7 +171,7 @@ not in process memory.
 ## Teardown
 
 ```bash
-pkill -f 'main.ts.*--port 8543'
-pkill -f '/tmp/engineer serve-log --root .*skill-test'
-pkill -f '/tmp/engineer serve-static --root .*skill-test'
+pkill -f 'main.ts.*--port 8850'
+pkill -f '/tmp/engineer serve-log --root .*skill-crud'
+pkill -f '/tmp/engineer serve-static --root .*skill-crud'
 ```

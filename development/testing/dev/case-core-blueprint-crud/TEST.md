@@ -17,11 +17,25 @@ rm -rf "$ROOT" && mkdir -p "$ROOT"
 printf 'project: blueprint-test\n' > "$ROOT/engineer.yaml"
 
 # A scratch static service rooted at $ROOT — the read side.
+# Guard first: with an empty $ROOT the pattern below degrades to
+# "serve-log --root " and kills every service on the machine —
+# including the one running the agent. Fail loudly instead.
+: "${ROOT:?this case must set ROOT before reclaiming}"
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-static --root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+for p in 8820; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
+
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8555 \
+/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8820 \
   >/tmp/bp-static.log 2>&1 &
 
-STATIC=http://localhost:8555
+STATIC=http://localhost:8820
 BPS="$ROOT/.agents/blueprints"
 
 for i in $(seq 1 60); do

@@ -11,25 +11,44 @@ ROOT="$PWD/.engineer/.ai-flow"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
 printf 'project: ai-flow\n' > "$ROOT/engineer.yaml"
 
+# Guard first: with an empty $ROOT the pattern below degrades to
+# "serve-log --root " and kills every service on the machine —
+# including the one running the agent. Fail loudly instead.
+: "${ROOT:?this case must set ROOT before reclaiming}"
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-static --root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+for p in 8800 8801; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
+
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8532 >/tmp/ai-flow-log.log 2>&1 &
+/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8800 >/tmp/ai-flow-log.log 2>&1 &
 
 cd workspace/ai && bun install && bun run src/main.ts \
-  --bind 127.0.0.1 --port 8541 --root "$ROOT" \
-  --log http://localhost:8532 --static http://localhost:8502 \
+  --bind 127.0.0.1 --port 8801 --root "$ROOT" \
+  --log http://localhost:8800 --static http://localhost:8502 \
   --agents ../../agents/AGENTS.md &
 
 # wait for it before asking: the blocks below run back to back
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8541/ai/skill/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8801/ai/skill/list -d '{}' && break
   sleep 1
 done
 ```
 
-## 1. ai-new creates a session
+## 1. ai-new creates a conversation
+
+A conversation belongs to no tab. Where it is shown is the tab's business: a tab
+references conversations (its layout), and several tabs may reference the same
+one. So this call says nothing about tabs — see `case-core-tab-layout` and
+`case-core-web-tab-records` for the tab side.
 
 ```bash
-SID=$(curl -s -X POST http://localhost:8541/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+SID=$(curl -s -X POST http://localhost:8801/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
 echo $SID
 ```
 
@@ -38,7 +57,7 @@ Expected: 200, returns a non-empty `sessionId`.
 ## 2. ai-ask
 
 ```bash
-curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8801/ai/ask -d "id: $SID
 blocks:
   - type: text
     text: show me the architecture"
@@ -49,14 +68,14 @@ Expected: 200, `sessionId` equals `$SID`.
 Error branches:
 
 ```bash
-curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8801/ai/ask -d "id: $SID
 blocks: []"
 ```
 
 Expected: 400, `error.code` is `bad_request`.
 
 ```bash
-curl -s -X POST http://localhost:8541/ai/ask -d "id: nope
+curl -s -X POST http://localhost:8801/ai/ask -d "id: nope
 blocks:
   - type: text
     text: hi"
@@ -67,7 +86,7 @@ Expected: 404, `error.code` is `not_found`.
 ## 3. ai-stream receives output
 
 ```bash
-curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID"
+curl -N -X POST http://localhost:8801/ai/stream -d "id: $SID"
 ```
 
 Expected: native pi events. `agent_start`; one or more `type=message_update`
@@ -87,7 +106,7 @@ the server closes the stream immediately.
 
 ```bash
 # replay only seq 5..end
-curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID
+curl -N -X POST http://localhost:8801/ai/stream -d "id: $SID
 since: 4"
 ```
 
@@ -96,7 +115,7 @@ ends with `agent_settled`.
 
 ```bash
 # caught up + idle: returns at once with no events
-time curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID
+time curl -N -X POST http://localhost:8801/ai/stream -d "id: $SID
 since: 9999"
 ```
 
@@ -108,12 +127,12 @@ the missed events are replayed):
 
 ```bash
 # in one shell: start a slow run
-curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8801/ai/ask -d "id: $SID
 blocks:
   - type: text
     text: 'Run the shell command \"sleep 5\" with the bash tool, then reply done'"
 # in another, while it runs:
-curl -s -X POST http://localhost:8541/ai/resume -d "id: $SID"
+curl -s -X POST http://localhost:8801/ai/resume -d "id: $SID"
 ```
 
 Expected: `active: true` while the run is in flight (`false` once it settles);
@@ -125,7 +144,7 @@ All tool calls run without approval; the agent runs shell commands and
 external CLIs through the built-in `bash` tool.
 
 ```bash
-curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8801/ai/ask -d "id: $SID
 blocks:
   - type: text
     text: run the date command in your shell"
@@ -134,7 +153,7 @@ blocks:
 In another terminal:
 
 ```bash
-curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID"
+curl -N -X POST http://localhost:8801/ai/stream -d "id: $SID"
 ```
 
 Expected: no approval event at all; tool calls surface as native pi
@@ -148,7 +167,7 @@ session replays tool calls and thinking, not just text. Images are stored as
 sha256 refs, never base64.
 
 ```bash
-curl -s -X POST http://localhost:8532/log/session-detail -d "sessionId: $SID"
+curl -s -X POST http://localhost:8800/log/session-detail -d "sessionId: $SID"
 ```
 
 Expected: each message carries `seq`, `role` (`user` | `assistant` | `toolResult`
@@ -165,7 +184,7 @@ messages already summarized away are not sent to the provider again.
 Force the agent to use the custom `ask_user` tool:
 
 ```bash
-curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8801/ai/ask -d "id: $SID
 blocks:
   - type: text
     text: use the ask_user tool to ask me to choose between A and B"
@@ -178,11 +197,11 @@ Then stream: expected `tool_execution_start` with `toolName: ask_user` (its
 Answer through /ai/ask as an ordinary text block, then stream again:
 
 ```bash
-curl -s -X POST http://localhost:8541/ai/ask -d "id: $SID
+curl -s -X POST http://localhost:8801/ai/ask -d "id: $SID
 blocks:
   - type: text
     text: A"
-curl -N -X POST http://localhost:8541/ai/stream -d "id: $SID"
+curl -N -X POST http://localhost:8801/ai/stream -d "id: $SID"
 ```
 
 Expected: a new run whose user message text is `A`, then `agent_settled`.
@@ -192,13 +211,13 @@ An empty `blocks` returns 400 `bad_request`; the removed `/ai/answer` returns
 ## 5. ai-delete removes the session
 
 ```bash
-curl -s -X POST http://localhost:8541/ai/delete -d "id: $SID"
+curl -s -X POST http://localhost:8801/ai/delete -d "id: $SID"
 ```
 
 Expected: 200, `sessionId` equals `$SID`; afterwards:
 
 ```bash
-curl -s -X POST http://localhost:8541/ai/stream -d "id: $SID"
+curl -s -X POST http://localhost:8801/ai/stream -d "id: $SID"
 ```
 
 Expected: 404, `error.code` is `not_found`.
@@ -207,7 +226,7 @@ Expected: 404, `error.code` is `not_found`.
 stays in log. Purge it too with `log/delete`:
 
 ```bash
-curl -s -X POST http://localhost:8532/log/delete -d "sessionId: $SID"
+curl -s -X POST http://localhost:8800/log/delete -d "sessionId: $SID"
 ```
 
 Expected: 200, `sessionId` equals `$SID` and `deleted` counts the removed

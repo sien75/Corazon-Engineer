@@ -12,12 +12,21 @@ rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/
 # Start the server under test with .engineer/.playground as project root — with the
 # same binary the launcher runs. `workspace/static` has no main package, so building
 # inside it yields an archive, not a runnable ./engineer.
+# Reclaim a previous run of this case. A leftover service keeps serving its
+# old database (or silently stops this run's from binding, so the frontend
+# talks to the other case's services) — and the failure that causes looks
+# like a wrong answer, not a dead service. This happens before, not after.
+pkill -f "serve-log --root $PWD/.engineer/.playground" 2>/dev/null || true
+pkill -f "serve-static --root $PWD/.engineer/.playground" 2>/dev/null || true
+for p in 8890; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+sleep 1
+
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-static --root "$PWD/.engineer/.playground" --bind 127.0.0.1 --port 8516 &
+/tmp/engineer serve-static --root "$PWD/.engineer/.playground" --bind 127.0.0.1 --port 8890 &
 
 # wait for it before validating: the blocks below run back to back
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8516/static/query -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8890/static/query -d '{}' && break
   sleep 1
 done
 ```
@@ -25,7 +34,7 @@ done
 ## 1. the valid mock tree passes
 
 ```bash
-curl -s -X POST http://localhost:8516/static/validate \
+curl -s -X POST http://localhost:8890/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 ```
 
@@ -48,7 +57,7 @@ atoms:
           contract: ./contracts/missing.yaml
       consumes: []
 YAML
-curl -s -X POST http://localhost:8516/static/validate \
+curl -s -X POST http://localhost:8890/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 rm .engineer/.playground/atoms/bad.yaml
 ```
@@ -69,7 +78,7 @@ edges:
     protocol: http
     description: references do not resolve
 YAML
-curl -s -X POST http://localhost:8516/static/validate \
+curl -s -X POST http://localhost:8890/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 rm .engineer/.playground/edges/bad-edge.yaml
 ```
@@ -83,7 +92,7 @@ cat > .engineer/.playground/contracts/bad.yaml <<'YAML'
 id: bad-contract
 request: {}
 YAML
-curl -s -X POST http://localhost:8516/static/validate \
+curl -s -X POST http://localhost:8890/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 rm .engineer/.playground/contracts/bad.yaml
 ```
@@ -94,7 +103,7 @@ Expected: 200, `ok: false`; `errors` includes `file: contracts/bad.yaml`, `type:
 
 ```bash
 printf 'atoms: [\n' > .engineer/.playground/atoms/broken.yaml
-curl -s -X POST http://localhost:8516/static/validate \
+curl -s -X POST http://localhost:8890/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 rm .engineer/.playground/atoms/broken.yaml
 ```
@@ -146,9 +155,9 @@ edges:
     protocol: http
     description: nested edge to nested atom
 YAML
-curl -s -X POST http://localhost:8516/static/query \
+curl -s -X POST http://localhost:8890/static/query \
   -H 'Content-Type: application/yaml' --data-binary ''
-curl -s -X POST http://localhost:8516/static/validate \
+curl -s -X POST http://localhost:8890/static/validate \
   -H 'Content-Type: application/yaml' --data-binary ''
 rm -rf .engineer/.playground/atoms/nested .engineer/.playground/edges/nested .engineer/.playground/contracts/nested
 ```
