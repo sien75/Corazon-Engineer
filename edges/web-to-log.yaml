@@ -39,3 +39,35 @@ edges:
     channel: network
     protocol: http
     description: Web frontend purges a session's conversation records when deleting it
+  - id: web-to-log-tab-new
+    from: web
+    from_interface: log-tab-new
+    to: log
+    to_interface: log-tab-new
+    channel: network
+    protocol: http
+    description: Web frontend creates a tab before anything goes in it — the id comes first, then the conversation that fills it
+  - id: web-to-log-tab-mutation
+    from: web
+    from_interface: log-tab-mutation
+    to: log
+    to_interface: log-tab-mutation
+    channel: network
+    protocol: http
+    description: Web frontend creates a tab record (its tabId + default single-pane layout) when it opens a tab that has none
+  - id: web-to-log-tab-detail
+    from: web
+    from_interface: log-tab-detail
+    to: log
+    to_interface: log-tab-detail
+    channel: network
+    protocol: http
+    description: Web frontend reads a tab's layout when the launcher opens it from recents
+  - id: web-to-log-tab-list
+    from: web
+    from_interface: log-tab-list
+    to: log
+    to_interface: log-tab-list
+    channel: network
+    protocol: http
+    description: Web frontend lists tab records for the launcher's recent section

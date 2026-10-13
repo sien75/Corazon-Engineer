@@ -355,12 +355,16 @@ function applyTheme(name) {
 // the shell can write them straight in: the blueprint then follows the theme by
 // styling `html[data-theme]` / using /theme.css, with no listening of its own.
 function pushPageTheme() {
-  const doc = pageFrameEl?.contentDocument;
-  if (!doc) return;
   const theme = currentTheme();
-  doc.documentElement.setAttribute("data-theme", theme);
-  // Native widgets and the scrollbar follow color-scheme, not our variables.
-  doc.documentElement.style.colorScheme = theme === "dark" ? "dark" : "light";
+  for (const tab of openTabs) {
+    for (const pane of tab.panes?.values() ?? []) {
+      const doc = pane.frameEl?.contentDocument;
+      if (!doc) continue;
+      doc.documentElement.setAttribute("data-theme", theme);
+      // Native widgets and the scrollbar follow color-scheme, not our variables.
+      doc.documentElement.style.colorScheme = theme === "dark" ? "dark" : "light";
+    }
+  }
 }
 
 function bindGraphEvents() {
@@ -607,49 +611,337 @@ contentEl.addEventListener("click", (event) => {
 
 // ---------- ai panel ----------
 
-const aiEl = document.getElementById("ai");
 const themeToggleEl = document.getElementById("theme-toggle");
 const themeMenuEl = document.getElementById("theme-menu");
-const aiMessagesEl = document.getElementById("ai-messages");
-// The message list is only the content column; the scroll container behind it
-// spans the whole pane, so the wheel works outside the column too.
-const aiScrollEl = document.getElementById("ai-scroll");
-const aiInputEl = document.getElementById("ai-input-field");
-// The composer's row, which is the positioning parent of the measuring mirror
-// (see aiCaretVisualLine).
-const aiInputWrapEl = document.getElementById("ai-input");
 // The input grows with its content — soft-wrapped lines included — from the
 // 2-row minimum (the rows attribute) up to this many rendered lines, then it
 // scrolls inside. The pixel ceiling is derived from the computed style, so
 // changing font / line-height / this number needs no other edit.
 const AI_INPUT_MAX_LINES = 10;
-const aiSendEl = document.getElementById("ai-send");
-const aiStopEl = document.getElementById("ai-stop");
-const aiCmdEl = document.getElementById("ai-cmd");
 const leftEl = document.getElementById("left");
-// A page tab's pane: an iframe onto the blueprint's own files, served from the
-// web server's second root. Kept between visits (switching tabs does not reload
-// it), cleared when its tab closes.
-const pageEl = document.getElementById("page");
-const pageFrameEl = document.getElementById("page-frame");
-let aiSession = null;
-let aiSeenSeq = 0;
-let aiStreaming = false;
-// The session + abort controller of the active SSE stream, and a generation
-// token so a stream that is superseded (e.g. the user switches sessions) stops
-// rendering and cannot clobber the new session's seq tracking.
-let aiStreamCtl = null; // { id, ctrl } | null
-let aiStreamGen = 0;
+const panesEl = document.getElementById("panes");
+
+// ---------- panes ----------
+//
+// A tab's content is a tree of panes, one content cell each (a conversation or a
+// blueprint). A chat pane is the conversation view — message list above, its own
+// composer below — built per pane, so every conversation on screen is one you
+// can type into. Nothing about a conversation lives in the shell.
+//
+// `aiPane` is the pane the user is working in; the composer helpers read and
+// write through it. `aiRenderPane` is the pane a stream or a replay is filling
+// — the render helpers write there and fall back to `aiPane` for the composer's
+// own echoes, which is what lets a background pane's stream land in its own list
+// while another pane is on screen.
+let aiRenderPane = null;
+let aiPane = null; // the chat pane in use
+let aiLastSend = null; // { pane, text } — retry for a failed send
+
+const aiInputEl = () => aiPane?.inputEl;
+const aiInputWrapEl = () => aiPane?.composerEl;
+const aiSendEl = () => aiPane?.sendEl;
+const aiStopEl = () => aiPane?.stopEl;
+const aiCmdEl = () => aiPane?.cmdEl;
+const aiMirrorEl = () => aiPane?.mirrorEl;
+
+function aiMsgEl() {
+  return (aiRenderPane ?? aiPane)?.messagesEl ?? null;
+}
+
+function aiScroll() {
+  return (aiRenderPane ?? aiPane)?.scrollEl ?? null;
+}
+
+// ---------- the pane tree ----------
+//
+// tab.layout is the stored tree (see the layout tool); tab.panes holds the live
+// pane objects by tree path, so a re-render of the same tree reuses them and a
+// chat pane keeps its conversation. A layout change rebuilds the containers and
+// moves the panes into them: their DOM keeps its state, but a page iframe is
+// loaded again.
+
+function defaultLayout(tab) {
+  return tab.kind === "page"
+    ? { pane: { content: "page", id: tab.pageId } }
+    : { pane: { content: "chat", id: tab.sessionId } };
+}
+
+function tabLayout(tab) {
+  return tab.layout || defaultLayout(tab);
+}
+
+// makeChatPane builds one conversation: the message list, and *its own*
+// composer under it. Every pane having a composer is the point — a conversation
+// you cannot type into is not one you can have — and it is also what keeps the
+// two panes from sharing state: the draft, the pasted images, the command
+// drawer and the prompt history all belong to the pane.
+function makeChatPane(key, contentId) {
+  const el = document.createElement("div");
+  el.className = "pane pane-chat";
+  const scrollEl = document.createElement("div");
+  scrollEl.className = "pane-scroll";
+  const messagesEl = document.createElement("div");
+  messagesEl.className = "pane-messages ai-messages";
+  scrollEl.appendChild(messagesEl);
+
+  const composerEl = document.createElement("div");
+  composerEl.className = "ai-input";
+  composerEl.innerHTML =
+    '<div class="ai-cmd" tabindex="-1" hidden></div>' +
+    '<textarea class="ai-input-field" rows="2" ' +
+    'placeholder="ask… (Enter send, Shift+Enter newline; paste image)" ' +
+    'autocomplete="off"></textarea>' +
+    '<button type="button" class="ai-stop" hidden>stop</button>' +
+    '<button type="button" class="ai-send">send</button>';
+
+  const mirrorEl = document.createElement("div");
+  mirrorEl.className = "ai-input-mirror";
+  composerEl.appendChild(mirrorEl);
+
+  el.appendChild(scrollEl);
+  el.appendChild(composerEl);
+
+  const pane = {
+    key,
+    kind: "chat",
+    contentId,
+    el,
+    scrollEl,
+    messagesEl,
+    composerEl,
+    inputEl: composerEl.querySelector(".ai-input-field"),
+    cmdEl: composerEl.querySelector(".ai-cmd"),
+    sendEl: composerEl.querySelector(".ai-send"),
+    stopEl: composerEl.querySelector(".ai-stop"),
+    mirrorEl,
+    // Per pane, because they are the state of *this* input.
+    images: [],
+    tasks: [],
+    drawer: null,
+    confirm: null,
+    session: contentId,
+    seenSeq: 0,
+    streamCtl: null,
+    streamGen: 0,
+    streaming: false,
+  };
+  bindComposer(pane);
+  return pane;
+}
+
+// bindComposer wires one pane's composer. The handlers close over the pane, so
+// they act on the conversation they belong to however many are on screen.
+function bindComposer(pane) {
+  const input = pane.inputEl;
+  // Working anywhere in a pane — its list or its composer — makes it the pane
+  // the shell is on. That is what moves the plain ids (#ai-input-field and
+  // friends) to this pane, so a later bare selector hits *this* conversation.
+  const claim = () => {
+    const tab = openTabs.find((t) => t.panes?.get(pane.key) === pane);
+    if (tab) focusPane(tab, pane.key);
+    else aiPane = pane;
+  };
+  composerOn(input, "mousedown", claim);
+  composerOn(input, "focus", claim);
+  composerOn(input, "input", claim);
+  composerOn(input, "keydown", claim);
+  composerOn(pane.el, "mousedown", claim);
+  composerOn(pane.composerEl, "mousedown", claim);
+
+  composerOn(pane.sendEl, "click", (e) => { claim(); aiSend(e); });
+  composerOn(pane.stopEl, "click", (e) => { claim(); aiStop(e); });
+  composerOn(input, "input", () => { claim(); aiSyncCommandDrawer(); });
+  composerOn(input, "input", () => { claim(); aiResizeInput(); });
+  // Typing during history browsing leaves it, keeping what was typed.
+  composerOn(input, "input", () => { claim(); aiHistoryEnd(pane.session); });
+  composerOn(input, "paste", aiPaste);
+  composerOn(input, "keyup", aiSnapCaretOutOfToken);
+  composerOn(input, "click", aiSnapCaretOutOfToken);
+  composerOn(input, "select", aiSnapCaretOutOfToken);
+  composerOn(input, "beforeinput", aiBeforeInput);
+  composerOn(input, "cut", aiCutImageToken);
+  composerOn(input, "keydown", aiInputKeydown);
+  composerOn(pane.cmdEl, "compositionstart", () => { pane.composing = true; });
+  composerOn(pane.cmdEl, "compositionend", () => { pane.composing = false; });
+  composerOn(pane.cmdEl, "keydown", (event) => aiCmdKeydown(pane, event));
+}
+
+// composerOn is addEventListener with the handler bound to the pane, so every
+// composer handler runs with `aiPane` already pointing at its own pane.
+function composerOn(el, type, handler) {
+  el.addEventListener(type, handler);
+}
+
+function makePagePane(key, contentId) {
+  const el = document.createElement("div");
+  el.className = "pane pane-page";
+  const frameEl = document.createElement("iframe");
+  frameEl.className = "pane-frame";
+  frameEl.title = contentId;
+  // Listen before pointing it anywhere: a blueprint served from cache can load
+  // before a listener attached afterwards would ever see it, and the theme is
+  // only pushed on load (see pushPageTheme).
+  frameEl.addEventListener("load", pushPageTheme);
+  frameEl.src = pageFrameSrc(contentId);
+  el.appendChild(frameEl);
+  return { key, kind: "page", contentId, el, frameEl };
+}
+
+// ensurePane returns the pane for one leaf, reusing the live one when the path
+// and the content are unchanged.
+function ensurePane(tab, key, content, contentId) {
+  const existing = tab.panes.get(key);
+  if (existing && existing.kind === content && existing.contentId === contentId) {
+    return existing;
+  }
+  // One iframe per page pane: unlike the old single page tab, a pane showing
+  // another blueprint is a different document, not the same one re-pointed.
+  const pane = content === "page" ? makePagePane(key, contentId) : makeChatPane(key, contentId);
+  tab.panes.set(key, pane);
+  return pane;
+}
+
+// Pane ids carry no meaning beyond the tree: a pane is defined by its content
+// and its place in the layout.
+function splitEl(dir, weight) {
+  const el = document.createElement("div");
+  el.className = `pane-split ${dir}`;
+  el.style.setProperty("--w", String(weight || 1));
+  return el;
+}
+
+function buildPaneNode(tab, node, path) {
+  if (node.pane) {
+    const key = path.join(".");
+    const pane = ensurePane(tab, key, node.pane.content, node.pane.id);
+    pane.el.classList.toggle("brief", node.pane.size === "brief");
+    return pane.el;
+  }
+  const el = splitEl(node.split, node.weight);
+  node.children.forEach((child, i) => {
+    el.appendChild(buildPaneNode(tab, child, [...path, String(i)]));
+  });
+  return el;
+}
+
+// renderPanes builds (or rebuilds) a tab's content area from its layout, and
+// loads every chat pane that has nothing in it yet. A chat pane without a
+// session of its own was just created by a layout change, so it starts a fresh
+// one.
+function renderPanes(tab) {
+  const tree = document.createElement("div");
+  tree.className = "pane-tree";
+  tree.appendChild(buildPaneNode(tab, tabLayout(tab), []));
+  tab.paneEl = tree;
+  void loadPaneConversations(tab);
+}
+
+async function loadPaneConversations(tab) {
+  // Captured before the first await: activateTab clears `fresh` as soon as the
+  // panes exist, and this walk must still know the tab was just created.
+  const fresh = !!tab.fresh;
+  for (const pane of tab.panes.values()) {
+    if (pane.kind !== "chat" || pane.loaded) continue;
+    pane.loaded = true;
+    try {
+      if (!pane.session && tab.tabId) {
+        pane.session = await aiNewSession();
+      }
+      if (!pane.session) continue;
+      // A session this tab has just created has nothing recorded behind it:
+      // asking the server to replay it would only fetch an empty history (and,
+      // for a skill, race the run the user is about to send). Its stream is
+      // opened by activateTab.
+      if (fresh && pane.session === tab.sessionId) continue;
+      await aiLoadSession(pane, pane.session);
+      if (pane === aiPane) aiScrollToBottom();
+    } catch (err) {
+      pane.messagesEl.innerHTML = "";
+      aiRenderPane = pane;
+      aiAppend("assistant", `[error] ${err.message}`);
+      aiRenderPane = null;
+    }
+  }
+}
+
+// applyLayoutFrame is the frontend end of the layout tool: the tool stored this
+// tree, so this tab shows it. It reads the tree out of the tool's *result* — the
+// arguments the model sent are not what was stored (ids get filled in, and a
+// rejected write stores nothing at all). Reading it back from the record is the
+// other way in (see syncTabRecord / the launcher), and both go through
+// applyPaneLayout so they cannot drift.
+function applyLayoutFrame(pane, result) {
+  const tab = openTabs.find((t) => t.panes?.get(pane.key) === pane);
+  const layout = result?.details?.layout;
+  if (tab && layout) applyPaneLayout(tab, layout);
+}
+
+// showPanes puts the active tab's tree on screen. Only one tab's tree is in the
+// document at a time; switching tabs moves the other out whole.
+function showPanes(tab) {
+  if (!tab.paneEl) renderPanes(tab);
+  panesEl.replaceChildren(tab.paneEl);
+}
+
+// focusPane points the composer at one chat pane. The focused pane's message
+// list borrows the shell's ids so selectors and the composer keep working with
+// more than one pane on screen.
+// focusPane names the pane the user is working in. Every pane already has its
+// own composer, so this moves nothing — it marks the current one (which is also
+// the one that answers to the shell's plain ids) and puts the caret in it.
+function focusPane(tab, key) {
+  const pane = tab?.panes.get(key);
+  const next = pane && pane.kind === "chat" ? pane : null;
+  if (aiPane === next) return;
+  aiPane = next;
+  for (const p of tab?.panes.values() ?? []) {
+    const on = p === aiPane;
+    if (!p.messagesEl) continue;
+    p.messagesEl.id = on ? "ai-messages" : "";
+    p.scrollEl.id = on ? "ai-scroll" : "";
+    p.composerEl.id = on ? "ai-input" : "";
+    p.inputEl.id = on ? "ai-input-field" : "";
+    p.cmdEl.id = on ? "ai-cmd" : "";
+    p.sendEl.id = on ? "ai-send" : "";
+    p.stopEl.id = on ? "ai-stop" : "";
+    p.el.classList.toggle("focused", on);
+  }
+  if (aiPane) {
+    aiSetStreaming(aiPane, aiPane.streaming);
+    aiResizeInput();
+    aiInputEl().focus();
+  }
+}
+
+// applyPaneLayout is the one entry point for a layout change: the model's tool
+// frame and the record read on opening a tab both come through here, so the two
+// paths cannot drift.
+function applyPaneLayout(tab, layout) {
+  if (!layout || !layout.pane && !layout.split) return;
+  tab.layout = layout;
+  renderPanes(tab);
+  if (activeTabId === tab.id) showPanes(tab);
+  const first = primaryPane(layout);
+  const key = first && first.content === "chat" ? paneKeyOf(tab, first.id) : "";
+  if (activeTabId === tab.id) focusPane(tab, key);
+}
+
+// paneKeyOf finds the tree path of the first pane holding a given content id.
+function paneKeyOf(tab, contentId) {
+  for (const [key, p] of tab.panes) {
+    if (p.contentId === contentId && p.kind === "chat") return key;
+  }
+  return "";
+}
+
 // The chat panel is no longer a side panel the user toggles: it is the content
-// of a tab, and nothing else opens it.
+// of a pane, and nothing else opens it.
 // A dropped SSE connection reconnects with capped exponential backoff; the
 // server replays only the events after the last seq this client rendered.
 const AI_STREAM_MAX_RETRIES = 6;
 const AI_STREAM_MAX_BACKOFF = 10000;
-// Images pasted into the input, in token order: { data, mimeType } or undefined
-// while compression is still in flight; aiImageTasks lets send() await them.
-let aiImages = [];
-let aiImageTasks = [];
+// Images pasted into the input live on the pane (see makeChatPane): they belong
+// to the conversation being typed into, not to the shell.
 
 // Stick to the bottom only while the user is already at the bottom; if they
 // scrolled up to read history, new messages must not yank them back down.
@@ -659,7 +951,7 @@ const AI_STICK_THRESHOLD = 40;
 
 function aiAtBottom() {
   return (
-    aiScrollEl.scrollHeight - aiScrollEl.scrollTop - aiScrollEl.clientHeight <=
+    aiScroll().scrollHeight - aiScroll().scrollTop - aiScroll().clientHeight <=
     AI_STICK_THRESHOLD
   );
 }
@@ -672,7 +964,7 @@ function aiBodyAtBottom(el, threshold = 24) {
 }
 
 function aiScrollToBottom() {
-  aiScrollEl.scrollTop = aiScrollEl.scrollHeight;
+  aiScroll().scrollTop = aiScroll().scrollHeight;
 }
 
 // Assistant replies render as markdown; user messages stay plain text. Raw
@@ -705,7 +997,7 @@ function aiMarkdown() {
   const div = document.createElement("div");
   div.className = "ai-msg ai-assistant ai-markdown";
   const stick = aiAtBottom();
-  aiMessagesEl.appendChild(div);
+  aiMsgEl().appendChild(div);
   if (stick) aiScrollToBottom();
   let raw = "";
   let scheduled = false;
@@ -749,20 +1041,22 @@ function aiStaticMarkdown(text) {
   return m.el;
 }
 
-function aiSetStreaming(v) {
-  aiStreaming = v;
-  aiStopEl.hidden = !v;
-  if (!v) aiStopEl.disabled = false;
+function aiSetStreaming(pane, v) {
+  if (pane) pane.streaming = v;
+  if (pane !== aiPane) return;
+  aiStopEl().hidden = !v;
+  if (!v) aiStopEl().disabled = false;
 }
 
 async function aiStop() {
-  if (!aiSession || !aiStreaming) return;
-  aiStopEl.disabled = true;
+  const pane = aiPane;
+  if (!pane?.session || !pane.streaming) return;
+  aiStopEl().disabled = true;
   try {
     await fetch(`${AI_BASE}/ai/stop`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
-      body: yaml.dump({ id: aiSession }),
+      body: yaml.dump({ id: pane.session }),
     });
   } catch {
     // The terminal agent_settled closes the stream and resets the UI.
@@ -775,7 +1069,7 @@ function aiAppend(role, text) {
   div.className = `ai-msg ai-${role}`;
   div.textContent = text;
   const stick = aiAtBottom();
-  aiMessagesEl.appendChild(div);
+  aiMsgEl().appendChild(div);
   if (role === "user" || stick) aiScrollToBottom(); // own message always reveals
   return div;
 }
@@ -835,8 +1129,8 @@ const AI_IMAGE_TOKEN = "[image]";
 // otherwise a non-overflowing box would still read as overflowing and show a
 // scrollbar. Hidden panels have no layout, so this is a no-op there.
 function aiResizeInput() {
-  if (aiEl.hidden) return;
-  const cs = getComputedStyle(aiInputEl);
+  if (!aiPane) return;
+  const cs = getComputedStyle(aiInputEl());
   const lineHeight =
     parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
   const border =
@@ -845,30 +1139,30 @@ function aiResizeInput() {
     parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + border;
   const maxHeight = Math.ceil(lineHeight * AI_INPUT_MAX_LINES + chrome);
 
-  aiInputEl.style.height = "auto";
-  const contentHeight = aiInputEl.scrollHeight + border;
-  aiInputEl.style.height = Math.min(contentHeight, maxHeight) + "px";
-  aiInputEl.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+  aiInputEl().style.height = "auto";
+  const contentHeight = aiInputEl().scrollHeight + border;
+  aiInputEl().style.height = Math.min(contentHeight, maxHeight) + "px";
+  aiInputEl().style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
 }
 
 function aiInsertImageToken() {
-  const start = aiInputEl.selectionStart ?? aiInputEl.value.length;
-  const end = aiInputEl.selectionEnd ?? start;
-  const v = aiInputEl.value;
-  aiInputEl.value = v.slice(0, start) + AI_IMAGE_TOKEN + v.slice(end);
+  const start = aiInputEl().selectionStart ?? aiInputEl().value.length;
+  const end = aiInputEl().selectionEnd ?? start;
+  const v = aiInputEl().value;
+  aiInputEl().value = v.slice(0, start) + AI_IMAGE_TOKEN + v.slice(end);
   const caret = start + AI_IMAGE_TOKEN.length;
-  aiInputEl.setSelectionRange(caret, caret);
+  aiInputEl().setSelectionRange(caret, caret);
   aiResizeInput();
 }
 
 function aiAddPastedImage(file) {
   // Capture the queue: the user may switch tabs before compression finishes, and
-  // the module-level aiImages then points at the other tab's draft.
-  const queue = aiImages;
+  // the module-level aiPane.images then points at the other tab's draft.
+  const queue = aiPane.images;
   const idx = queue.length;
   queue.push(undefined); // reserve the slot so order survives async decode
   aiInsertImageToken();
-  aiImageTasks.push(
+  aiPane.tasks.push(
     aiCompressImage(file)
       .then((img) => {
         queue[idx] = img;
@@ -878,8 +1172,8 @@ function aiAddPastedImage(file) {
 }
 
 function aiClearImages() {
-  aiImages = [];
-  aiImageTasks = [];
+  aiPane.images = [];
+  aiPane.tasks = [];
 }
 
 // aiBuildSendBlocks splits `text` on [image] tokens and interleaves the queued
@@ -964,18 +1258,18 @@ function aiRemoveImagesForRange(v, rs, re) {
   aiTokenRanges(v).forEach(([s, e], i) => {
     if (s >= rs && e <= re) drops.push(i);
   });
-  for (let k = drops.length - 1; k >= 0; k--) aiImages.splice(drops[k], 1);
+  for (let k = drops.length - 1; k >= 0; k--) aiPane.images.splice(drops[k], 1);
 }
 
 function aiSnapCaretOutOfToken() {
-  if (aiInputEl.selectionStart !== aiInputEl.selectionEnd) return;
-  const v = aiInputEl.value;
-  const inside = aiTokenInside(v, aiInputEl.selectionStart);
+  if (aiInputEl().selectionStart !== aiInputEl().selectionEnd) return;
+  const v = aiInputEl().value;
+  const inside = aiTokenInside(v, aiInputEl().selectionStart);
   if (!inside) return;
-  const p = aiInputEl.selectionStart;
+  const p = aiInputEl().selectionStart;
   const [s, e] = inside;
   const to = p - s < e - p ? s : e;
-  aiInputEl.setSelectionRange(to, to);
+  aiInputEl().setSelectionRange(to, to);
 }
 
 // aiAppendUserParts renders a user bubble from ordered parts:
@@ -998,7 +1292,7 @@ function aiAppendUserParts(parts) {
       div.appendChild(el);
     }
   }
-  aiMessagesEl.appendChild(div);
+  aiMsgEl().appendChild(div);
   aiScrollToBottom(); // own message always reveals
   return div;
 }
@@ -1006,6 +1300,9 @@ function aiAppendUserParts(parts) {
 // aiNewSession creates a fresh ai session on the server and returns its id. The
 // caller decides what to bind it to: aiNew() below adopts it as the current
 // conversation, /new replaces a tab with it, the launcher opens a new one.
+// aiNewSession opens a conversation. It belongs to no tab — a tab references
+// conversations (its layout), and several tabs may reference the same one — so
+// nothing about a tab goes in this call.
 async function aiNewSession() {
   const res = await fetch(`${AI_BASE}/ai/new`, {
     method: "POST",
@@ -1017,10 +1314,26 @@ async function aiNewSession() {
   return data.sessionId;
 }
 
+// ensureTabId is for the paths that meet a tab without one (a deep link, a pane
+// a layout change added). The tab comes first in every path.
+async function ensureTabId(tab) {
+  if (tab.tabId) return tab.tabId;
+  tab.tabId = await tabNew();
+  saveTabs();
+  renderTabs();
+  return tab.tabId;
+}
+
+// tabTalkId is the tab the turn speaks for: what the layout tool acts on. Taken
+// from the pane's own tab, since that is the thing that knows it.
+function tabTalkId(pane) {
+  const tab = openTabs.find((t) => t.panes?.get(pane?.key) === pane);
+  return tab?.tabId || "";
+}
+
 async function aiNew() {
-  aiCancelStream();
-  aiSession = await aiNewSession();
-  aiSeenSeq = 0;
+  if (aiPane) aiCancelStream(aiPane);
+  aiPane = null;
   renderedTabId = null;
 }
 
@@ -1039,7 +1352,7 @@ function aiChipRow() {
   const row = document.createElement("div");
   row.className = "ai-msg ai-chip-row";
   const stick = aiAtBottom();
-  aiMessagesEl.appendChild(row);
+  aiMsgEl().appendChild(row);
   aiChipRowEl = row;
   if (stick) aiScrollToBottom();
   return row;
@@ -1089,7 +1402,15 @@ function aiBaseName(p) {
   const s = String(p ?? "").trim().replace(/[/\\]+$/, "");
   if (!s) return "";
   const i = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
-  return i >= 0 ? s.slice(i + 1) : s;
+  const base = i >= 0 ? s.slice(i + 1) : s;
+  // Every skill file is called SKILL.md, so the name alone identifies nothing:
+  // the chip shows the slug above it instead.
+  if (base === "SKILL.md" && i > 0) {
+    const parent = s.slice(0, i);
+    const j = Math.max(parent.lastIndexOf("/"), parent.lastIndexOf("\\"));
+    return j >= 0 ? parent.slice(j + 1) : parent;
+  }
+  return base;
 }
 
 // Wrappers that name the harness rather than the command being run.
@@ -1129,9 +1450,18 @@ function aiCommandName(command) {
 // the call — a file name, the program, the search pattern, the skill name —
 // never the tool's own name, which a 120px box cannot afford next to an icon.
 // `tip` carries what the ellipsis cuts off.
+// A skill is one file per directory, always called SKILL.md, so a tool call that
+// touches one is about the *skill*: it is labelled with the slug and carries the
+// skill icon rather than the generic file one.
+function aiSkillSlug(p) {
+  const m = /\.agents\/skills\/([^/]+)\/SKILL\.md$/.exec(String(p ?? ""));
+  return m ? m[1] : "";
+}
+
 function aiToolChip(name, args) {
   const a = args && typeof args === "object" ? args : {};
   const base = aiBaseName(a.path);
+  const slug = aiSkillSlug(a.path);
   let label = "";
   switch (name) {
     case "read":
@@ -1161,7 +1491,7 @@ function aiToolChip(name, args) {
     a.path ?? a.command ?? a.pattern ?? a.name ?? (Object.keys(a).length ? args : undefined);
   return {
     label: label || name,
-    icon: name,
+    icon: slug ? "save_skill" : name,
     name,
     tip: detail === undefined ? name : `${name}: ${aiStringify(detail)}`,
   };
@@ -1359,7 +1689,7 @@ function aiAskUser(args, onPick) {
   }
   const stick = aiAtBottom();
   div.appendChild(row);
-  aiMessagesEl.appendChild(div);
+  aiMsgEl().appendChild(div);
   if (stick) aiScrollToBottom();
 }
 
@@ -1373,20 +1703,23 @@ function aiAskUser(args, onPick) {
 // for the same session we must not open a second subscription (that would race
 // over aiSeenSeq and re-render). Switching sessions aborts the old stream via
 // aiCancelStream so it cannot keep writing into the now-current view.
-async function aiStream() {
-  const id = aiSession;
+async function aiStream(pane) {
+  const id = pane?.session;
   if (!id) return;
   // Already attached to this session (a mid-run ask is steered server-side):
   // do not open a second subscription, which would race over aiSeenSeq.
-  if (aiStreamCtl && aiStreamCtl.id === id) return;
-  // A stream for another session is still running (the user switched sessions):
-  // drop it before attaching to this one, otherwise it would keep rendering into
-  // the now-current view and its seq would clobber this session's aiSeenSeq.
-  if (aiStreamCtl) aiCancelStream();
-  const gen = aiStreamGen;
+  if (pane.streamCtl && pane.streamCtl.id === id) return;
+  // A stream for another session in the same pane (the user switched it):
+  // drop it before attaching, otherwise it would keep rendering into the
+  // now-current view and its seq would clobber this session's aiSeenSeq.
+  if (pane.streamCtl) aiCancelStream(pane);
+  const gen = ++pane.streamGen;
   const ctrl = new AbortController();
-  aiStreamCtl = { id, ctrl };
-  aiSetStreaming(true);
+  pane.streamCtl = { id, ctrl };
+  aiSetStreaming(pane, true);
+  // Whatever this stream renders goes into this pane's list, even when another
+  // pane is focused.
+  const render = () => { aiRenderPane = pane; };
   let assistant = null; // current assistant markdown bubble: { el, append, flush }
   let thinking = null; // current thinking block: { block, body }
   const tools = new Map(); // toolCallId -> { block, body }
@@ -1405,6 +1738,7 @@ async function aiStream() {
   };
 
   const handle = (ev) => {
+    render();
     // Native pi event: message_update carries the assistant message sub-events.
     if (ev.type === "message_update") {
       const ae = ev.assistantMessageEvent || {};
@@ -1456,6 +1790,10 @@ async function aiStream() {
     if (ev.type === "tool_execution_start") {
       if (ev.toolName === "ask_user") {
         aiAskUser(ev.args, aiAnswer);
+      } else if (ev.toolName === "layout") {
+        // Nothing yet: the tree the model *asked* for is not the tree that was
+        // stored. It arrives with the result, and only when the write was
+        // accepted (see tool_execution_end).
       } else {
         tools.set(ev.toolCallId, aiTool(ev.toolName, ev.args));
       }
@@ -1473,6 +1811,13 @@ async function aiStream() {
       return;
     }
     if (ev.type === "tool_execution_end") {
+      if (ev.toolName === "layout") {
+        // Draw what was stored, not what was asked for: the tool normalizes the
+        // tree (and refuses a write it cannot honour), so the result is the one
+        // description of what this tab now is. A rejected write draws nothing.
+        if (!ev.isError) applyLayoutFrame(pane, ev.result);
+        return;
+      }
       const t = tools.get(ev.toolCallId);
       if (t) {
         const stick = aiAtBottom();
@@ -1499,25 +1844,26 @@ async function aiStream() {
   let attempt = 0;
   try {
     for (;;) {
-      if (aiStreamGen !== gen) break; // superseded
+      if (pane.streamGen !== gen) break; // superseded
       let sawSettled = false;
       const onEvent = (ev) => {
-        if (aiStreamGen !== gen) return; // superseded mid-read
+        if (pane.streamGen !== gen) return; // superseded mid-read
         if (typeof ev.seq === "number") {
-          if (ev.seq <= aiSeenSeq) return; // already rendered from an earlier stream
-          aiSeenSeq = ev.seq;
+          if (ev.seq <= pane.seenSeq) return; // already rendered from an earlier stream
+          pane.seenSeq = ev.seq;
         }
         if (ev.type === "agent_settled") sawSettled = true;
+        render();
         handle(ev);
       };
       try {
-        await aiStreamOnce(id, onEvent, ctrl.signal);
-        if (aiStreamGen !== gen) break;
+        await aiStreamOnce(id, pane.seenSeq, onEvent, ctrl.signal);
+        if (pane.streamGen !== gen) break;
         // Normal close: either the run settled, or we are caught up and idle.
         if (!sawSettled) settleAll();
         break;
       } catch (err) {
-        if (aiStreamGen !== gen) break; // superseded or aborted
+        if (pane.streamGen !== gen) break; // superseded or aborted
         if (err && err.name === "AbortError") break;
         if (err && err.fatal) {
           aiAppend("assistant", `[error] ${err.message}`);
@@ -1533,12 +1879,13 @@ async function aiStream() {
       }
     }
   } finally {
-    // Only the current generation owns the shared streaming state; a superseded
+    // Only the current generation owns the pane's streaming state; a superseded
     // stream must not clear the new session's stop button.
-    if (aiStreamGen === gen) {
-      aiStreamCtl = null;
-      aiSetStreaming(false);
+    if (pane.streamGen === gen) {
+      pane.streamCtl = null;
+      aiSetStreaming(pane, false);
     }
+    if (aiRenderPane === pane) aiRenderPane = null;
   }
 }
 
@@ -1548,23 +1895,24 @@ function aiSleep(ms) {
 
 // aiCancelStream stops the active SSE stream (if any) and invalidates it so its
 // loop stops rendering. Used when switching sessions or starting a new one.
-function aiCancelStream() {
-  aiStreamGen++;
-  if (aiStreamCtl) {
-    aiStreamCtl.ctrl.abort();
-    aiStreamCtl = null;
+function aiCancelStream(pane) {
+  if (!pane) return;
+  pane.streamGen++;
+  if (pane.streamCtl) {
+    pane.streamCtl.ctrl.abort();
+    pane.streamCtl = null;
   }
-  aiSetStreaming(false);
+  aiSetStreaming(pane, false);
 }
 
 // aiStreamOnce opens one SSE connection and drives `onEvent` until the server
 // closes it. A transport/HTTP failure throws so aiStream can reconnect; a
 // non-retryable server response carries `fatal`.
-async function aiStreamOnce(id, onEvent, signal) {
+async function aiStreamOnce(id, since, onEvent, signal) {
   const res = await fetch(`${AI_BASE}/ai/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
-    body: yaml.dump({ id, since: aiSeenSeq }),
+    body: yaml.dump({ id, since: since }),
     signal,
   });
   if (!res.ok || !res.body) {
@@ -1602,17 +1950,18 @@ async function aiStreamOnce(id, onEvent, signal) {
 }
 
 async function aiSend() {
-  const text = aiInputEl.value;
-  if (!text.trim() || !aiSession) return;
+  const pane = aiPane;
+  const text = aiInputEl().value;
+  if (!text.trim() || !pane) return;
   aiDrawerHide();
-  aiInputEl.value = "";
+  aiInputEl().value = "";
   aiResizeInput();
-  await Promise.all(aiImageTasks); // let any in-flight paste finish decoding
-  const images = aiImages;
+  await Promise.all(aiPane.tasks); // let any in-flight paste finish decoding
+  const images = aiPane.images;
   // ArrowUp / ArrowDown walk back through the conversation's prompts (see
   // aiPromptHistory): a prompt that carried a pasted image is not recorded,
   // because its text alone could not be replayed into the composer.
-  if (!images.length) aiHistoryRecord(aiSession, text);
+  if (!images.length) aiHistoryRecord(pane.session, text);
   aiClearImages();
   const blocks = aiBuildSendBlocks(text, images);
   // Local bubble: text + real images (the [image] tokens are not shown).
@@ -1621,7 +1970,9 @@ async function aiSend() {
       ? { type: "text", text: b.text }
       : { type: "image", src: b.url },
   );
+  aiRenderPane = pane;
   aiAppendUserParts(parts);
+  aiRenderPane = null;
   const wire = blocks.map((b) =>
     b.type === "text"
       ? { type: "text", text: b.text }
@@ -1630,31 +1981,157 @@ async function aiSend() {
   const res = await fetch(`${AI_BASE}/ai/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
-    body: yaml.dump({ id: aiSession, blocks: wire }),
+    body: yaml.dump({ id: pane.session, tabId: tabTalkId(pane), blocks: wire }),
   });
   const data = yaml.load(await res.text()) || {};
   if (!res.ok) {
+    aiRenderPane = pane;
     aiAppend("assistant", `[error] ${data.error?.message || res.status}`);
+    aiRenderPane = null;
     return;
   }
-  await aiStream();
+  aiLastSend = { pane, text };
+  await aiStream(pane);
 }
 
 // aiAnswer sends a user's reply to a pending ask_user question as an ordinary
 // text turn on /ai/ask, then consumes the new run's stream.
 async function aiAnswer(answer) {
+  const pane = aiPane;
+  if (!pane) return;
+  aiRenderPane = pane;
   aiAppend("user", answer);
+  aiRenderPane = null;
   const res = await fetch(`${AI_BASE}/ai/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
-    body: yaml.dump({ id: aiSession, blocks: [{ type: "text", text: answer }] }),
+    body: yaml.dump({
+      id: pane.session,
+      tabId: tabTalkId(pane),
+      blocks: [{ type: "text", text: answer }],
+    }),
   });
   const data = yaml.load(await res.text()) || {};
   if (!res.ok) {
+    aiRenderPane = pane;
     aiAppend("assistant", `[error] ${data.error?.message || res.status}`);
+    aiRenderPane = null;
     return;
   }
-  await aiStream();
+  await aiStream(pane);
+}
+
+// ---------- tab records ----------
+//
+// A tab's pane tree lives in log, keyed by a tabId the service assigns
+// (/log/tab/*). The frontend keeps the id on its tab object and is the one
+// writer that *creates* a record: a tab the model has never touched still needs
+// a default single-pane layout, and a page tab never talks to ai at all.
+// Everything after creation goes through the model's layout tool — the
+// frontend only reads.
+//
+// The tree is not rendered yet: one pane fills the tab exactly as before, so
+// primaryPane() is the whole of what the layout means here.
+
+// primaryPane returns the first pane leaf of a layout tree, or null when the
+// tree is unreadable. Until splits are rendered this is the only pane; after
+// that it stays the fallback for a malformed tree.
+function primaryPane(layout) {
+  let node = layout;
+  for (let depth = 0; node && depth < 16; depth++) {
+    if (node.pane) return node.pane;
+    if (!Array.isArray(node.children) || !node.children.length) return null;
+    node = node.children[0];
+  }
+  return null;
+}
+
+// tabNew creates a tab and returns its id. A tab is created *before* whatever
+// lives in it: the id is what the service that opens its conversation is handed.
+async function tabNew() {
+  const res = await fetch(`${LOG_BASE}/log/tab/new`, {
+    method: "POST",
+    headers: { "Content-Type": "application/yaml" },
+    body: "{}",
+  });
+  const data = yaml.load(await res.text()) || {};
+  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+  return data.tabId;
+}
+
+// tabPut overwrites a tab's layout.
+async function tabPut(tabId, layout) {
+  const res = await fetch(`${LOG_BASE}/log/tab/mutation`, {
+    method: "POST",
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump({ tabId, layout }),
+  });
+  const data = yaml.load(await res.text()) || {};
+  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+  return data;
+}
+
+async function tabDetail(tabId) {
+  const res = await fetch(`${LOG_BASE}/log/tab/detail`, {
+    method: "POST",
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump({ tabId }),
+  });
+  const data = yaml.load(await res.text()) || {};
+  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+  return data;
+}
+
+async function tabList() {
+  const res = await fetch(`${LOG_BASE}/log/tab/list`, {
+    method: "POST",
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump({ pageNum: 1 }),
+  });
+  const data = yaml.load(await res.text()) || {};
+  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+  return data.tabs || [];
+}
+
+// tabLayoutOf is the single-pane layout a tab gets when it is created: the
+// chat session or the blueprint it was opened for.
+function tabLayoutOf(tab) {
+  return tab.kind === "page"
+    ? { pane: { content: "page", id: tab.pageId } }
+    : { pane: { content: "chat", id: tab.sessionId } };
+}
+
+// syncTabRecord gives a tab its record on first activation — new tabs, deep
+// links, tabs restored from localStorage after a reload (which have no tabId
+// yet), all land here — and reads the layout back the first time an existing
+// record is opened, so a split the model made survives a reload.
+async function syncTabRecord(tab) {
+  try {
+    if (tab.layout) return; // already read this session
+    if (tab.tabId) {
+      try {
+        const rec = await tabDetail(tab.tabId);
+        // An empty record (a tab log-tab-new has just created) carries no layout
+        // yet — and nothing to write either: whoever puts content in the tab
+        // writes it (the service via ai-new, or tabPut below for a page).
+        if (rec.layout && Object.keys(rec.layout).length) {
+          tab.layout = rec.layout;
+          return;
+        }
+      } catch (err) {
+        // No record under this id at all: fall through and create one.
+      }
+    }
+    if (!tab.tabId) tab.tabId = await tabNew();
+    const rec = await tabPut(tab.tabId, tabLayoutOf(tab));
+    if (rec.layout) tab.layout = rec.layout;
+    saveTabs();
+    renderTabs();
+  } catch (err) {
+    // A tab with no record still renders: it just cannot be reread, and the
+    // next activation tries again.
+    logTabRecordError(err);
+  }
 }
 
 // ---------- tabs ----------
@@ -1671,7 +2148,7 @@ const tabAddEl = document.getElementById("tab-add");
 // The tab whose conversation is currently rendered into #ai-messages. Null when
 // something else (an ad-hoc chat) owns the message area.
 let renderedTabId = null;
-let openTabs = loadTabs(); // [{ id, kind, name, sessionId, skillId, text, pageId }]
+let openTabs = loadTabs(); // [{ id, tabId, kind, name, sessionId, skillId, text, pageId }]
 let activeTabId = null; // tab on screen, null while a fixed view is active
 
 // The address bar follows the tabs: while a conversation is on screen the URL is
@@ -1740,40 +2217,28 @@ async function routePage(pageId) {
 function rebindActiveTab(sessionId, name) {
   const tab = openTabs.find((t) => t.id === renderedTabId);
   if (!tab || tab.sessionId === sessionId) return;
-  aiDrafts.delete(tab.id);
   tab.sessionId = sessionId;
   tab.skillId = "";
   tab.name = name || "chat";
   tab.text = "";
+  // The pane is already showing this session — aiLoadSession replayed it — so
+  // this only moves the tab (and its record) onto it. Touching the pane's
+  // messages here would throw away the replay that just landed.
+  if (aiPane) tab.layout = { pane: { content: "chat", id: sessionId } };
   saveTabs();
   renderTabs();
   syncTabUrl(tab, "replace");
+  // The tab's pane now holds another session, so its record has to follow.
+  if (tab.tabId) tabPut(tab.tabId, tabLayoutOf(tab)).catch(logTabRecordError);
 }
 
-// The composer is a single DOM node shared by every instance, so each tab keeps
-// its own unsent draft here — text plus the queued pasted images — and switching
-// tabs swaps it. In memory only: a reload starts every instance with a clean
-// input (pasted image bytes are far too large for localStorage).
-const aiDrafts = new Map(); // tab id -> { text, images, tasks }
-
-function aiSnapshotDraft(tabId) {
-  if (!tabId) return;
-  aiDrafts.set(tabId, { text: aiInputEl.value, images: aiImages, tasks: aiImageTasks });
+function logTabRecordError(err) {
+  console.error(`engineer web: tab record failed: ${String(err.message || err)}`);
 }
 
-function aiRestoreDraft(tabId) {
-  const d = aiDrafts.get(tabId);
-  aiInputEl.value = d ? d.text : "";
-  aiImages = d ? d.images : [];
-  aiImageTasks = d ? d.tasks : [];
-  aiResizeInput();
-}
-
-// aiSwitchDraft stashes the instance being left and restores the target's.
-function aiSwitchDraft(tabId) {
-  if (renderedTabId && renderedTabId !== tabId) aiSnapshotDraft(renderedTabId);
-  aiRestoreDraft(tabId);
-}
+// There is no draft machinery any more: each pane has its own composer, so an
+// unsent draft is simply the text still sitting in it. Nothing to snapshot, and
+// nothing to swap back — the composer never goes anywhere.
 
 // The composer's prompt history — ArrowUp / ArrowDown, the way a CLI recalls a
 // line. Keyed by session, not by tab: closing a tab, reopening it from the
@@ -1840,8 +2305,8 @@ function aiHistoryClear(sessionId) {
 // aiHistoryShow puts an entry (or the saved draft) back in the composer, caret
 // at the end, the way a recalled CLI line arrives.
 function aiHistoryShow(text) {
-  aiInputEl.value = text;
-  aiInputEl.setSelectionRange(text.length, text.length);
+  aiInputEl().value = text;
+  aiInputEl().setSelectionRange(text.length, text.length);
   aiResizeInput();
   aiSyncCommandDrawer();
 }
@@ -1854,7 +2319,7 @@ function aiHistoryUp(sessionId) {
   const h = aiHistoryOf(sessionId);
   if (!h.items.length) return false;
   if (h.cursor === null) {
-    h.draft = aiInputEl.value;
+    h.draft = aiInputEl().value;
     h.cursor = h.items.length - 1;
   } else if (h.cursor > 0) {
     h.cursor--;
@@ -1885,19 +2350,12 @@ function aiHistoryDown(sessionId) {
 // textarea has no API for the caret's box, and counting "\n" would call a long
 // soft-wrapped line a single line — exactly the case where ArrowUp must move
 // the caret instead of swallowing the draft.
-let aiMirrorEl = null;
-
 function aiMirrorSync(cs) {
-  if (!aiMirrorEl) {
-    aiMirrorEl = document.createElement("div");
-    aiMirrorEl.className = "ai-input-mirror";
-    aiInputWrapEl.appendChild(aiMirrorEl);
-  }
-  const st = aiMirrorEl.style;
+  const st = aiMirrorEl().style;
   // Same content width as the textarea: clientWidth is content + padding, and
   // the mirror carries no padding of its own (and no scrollbar of its own).
   const width =
-    aiInputEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    aiInputEl().clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
   st.width = Math.max(0, width) + "px";
   st.fontFamily = cs.fontFamily;
   st.fontSize = cs.fontSize;
@@ -1918,14 +2376,14 @@ function aiMirrorSync(cs) {
 // caret, and the whole text. The caret is on the last line exactly when the tail
 // did not push it onto a line of its own.
 function aiCaretVisualLine() {
-  const v = aiInputEl.value;
-  const caret = aiInputEl.selectionStart ?? v.length;
-  const cs = getComputedStyle(aiInputEl);
+  const v = aiInputEl().value;
+  const caret = aiInputEl().selectionStart ?? v.length;
+  const cs = getComputedStyle(aiInputEl());
   const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
   aiMirrorSync(cs);
   const lines = (text) => {
-    aiMirrorEl.textContent = text;
-    return Math.max(1, Math.ceil(aiMirrorEl.scrollHeight / lineHeight - 0.01));
+    aiMirrorEl().textContent = text;
+    return Math.max(1, Math.ceil(aiMirrorEl().scrollHeight / lineHeight - 0.01));
   };
   const before = lines(v.slice(0, caret));
   const all = lines(v);
@@ -1949,6 +2407,11 @@ function loadTabs() {
       })
       .map((t) => ({
         id: t.id,
+        tabId: t.tabId || "", // absent on tabs saved before tab records existed
+        // Panes and their layout are runtime state: rebuilt from the record (and
+        // for a chat, from its session) on the first activation after a reload.
+        panes: new Map(),
+        layout: null,
         kind: t.kind === "page" ? "page" : "chat",
         skillId: t.skillId || "",
         sessionId: t.sessionId || "",
@@ -2005,35 +2468,39 @@ function syncTabActive() {
 }
 
 // applyLayout switches between the page contents: a fixed view (graph or a
-// section tree), a conversation, a page, or the launcher — exactly one at a
-// time, nothing side by side.
+// section tree), a tab's pane tree, or the launcher — exactly one at a time.
 function applyLayout() {
   const tab = activeTabId ? openTabs.find((t) => t.id === activeTabId) : null;
-  const pageMode = !!tab && tab.kind === "page";
-  const chatMode = !!tab && tab.kind !== "page";
-  leftEl.hidden = pageMode || chatMode || newTabOpen;
+  const tabMode = !!tab;
+  leftEl.hidden = tabMode || newTabOpen;
   newTabEl.hidden = !newTabOpen;
-  pageEl.hidden = !pageMode;
-  aiEl.classList.toggle("tab-mode", chatMode);
-  aiEl.hidden = !chatMode;
-  if (chatMode) aiResizeInput();
+  panesEl.hidden = !tabMode;
   graph?.updateSize();
 }
 
 // openTab opens a tab for a chat instance: `fresh` marks a session created just
 // now (nothing rendered yet) — `text` is what its composer starts with, drawn
 // but not sent — otherwise the session is loaded like a resumed history session.
-async function openTab({ skillId, sessionId, name, text, fresh }, mode = "push") {
+// openTab opens a tab for a chat instance: `fresh` marks a session created just
+// now (nothing rendered yet) — `text` is what its composer starts with, drawn
+// but not sent — otherwise the session is loaded like a resumed history session.
+// `recordId` is set when the tab comes from an existing tab record (the launcher
+// reopening one); a tab made here and now leaves it empty and gets its record on
+// first activation.
+async function openTab({ skillId, sessionId, name, text, fresh, recordId }, mode = "push") {
   let tab = openTabs.find((t) => t.kind !== "page" && t.sessionId === sessionId);
   if (!tab) {
     tab = {
       id: `tab_${Math.random().toString(36).slice(2, 10)}`,
+      tabId: recordId || "",
       kind: "chat",
       skillId: skillId || "",
       sessionId,
       pageId: "",
       name: name || "chat",
       text: text || "",
+      panes: new Map(),
+      layout: null,
     };
     if (fresh) tab.fresh = true;
     openTabs.push(tab);
@@ -2044,20 +2511,23 @@ async function openTab({ skillId, sessionId, name, text, fresh }, mode = "push")
 }
 
 // openPageTab opens a tab for a blueprint. A page is not an instance of a
-// session: it carries no sessionId, writes no record and has no history — the
-// tab is the whole of its state, and the pane holds an iframe onto the
-// blueprint's files. Opening the same blueprint twice reuses its tab.
-async function openPageTab(pageId, name, mode = "push") {
+// session: it carries no sessionId and has no history — the tab is the whole of
+// its state, and the pane holds an iframe onto the blueprint's files. Opening
+// the same blueprint twice reuses its tab.
+async function openPageTab(pageId, name, mode = "push", recordId = "") {
   let tab = openTabs.find((t) => t.kind === "page" && t.pageId === pageId);
   if (!tab) {
     tab = {
       id: `tab_${Math.random().toString(36).slice(2, 10)}`,
+      tabId: recordId || "",
       kind: "page",
       pageId,
       skillId: "",
       sessionId: "",
       name: name || pageId,
       text: "",
+      panes: new Map(),
+      layout: null,
     };
     openTabs.push(tab);
   }
@@ -2069,55 +2539,70 @@ async function openPageTab(pageId, name, mode = "push") {
 async function activateTab(id, mode = "push") {
   const tab = openTabs.find((t) => t.id === id);
   if (!tab) return;
+  const previous = aiPane && openTabs.find((t) => t.panes?.get(aiPane.key) === aiPane);
+  if (previous && previous.id !== id) {
+    aiCancelStreamQuiet(previous);
+  }
   activeTabId = id;
   newTabOpen = false;
   applyLayout();
   syncTabActive();
   syncTabUrl(tab, mode);
-  if (tab.kind === "page") {
-    // A page has no instance to load: the iframe is pointed at the blueprint
-    // once, and coming back to its tab keeps whatever state it had.
-    aiSwitchDraft(id);
-    renderedTabId = id;
-    if (pageFrameEl.getAttribute("src") !== pageFrameSrc(tab.pageId)) {
-      pageFrameEl.setAttribute("src", pageFrameSrc(tab.pageId));
-    }
-    pushPageTheme();
-    return;
-  }
-  // Still rendered from this very tab: nothing to redraw.
-  if (renderedTabId === id && aiSession === tab.sessionId) {
-    aiInputEl.focus();
-    return;
-  }
-  aiSwitchDraft(id);
+  // First activation of a tab that has no record yet (a new one, a deep link, a
+  // tab restored from localStorage) is what creates it; one that has a record
+  // gets its layout read back before the panes are built.
+  await syncTabRecord(tab);
+  showPanes(tab);
   aiDrawerHide();
-  aiInputEl.disabled = false;
+  // Every composer in this tab is usable again: the picker disables the one it
+  // was opened from, and a stale disabled state must not survive the switch.
+  for (const p of tab.panes.values()) if (p.inputEl) p.inputEl.disabled = false;
   renderedTabId = id;
-  try {
-    if (tab.fresh) {
-      // A brand-new session: nothing has been sent yet. A skill opens with its
-      // text sitting in the composer — the user edits it and decides when to
-      // send; the run starts on that send, not on the click.
-      delete tab.fresh;
-      saveTabs();
-      aiCancelStream();
-      aiMessagesEl.innerHTML = "";
-      if (tab.text) {
-        aiDrafts.set(tab.id, { text: tab.text, images: [], tasks: [] });
-        aiRestoreDraft(tab.id);
-      }
-      aiSession = tab.sessionId;
-      aiSeenSeq = 0;
-      await aiStream();
-    } else {
-      await aiLoadSession(tab.sessionId);
+
+  // The pane the composer belongs to: the tab's first chat pane. A page-only
+  // tab has none, so there is nothing to type into.
+  focusPane(tab, firstChatKey(tab));
+  if (tab.fresh) {
+    // A brand-new session: nothing has been sent yet. A skill opens with its
+    // text sitting in the composer — the user edits it and decides when to
+    // send; the run starts on that send, not on the click.
+    delete tab.fresh;
+    saveTabs();
+    if (tab.text) {
+      // A skill's text starts in the composer, unsent.
+      aiInputEl().value = tab.text;
+      aiResizeInput();
     }
+  }
+  try {
+    if (aiPane) await aiStream(aiPane);
   } catch (err) {
-    aiMessagesEl.innerHTML = "";
     aiAppend("assistant", `[error] ${err.message}`);
   }
-  aiInputEl.focus();
+  if (aiPane) aiInputEl().focus();
+}
+
+// firstChatKey is the tree path of the tab's first chat pane, or "" when the
+// tab holds none (a page-only layout).
+function firstChatKey(tab) {
+  for (const [key, pane] of tab.panes ?? []) {
+    if (pane.kind === "chat") return key;
+  }
+  return "";
+}
+
+// Leaving a tab stops the streams the user can no longer see. It is the pane's
+// own abort, not a cancellation of the run: /ai/stream replays from the pane's
+// seq when the tab comes back.
+function aiCancelStreamQuiet(tab) {
+  for (const pane of tab.panes?.values() ?? []) {
+    if (pane.streamCtl) {
+      pane.streamGen++;
+      pane.streamCtl.ctrl.abort();
+      pane.streamCtl = null;
+      pane.streaming = false;
+    }
+  }
 }
 
 function closeTab(id) {
@@ -2125,16 +2610,14 @@ function closeTab(id) {
   if (idx < 0) return;
   const closed = openTabs[idx];
   openTabs.splice(idx, 1);
-  aiDrafts.delete(id); // a closed instance keeps no draft
   saveTabs();
   renderTabs();
   if (activeTabId !== id) return;
   // The closed tab owned the content area: fall back to the neighbour, or to
   // the graph when it was the last one.
-  aiCancelStream();
+  aiCancelStream(aiPane);
   renderedTabId = null;
   activeTabId = null;
-  if (closed.kind === "page") pageFrameEl.setAttribute("src", "about:blank");
   const next = openTabs[Math.max(0, idx - 1)];
   if (next) activateTab(next.id, "replace");
   else navigate("/", "replace");
@@ -2152,16 +2635,13 @@ let newTabReturn = "/"; // the path Esc leaves the new tab page for
 let newTabMode = "home"; // home | skills | blueprints
 let newTabSkills = new Map(); // skill id -> { name, text }
 let newTabBlueprints = new Map(); // blueprint id -> { name, files }
-let newTabSessions = new Map(); // session id -> tab label
 
 function newTabInit() {
   newTabEl = document.getElementById("newtab");
   newTabEl.addEventListener("click", newTabClick);
 }
 
-// A page's document arrives after the frame does, so the theme is written in
-// again on every load (a page reload, or a tab pointed at another blueprint).
-pageFrameEl.addEventListener("load", pushPageTheme);
+
 
 // openNewTab shows the launcher at /new (or one of its sub-pages). `push` is
 // false when the URL already says so (a back/forward step re-renders the page);
@@ -2385,9 +2865,8 @@ async function newTabReload() {
     body.innerHTML = note + newTabBlueprintsHtml(blueprints);
     return;
   }
-  const { recent, sessions } = await recentSessions();
-  newTabSessions = sessions;
-  body.innerHTML = note + newTabHomeHtml(skills, blueprints, recent);
+  const records = await recentTabs();
+  body.innerHTML = note + newTabHomeHtml(skills, blueprints, records);
 }
 
 // my skills are the ones you kept: files in the project. Suggested is a sample,
@@ -2404,8 +2883,7 @@ function newTabSuggestions(skills) {
 
 const NEWTAB_NONE = `<div class="empty-hint">nothing here yet</div>`;
 
-function newTabHomeHtml(skills, blueprints, recent) {
-  const mine = newTabMySkills(skills);
+function newTabHomeHtml(skills, blueprints, recent) {  const mine = newTabMySkills(skills);
   return `
     <section class="newtab-sec" data-section="chat">
       <div class="launch-item" data-action="newchat">
@@ -2425,7 +2903,7 @@ function newTabHomeHtml(skills, blueprints, recent) {
     </section>
     <section class="newtab-sec" data-section="recent">
       ${newTabSecHeadHtml("Recent", "")}
-      ${recent.length ? recent.map((s) => newTabSessionHtml(s)).join("") : NEWTAB_NONE}
+      ${recent.length ? recent.map(newTabTabHtml).join("") : NEWTAB_NONE}
     </section>`;
 }
 
@@ -2453,16 +2931,36 @@ function newTabBlueprintsHtml(blueprints) {
     </section>`;
 }
 
-// recentSessions lists past conversations, most recently active first: the ones
-// you are not already looking at. An open conversation is a tab already — this
-// is how a *closed* one is found again — so the tabs are filtered out (a skill
-// run and a blank chat both end up here). Should one ever be listed anyway,
-// selecting it is harmless: openTab switches to the tab that already holds
-// that session instead of opening a second one. One page of log/list is 100
-// sessions, and that is what the page shows; the log service is not required for
-// the rest of the new tab page.
-async function recentSessions() {
-  let sessions = [];
+// recentTabs lists tab records, most recently updated first: the ones you are
+// not already looking at. An open tab is on the tab bar already — this is how a
+// *closed* one is found again. One page of log/tab/list is 100 records, and that
+// is what the page shows; the log service is not required for the rest of the
+// new tab page.
+//
+// The launcher lists *tabs*, where /resume lists *sessions*: reopening a
+// workspace and pulling a conversation into one are different moves.
+async function recentTabs() {
+  // Both lists on one round trip's worth of latency: the records are what the
+  // section shows, the previews only name the rows.
+  const [records, previews] = await Promise.all([tabList().catch(() => []), sessionPreviews()]);
+  const open = new Set(openTabs.map((t) => t.tabId).filter(Boolean));
+  const list = records.filter((r) => r.tabId && !open.has(r.tabId));
+  // A tab record carries a layout, not a title: name each row after what its
+  // first pane holds — a chat's session preview, or the blueprint.
+  return list.map((r) => {
+    const pane = primaryPane(r.layout);
+    const label = pane?.content === "page"
+      ? newTabBlueprints.get(pane.id)?.name || pane.id
+      : previews.get(pane?.id) || pane?.id || r.tabId;
+    return { ...r, label, kind: pane?.content || "?" };
+  });
+}
+
+// sessionPreviews maps sessionId -> its first user message, the same preview
+// /resume shows, so a reopened workspace reads like the conversation inside it
+// rather than as a bare session id. A failure just leaves the ids as labels.
+async function sessionPreviews() {
+  const previews = new Map();
   try {
     const res = await fetch(`${LOG_BASE}/log/list`, {
       method: "POST",
@@ -2470,24 +2968,23 @@ async function recentSessions() {
       body: yaml.dump({ pageNum: 1 }),
     });
     const data = yaml.load(await res.text()) || {};
-    if (res.ok) sessions = data.sessions || [];
+    if (res.ok) {
+      for (const s of data.sessions || []) {
+        previews.set(s.sessionId, aiOneLine(s.preview || "").slice(0, 60));
+      }
+    }
   } catch (e) {
-    sessions = [];
+    // no previews: the ids stand in
   }
-  const open = new Set(openTabs.map((t) => t.sessionId));
-  const list = sessions.filter((s) => s.sessionId && !open.has(s.sessionId));
-  const labels = new Map(
-    list.map((s) => [s.sessionId, aiOneLine(s.preview || "").slice(0, 60) || s.sessionId]),
-  );
-  return { recent: list, sessions: labels };
+  return previews;
 }
 
-function newTabSessionHtml(s) {
-  const name = newTabSessions.get(s.sessionId) || s.sessionId;
-  return `<div class="launch-item" data-action="resume" data-id="${s.sessionId}">
+// A tab record carries a layout, not a title: what it holds is its first pane.
+function newTabTabHtml(r) {
+  return `<div class="launch-item" data-action="opentab" data-id="${r.tabId}">
     <div class="launch-main">
-      <div class="launch-name">${escapeHtml(name)}</div>
-      <div class="launch-desc">${s.count} messages · ${escapeHtml(String(s.lastAt || ""))}</div>
+      <div class="launch-name">${escapeHtml(r.label || r.tabId)}</div>
+      <div class="launch-desc">${escapeHtml(r.kind || "?")} · ${escapeHtml(String(r.updatedAt || ""))}</div>
     </div>
   </div>`;
 }
@@ -2513,17 +3010,38 @@ async function newTabRun(skillId) {
 async function newBlankChat() {
   try {
     const sessionId = await aiNewSession();
-    await openTab({ skillId: "", sessionId, name: "new chat", text: "", fresh: true }, "replace");
+    await openTab(
+      { skillId: "", sessionId, name: "new chat", text: "", fresh: true },
+      "replace",
+    );
   } catch (err) {
     newTabError(String(err.message || err));
   }
 }
 
-// newTabResume reopens a past conversation as a tab: openTab loads it
-// through /ai/resume + log replay, exactly like reopening a closed tab.
-async function newTabResume(sessionId) {
-  const name = newTabSessions.get(sessionId) || "chat";
-  await openTab({ skillId: "", sessionId, name, text: "" }, "replace");
+// newTabOpenTab reopens a tab record: its layout says what the tab holds, and
+// for now one pane fills it. A record whose tab is already open just gets that
+// tab activated, so nothing is created twice.
+async function newTabOpenTab(recordId) {
+  const existing = openTabs.find((t) => t.tabId === recordId);
+  if (existing) {
+    await activateTab(existing.id, "replace");
+    return;
+  }
+  let rec;
+  try {
+    rec = await tabDetail(recordId);
+  } catch (err) {
+    newTabError(String(err.message || err));
+    return;
+  }
+  const pane = primaryPane(rec.layout);
+  if (!pane) {
+    newTabError(`tab ${recordId} has no pane`);
+    return;
+  }
+  if (pane.content === "page") await openPageTab(pane.id, pane.id, "replace", recordId);
+  else await openTab({ skillId: "", sessionId: pane.id, name: "chat", text: "", recordId }, "replace");
 }
 
 // newTabOpenPage opens a blueprint as a page tab.
@@ -2538,7 +3056,7 @@ function newTabClick(event) {
   const action = hit.dataset.action;
   const id = hit.dataset.id;
   if (action === "newchat") newBlankChat();
-  else if (action === "resume") newTabResume(id);
+  else if (action === "opentab") newTabOpenTab(id);
   else if (action === "run") newTabRun(id);
   else if (action === "page") newTabOpenPage(id);
   else if (action === "suggest")
@@ -2576,8 +3094,8 @@ const AI_COMMANDS = [
   },
 ];
 
-let aiDrawer = null; // { items, index, kind }
-let aiConfirm = null; // { sessionId, label } while the delete dialog is open
+// The command drawer and the delete dialog belong to the pane being typed in:
+// `aiPane.drawer` / `aiPane.confirm`.
 
 function aiMatchCommands(value) {
   const full = value.toLowerCase();
@@ -2602,8 +3120,8 @@ function aiOneLine(s) {
 }
 
 function aiDrawerRender(items, kind) {
-  aiDrawer = { items, index: 0, kind };
-  aiCmdEl.innerHTML = "";
+  aiPane.drawer = { items, index: 0, kind };
+  aiCmdEl().innerHTML = "";
   if (kind === "session") {
     // The session picker replaces the input, so give it an explicit way back.
     const back = document.createElement("button");
@@ -2614,7 +3132,7 @@ function aiDrawerRender(items, kind) {
       e.preventDefault();
       aiCancelResume();
     });
-    aiCmdEl.appendChild(back);
+    aiCmdEl().appendChild(back);
   }
   items.forEach((item, i) => {
     // A div (not a button) so session rows can host their own delete button.
@@ -2664,7 +3182,7 @@ function aiDrawerRender(items, kind) {
       e.preventDefault();
       aiDrawerSelect(i);
     });
-    aiCmdEl.appendChild(row);
+    aiCmdEl().appendChild(row);
   });
   if (kind === "session") {
     // Key hints sit in one row below the list; the picker owns the keyboard.
@@ -2676,30 +3194,32 @@ function aiDrawerRender(items, kind) {
     l2.textContent = "d - delete this session";
     hint.appendChild(l1);
     hint.appendChild(l2);
-    aiCmdEl.appendChild(hint);
+    aiCmdEl().appendChild(hint);
   }
-  aiCmdEl.hidden = false;
-  if (kind === "session") aiCmdEl.focus();
+  aiCmdEl().hidden = false;
+  if (kind === "session") aiCmdEl().focus();
 }
 
 function aiDrawerHide() {
-  aiDrawer = null;
-  aiCmdEl.hidden = true;
-  aiCmdEl.innerHTML = "";
+  if (!aiPane) return;
+  aiPane.drawer = null;
+  aiCmdEl().hidden = true;
+  aiCmdEl().innerHTML = "";
 }
 
 // aiCancelResume leaves the session picker and returns to the normal chat flow.
 function aiCancelResume() {
   aiDrawerHide();
-  aiInputEl.disabled = false;
-  aiInputEl.focus();
+  aiInputEl().disabled = false;
+  aiInputEl().focus();
 }
 
 // aiConfirmDelete opens a modal over the session picker asking whether to
 // delete the highlighted session. Esc (handled globally) cancels it.
 function aiConfirmDelete(item) {
-  if (aiConfirm || !item || !item.sessionId) return;
-  aiConfirm = { sessionId: item.sessionId, label: item.label };
+  if (!aiPane || aiPane.confirm || !item || !item.sessionId) return;
+  if (!aiPane) return;
+  aiPane.confirm = { sessionId: item.sessionId, label: item.label };
   const overlay = document.createElement("div");
   overlay.className = "ai-confirm";
   overlay.tabIndex = -1;
@@ -2745,18 +3265,18 @@ function aiConfirmDelete(item) {
 }
 
 function aiConfirmClose() {
-  if (!aiConfirm) return;
-  aiConfirm = null;
+  if (!aiPane?.confirm) return;
+  aiPane.confirm = null;
   const el = document.querySelector(".ai-confirm");
   if (el) el.remove();
-  if (aiDrawer) aiCmdEl.focus();
+  if (aiPane.drawer) aiCmdEl().focus();
 }
 
 // aiConfirmAccept purges the session from both the live ai registry and the log
 // history, then updates the picker.
 async function aiConfirmAccept() {
-  if (!aiConfirm) return;
-  const sessionId = aiConfirm.sessionId;
+  if (!aiPane?.confirm) return;
+  const sessionId = aiPane.confirm.sessionId;
   aiConfirmClose();
   try {
     // Free the in-memory session if it is live; 404 just means it was idle.
@@ -2772,26 +3292,25 @@ async function aiConfirmAccept() {
     });
     const data = yaml.load(await res.text()) || {};
     if (!res.ok) throw new Error(data.error?.message || res.status);
-    if (aiSession === sessionId) {
-      // The open conversation is gone; start a fresh one in its tab (a rebind —
-      // leaving the tab on the deleted session would 404 when reopened) and
-      // leave the picker.
-      const tab = openTabs.find((t) => t.sessionId === sessionId);
-      aiMessagesEl.innerHTML = "";
-      aiClearImages();
-      await aiNew();
-      if (tab) {
-        aiDrafts.delete(tab.id);
-        aiHistoryClear(sessionId);
-        tab.sessionId = aiSession;
+    if (openTabs.some((t) => [...(t.panes?.values() ?? [])].some((p) => p.session === sessionId))) {
+      // A pane on screen was showing it; that pane starts a fresh conversation
+      // (leaving it pointed at a deleted session would 404 on the next reopen),
+      // and the picker is left.
+      const tab = openTabs.find((t) => [...(t.panes?.values() ?? [])].some((p) => p.session === sessionId));
+      const pane = [...(tab?.panes?.values() ?? [])].find((p) => p.session === sessionId);
+      aiHistoryClear(sessionId);
+      if (tab?.tabId) {
+        const fresh = await aiNewSession();
+        pane.session = fresh;
+        pane.seenSeq = 0;
+        pane.loaded = false;
+        applyPaneLayout(tab, { pane: { content: "chat", id: fresh } });
+        tab.sessionId = fresh;
         tab.skillId = "";
         tab.name = "new chat";
         tab.text = "";
         saveTabs();
         renderTabs();
-        renderedTabId = tab.id;
-        // The tab was rebound to a fresh session: the address must not keep
-        // naming the deleted one.
         syncTabUrl(tab, "replace");
       }
       aiCancelResume();
@@ -2806,37 +3325,37 @@ async function aiConfirmAccept() {
 // aiDrawerRemove drops a deleted session from the picker, or leaves it when
 // none remain.
 function aiDrawerRemove(sessionId) {
-  if (!aiDrawer || aiDrawer.kind !== "session") return;
-  const items = aiDrawer.items.filter((it) => it.sessionId !== sessionId);
+  if (!aiPane.drawer || aiPane.drawer.kind !== "session") return;
+  const items = aiPane.drawer.items.filter((it) => it.sessionId !== sessionId);
   if (!items.length) {
     aiAppend("assistant", "没有可恢复的历史会话。");
     aiCancelResume();
     return;
   }
-  const index = Math.min(aiDrawer.index, items.length - 1);
+  const index = Math.min(aiPane.drawer.index, items.length - 1);
   aiDrawerRender(items, "session");
-  aiDrawer.index = index;
-  aiCmdEl.querySelectorAll(".ai-cmd-item").forEach((el, i) => {
+  aiPane.drawer.index = index;
+  aiCmdEl().querySelectorAll(".ai-cmd-item").forEach((el, i) => {
     el.classList.toggle("active", i === index);
   });
 }
 
 function aiDrawerMove(delta) {
-  if (!aiDrawer) return;
-  const n = aiDrawer.items.length;
-  aiDrawer.index = (aiDrawer.index + delta + n) % n;
-  aiCmdEl.querySelectorAll(".ai-cmd-item").forEach((el, i) => {
-    el.classList.toggle("active", i === aiDrawer.index);
-    if (i === aiDrawer.index) el.scrollIntoView({ block: "nearest" });
+  if (!aiPane.drawer) return;
+  const n = aiPane.drawer.items.length;
+  aiPane.drawer.index = (aiPane.drawer.index + delta + n) % n;
+  aiCmdEl().querySelectorAll(".ai-cmd-item").forEach((el, i) => {
+    el.classList.toggle("active", i === aiPane.drawer.index);
+    if (i === aiPane.drawer.index) el.scrollIntoView({ block: "nearest" });
   });
 }
 
 function aiDrawerSelect(index) {
-  if (!aiDrawer) return;
-  const item = aiDrawer.items[index];
+  if (!aiPane.drawer) return;
+  const item = aiPane.drawer.items[index];
   if (!item) return;
   aiDrawerHide();
-  aiInputEl.value = "";
+  aiInputEl().value = "";
   aiResizeInput();
   item.run();
 }
@@ -2844,8 +3363,8 @@ function aiDrawerSelect(index) {
 // aiSyncCommandDrawer opens/filters the command drawer while the first token
 // looks like a command (starts with "/" and has no whitespace yet).
 function aiSyncCommandDrawer() {
-  if (aiDrawer && aiDrawer.kind === "session") return;
-  const v = aiInputEl.value;
+  if (aiPane.drawer && aiPane.drawer.kind === "session") return;
+  const v = aiInputEl().value;
   if (!v.startsWith("/") || /\s/.test(v)) {
     aiDrawerHide();
     return;
@@ -2870,20 +3389,35 @@ async function aiCommandNew() {
   aiDrawerHide();
   const idx = openTabs.findIndex((t) => t.id === activeTabId);
   try {
+    // /new keeps the tab it replaces: same slot, same record, new conversation.
+    const tabId = await ensureTabId(openTabs[idx >= 0 ? idx : 0] || {});
     const sessionId = await aiNewSession();
     const tab = {
       id: `tab_${Math.random().toString(36).slice(2, 10)}`,
+      tabId,
       skillId: "",
       sessionId,
       name: "new chat",
       text: "",
       fresh: true,
+      panes: new Map(),
+      layout: null,
     };
     if (idx < 0) {
       openTabs.push(tab);
     } else {
-      aiDrafts.delete(openTabs[idx].id);
+      // The same tab, a fresh instance: it keeps its record (and so its
+      // tabId), and the layout's pane is repointed at the new session below.
+      tab.tabId = openTabs[idx].tabId || "";
       openTabs[idx] = tab; // the slot now owns the fresh instance
+    }
+    if (tab.tabId) {
+      try {
+        const rec = await tabPut(tab.tabId, tabLayoutOf(tab));
+        if (rec.layout) tab.layout = rec.layout;
+      } catch (err) {
+        logTabRecordError(err);
+      }
     }
     // The slot's old conversation is gone from the DOM; force a redraw.
     renderedTabId = null;
@@ -2895,13 +3429,13 @@ async function aiCommandNew() {
   } catch (err) {
     aiAppend("assistant", `[error] ${err.message}`);
   }
-  aiInputEl.focus();
+  aiInputEl().focus();
 }
 
 async function aiCommandResume() {
   // Input is disabled while the session picker is open; it is re-enabled once a
   // session is resumed or the picker is dismissed.
-  aiInputEl.disabled = true;
+  aiInputEl().disabled = true;
   try {
     const res = await fetch(`${LOG_BASE}/log/list`, {
       method: "POST",
@@ -3003,7 +3537,7 @@ function aiRenderRaw(raw, tools, prompts) {
     const div = document.createElement("div");
     div.className = "ai-msg ai-compaction";
     div.textContent = "上下文已压缩";
-    aiMessagesEl.appendChild(div);
+    aiMsgEl().appendChild(div);
   }
 }
 
@@ -3039,20 +3573,24 @@ function aiRenderLegacy(m, prompts) {
 // seeds the composer's prompt history from the same walk — the user turns are
 // being read here anyway, so the recall list costs no second request and no
 // second parser.
-function aiRenderHistory(messages, sessionId) {
-  aiMessagesEl.innerHTML = "";
+function aiRenderHistory(pane, messages, sessionId) {
+  aiRenderPane = pane;
+  pane.messagesEl.innerHTML = "";
   const tools = new Map(); // toolCallId -> { block, body }
   const prompts = [];
   for (const m of messages) {
     if (m.raw) aiRenderRaw(m.raw, tools, prompts);
     else aiRenderLegacy(m, prompts);
   }
+  aiRenderPane = null;
   aiHistorySeed(sessionId, prompts);
 }
 
-async function aiLoadSession(id) {
-  // Switching sessions must stop the previous session's live stream first.
-  aiCancelStream();
+// aiLoadSession fills one chat pane with an existing session: it rebuilds the
+// server-side context, replays the recorded messages into the pane's own list,
+// and reattaches the pane's stream when a run is still in flight.
+async function aiLoadSession(pane, id) {
+  aiCancelStream(pane);
   const res = await fetch(`${AI_BASE}/ai/resume`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
@@ -3066,29 +3604,26 @@ async function aiLoadSession(id) {
     body: yaml.dump({ sessionId: id }),
   });
   const detail = yaml.load(await detailRes.text()) || {};
-  // The session id is passed explicitly: aiSession is only rebound below, and
-  // the replay is what seeds this conversation's recall list.
-  aiRenderHistory(detail.messages || [], id);
+  aiRenderHistory(pane, detail.messages || [], id);
   // Continue the same session; skip the events already emitted so a resumed
   // in-memory session does not replay old ones.
-  aiSession = id;
-  aiSeenSeq = Number(data.lastSeq) || 0;
-  aiScrollToBottom();
+  pane.session = id;
+  pane.seenSeq = Number(data.lastSeq) || 0;
   // The run may still be executing server-side (our stream was cut); reattach so
   // the events emitted while we were away are replayed from lastSeq.
-  if (data.active) await aiStream();
+  if (data.active) await aiStream(pane);
 }
 
 async function aiResumeSession(id, name) {
-  aiInputEl.disabled = true;
+  aiInputEl().disabled = true;
   try {
-    await aiLoadSession(id);
+    await aiLoadSession(aiPane, id);
     rebindActiveTab(id, name);
   } catch (err) {
     aiAppend("assistant", `[error] ${err.message}`);
   } finally {
-    aiInputEl.disabled = false;
-    aiInputEl.focus();
+    aiInputEl().disabled = false;
+    aiInputEl().focus();
   }
 }
 
@@ -3130,17 +3665,18 @@ window.addEventListener("click", (event) => {
   }
 });
 
-aiSendEl.addEventListener("click", aiSend);
-aiStopEl.addEventListener("click", aiStop);
-aiInputEl.addEventListener("input", aiSyncCommandDrawer);
-aiInputEl.addEventListener("input", aiResizeInput);
-// Typing during history browsing leaves it, keeping what was typed (aiHistoryEnd).
-aiInputEl.addEventListener("input", () => aiHistoryEnd(aiSession));
 // Soft wrapping depends on the input's width, so a resized window changes the
 // rendered line count and the box has to be measured again.
 window.addEventListener("resize", aiResizeInput);
 
-aiInputEl.addEventListener("paste", (event) => {
+// ---------- one composer per pane ----------
+//
+// The handlers below are registered by bindComposer on each pane's own
+// composer; each closes over its pane, so it acts on the conversation it
+// belongs to. Only the measuring mirror trick is shared — every pane needs it.
+
+// A paste carrying images goes through the same path as the paste button.
+function aiPaste(event) {
   const files = [...(event.clipboardData?.items || [])]
     .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
     .map((it) => it.getAsFile())
@@ -3148,33 +3684,34 @@ aiInputEl.addEventListener("paste", (event) => {
   if (!files.length) return;
   event.preventDefault();
   for (const file of files) aiAddPastedImage(file);
-});
+}
 
 // Keep the caret out of [image] tokens and keep image tokens whole on edit.
-aiInputEl.addEventListener("keyup", aiSnapCaretOutOfToken);
-aiInputEl.addEventListener("click", aiSnapCaretOutOfToken);
-aiInputEl.addEventListener("select", aiSnapCaretOutOfToken);
-aiInputEl.addEventListener("beforeinput", (event) => {
+function aiBeforeInput(event) {
+  const input = aiInputEl();
   if (!event.inputType || !event.inputType.startsWith("insert")) return;
-  if (aiInputEl.selectionStart !== aiInputEl.selectionEnd) return;
-  if (aiTokenInside(aiInputEl.value, aiInputEl.selectionStart)) {
+  if (input.selectionStart !== input.selectionEnd) return;
+  if (aiTokenInside(input.value, input.selectionStart)) {
     event.preventDefault();
     aiSnapCaretOutOfToken();
   }
-});
-aiInputEl.addEventListener("cut", () => {
-  const v = aiInputEl.value;
-  const s = aiInputEl.selectionStart;
-  const e = aiInputEl.selectionEnd;
+}
+
+function aiCutImageToken() {
+  const input = aiInputEl();
+  const v = input.value;
+  const s = input.selectionStart;
+  const e = input.selectionEnd;
   if (s === e) return;
   const range = aiExpandTokenRange(v, s, e);
   if (!range) return;
   aiRemoveImagesForRange(v, range[0], range[1]);
-  aiInputEl.setSelectionRange(range[0], range[1]);
-});
-aiInputEl.addEventListener("keydown", (event) => {
+  input.setSelectionRange(range[0], range[1]);
+}
+
+function aiInputKeydown(event) {
   // While the command drawer is open it owns navigation / selection keys.
-  if (aiDrawer && aiDrawer.kind === "command") {
+  if (aiPane.drawer && aiPane.drawer.kind === "command") {
     if (event.key === "ArrowDown") {
       event.preventDefault();
       aiDrawerMove(1);
@@ -3187,14 +3724,14 @@ aiInputEl.addEventListener("keydown", (event) => {
     }
     if (event.key === "Enter" && !event.isComposing) {
       event.preventDefault();
-      aiDrawerSelect(aiDrawer.index);
+      aiDrawerSelect(aiPane.drawer.index);
       return;
     }
     if (event.key === "Tab") {
       event.preventDefault();
-      const cmd = aiDrawer.items[aiDrawer.index];
+      const cmd = aiPane.drawer.items[aiPane.drawer.index];
       if (cmd) {
-        aiInputEl.value = cmd.label;
+        aiInputEl().value = cmd.label;
         aiDrawerHide();
         aiResizeInput();
       }
@@ -3211,24 +3748,24 @@ aiInputEl.addEventListener("keydown", (event) => {
     !event.ctrlKey &&
     !event.altKey &&
     !event.shiftKey &&
-    !aiImages.length
+    !aiPane.images.length
   ) {
-    if (event.key === "ArrowUp" && (aiInputEl.value === "" || aiCaretVisualLine().first)) {
-      if (aiHistoryUp(aiSession)) {
+    if (event.key === "ArrowUp" && (aiInputEl().value === "" || aiCaretVisualLine().first)) {
+      if (aiHistoryUp(aiPane?.session)) {
         event.preventDefault();
         return;
       }
     }
-    if (event.key === "ArrowDown" && aiHistoryDown(aiSession)) {
+    if (event.key === "ArrowDown" && aiHistoryDown(aiPane?.session)) {
       event.preventDefault();
       return;
     }
   }
   // Atomic [image] tokens: Backspace/Delete removes the whole token.
   if (event.key === "Backspace" || event.key === "Delete") {
-    const v = aiInputEl.value;
-    const s = aiInputEl.selectionStart;
-    const e = aiInputEl.selectionEnd;
+    const v = aiInputEl().value;
+    const s = aiInputEl().selectionStart;
+    const e = aiInputEl().selectionEnd;
     let range = null;
     if (s !== e) {
       range = aiExpandTokenRange(v, s, e);
@@ -3240,8 +3777,8 @@ aiInputEl.addEventListener("keydown", (event) => {
     if (range) {
       event.preventDefault();
       aiRemoveImagesForRange(v, range[0], range[1]);
-      aiInputEl.value = v.slice(0, range[0]) + v.slice(range[1]);
-      aiInputEl.setSelectionRange(range[0], range[0]);
+      aiInputEl().value = v.slice(0, range[0]) + v.slice(range[1]);
+      aiInputEl().setSelectionRange(range[0], range[0]);
       aiResizeInput();
       aiSyncCommandDrawer();
       return;
@@ -3252,23 +3789,15 @@ aiInputEl.addEventListener("keydown", (event) => {
   if (event.shiftKey) return; // Shift+Enter 换行
   event.preventDefault(); // Enter 发送
   aiSend();
-});
+}
 
-// The session picker runs with the input disabled, so keyboard navigation lives
-// on the drawer element itself. IME composition is tracked separately because
-// on macOS the keydown that begins pinyin composition can arrive with
-// isComposing false, which must not be mistaken for a "delete" keystroke.
-let aiComposing = false;
-aiCmdEl.addEventListener("compositionstart", () => {
-  aiComposing = true;
-});
-aiCmdEl.addEventListener("compositionend", () => {
-  aiComposing = false;
-});
-
-aiCmdEl.addEventListener("keydown", (event) => {
-  if (!aiDrawer) return;
-  if (aiConfirm) return;
+// The session picker runs with the input disabled, so its keyboard navigation
+// lives on the drawer element; bindComposer wires that per pane, and tracks IME
+// composition on the pane (pane.composing) because on macOS the keydown that
+// begins pinyin composition can arrive with isComposing false.
+function aiCmdKeydown(pane, event) {
+  if (!pane.drawer) return;
+  if (pane.confirm) return;
   if (event.key === "ArrowDown") {
     event.preventDefault();
     aiDrawerMove(1);
@@ -3277,44 +3806,19 @@ aiCmdEl.addEventListener("keydown", (event) => {
     aiDrawerMove(-1);
   } else if (event.key === "Enter") {
     event.preventDefault();
-    aiDrawerSelect(aiDrawer.index);
+    aiDrawerSelect(pane.drawer.index);
   } else if (
     (event.key === "d" || event.key === "D") &&
-    aiDrawer.kind === "session"
+    pane.drawer.kind === "session"
   ) {
     // Only a genuinely typed "d" deletes; ignore IME composition keystrokes so
     // typing pinyin (or committing a candidate with Enter) never triggers it.
-    if (aiComposing || event.isComposing || event.keyCode === 229) return;
+    if (pane.composing || event.isComposing || event.keyCode === 229) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     event.preventDefault();
-    aiConfirmDelete(aiDrawer.items[aiDrawer.index]);
+    pane.confirmDelete(pane.drawer.items[pane.drawer.index]);
   }
-});
-
-// Esc unwinds one layer at a time: first leave the drawer (session picker or
-// command list) back to the normal chat flow, then stop the in-flight run.
-window.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  if (aiConfirm) {
-    event.preventDefault();
-    aiConfirmClose();
-    return;
-  }
-  if (!themeMenuEl.hidden) {
-    event.preventDefault();
-    themeMenuHide();
-    return;
-  }
-  if (aiDrawer) {
-    event.preventDefault();
-    if (aiDrawer.kind === "session") aiCancelResume();
-    else aiDrawerHide();
-    return;
-  }
-  if (!aiStreaming) return;
-  event.preventDefault();
-  aiStop();
-});
+}
 
 window.addEventListener("popstate", route);
 

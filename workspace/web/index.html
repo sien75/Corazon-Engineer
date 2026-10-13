@@ -53,17 +53,10 @@
     <div id="page" hidden>
       <iframe id="page-frame" title="page"></iframe>
     </div>
-    <aside id="ai" hidden>
-      <div id="ai-scroll">
-        <div id="ai-messages"></div>
-      </div>
-      <div id="ai-input">
-        <div id="ai-cmd" tabindex="-1" hidden></div>
-        <textarea id="ai-input-field" rows="2" placeholder="ask… (Enter send, Shift+Enter newline; paste image)" autocomplete="off"></textarea>
-        <button id="ai-stop" type="button" hidden>stop</button>
-        <button id="ai-send" type="button">send</button>
-      </div>
-    </aside>
+    <!-- The content area of a tab: its pane tree, rendered per tab. A chat pane
+         is the conversation view — message list plus composer — built per pane
+         (see makeChatPane), so every conversation is one you can type into. -->
+    <div id="panes" hidden></div>
   </main>
   <script src="/config.js"></script>
   <script type="module" src="/app.js"></script>

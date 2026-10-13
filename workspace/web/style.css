@@ -355,25 +355,9 @@ canvas.layer {
 
 /* ---------- ai panel ---------- */
 
-#ai {
-  width: 38.197%;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid var(--border);
-  background: var(--surface);
-}
-
-#ai[hidden] {
-  display: none;
-}
-
-/* A conversation tab shows its conversation as the page content, full width. */
-#ai.tab-mode {
-  width: auto;
-  flex: 1;
-  border-left: none;
-}
+/* Nothing here for the composer's holder: every chat pane builds its own
+   composer (see makeChatPane), so the pane itself is the column — message list
+   on top, composer at the bottom. */
 
 /* ---------- new tab page ---------- */
 
@@ -569,18 +553,94 @@ canvas.layer {
 /* A page is a blueprint's own html, filling the content area. The iframe is kept
    alive between visits (switching tabs does not reload it) and simply cleared
    when its tab closes. */
-#page {
+/* ---------- panes ---------- */
+
+/* A tab's content area is a tree of panes. `col` splits left/right and `row`
+   splits top/bottom; a split hands its shares out by --w, a brief leaf takes a
+   fixed band instead. */
+#panes {
   flex: 1;
   min-width: 0;
   display: flex;
   background: var(--surface);
 }
 
-#page[hidden] {
+#panes[hidden] {
   display: none;
 }
 
-#page iframe {
+.pane-tree,
+.pane-split {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-split.col {
+  flex-direction: row;
+}
+
+.pane-split.row {
+  flex-direction: column;
+}
+
+.pane-split > * {
+  flex: var(--w, 1) 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* A brief pane is a short band, not a proportional share: it sits at the end of
+   a row split and keeps its height however tall the window is. */
+.pane-split.row > .pane.brief {
+  flex: 0 0 auto;
+  height: 132px;
+}
+
+.pane-split.col > * + *,
+.pane-split.row > * + * {
+  border-left: 1px solid var(--border);
+}
+
+.pane-split.row > * + * {
+  border-left: 0;
+  border-top: 1px solid var(--border);
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* A single-pane tree is the common case: the pane fills it, like a split child
+   would. Without this the pane would size to its content. */
+.pane-tree > .pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-chat {
+  position: relative;
+}
+
+/* The conversation scrolls over the whole pane, not just over the centred
+   column: .pane-scroll spans the full width, so the wheel works wherever the
+   pointer is, while the messages inside stay a capped column. */
+.pane-scroll {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
+  /* Reserve the track on both sides, so the centred column keeps the same
+     centre as the composer below it — with classic scrollbars a one-sided
+     gutter sits the column half a scrollbar to the left. */
+  scrollbar-gutter: stable both-edges;
+}
+
+.pane-page .pane-frame {
   flex: 1;
   border: 0;
   /* The page's own background wins once it paints; before that (and when it has
@@ -644,29 +704,21 @@ canvas.layer {
 }
 
 /* The conversation scrolls over the whole pane, not just over the centred
-   column: `#ai-scroll` spans the full width, so the wheel works wherever the
+   column: `.pane-scroll` spans the full width, so the wheel works wherever the
    pointer is, while the messages inside stay a capped column. */
-#ai-scroll {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  overflow-y: auto;
-  /* Reserve the track on both sides, so the centred column keeps the same
-     centre as the composer below it — with classic scrollbars a one-sided
-     gutter sits the column half a scrollbar to the left. */
-  scrollbar-gutter: stable both-edges;
-}
-
 /* A conversation reads better as a column: cap it and centre it. Applies to
    both the message list and the composer so they stay aligned. */
-#ai-messages,
+.ai-messages,
+.ai-input,
 #ai-input {
   width: 100%;
   max-width: 1000px;
   margin-inline: auto;
 }
 
-#ai-messages {
+/* Every chat pane's list, not `#ai-messages`: the id marks the focused pane, so
+   keying this on it would restyle one pane and strip the other bare. */
+.ai-messages {
   padding: 12px;
   font-size: 13px;
   line-height: 1.5;
@@ -1012,7 +1064,7 @@ canvas.layer {
   font-size: 12px;
 }
 
-#ai-input {
+.ai-input {
   position: relative;
   display: flex;
   align-items: flex-end;
@@ -1030,6 +1082,7 @@ canvas.layer {
 }
 
 /* Command / session drawer: anchored above the input, expanding upward. */
+.ai-cmd,
 #ai-cmd {
   position: absolute;
   left: 0;
@@ -1044,6 +1097,7 @@ canvas.layer {
   outline: none;
 }
 
+.ai-cmd[hidden],
 #ai-cmd[hidden] {
   display: none;
 }
@@ -1216,6 +1270,7 @@ canvas.layer {
   background: var(--surface-3);
 }
 
+.ai-input-field,
 #ai-input-field {
   flex: 1;
   overflow-y: hidden;
@@ -1230,6 +1285,7 @@ canvas.layer {
   line-height: 1.4;
 }
 
+.ai-input-field:focus,
 #ai-input-field:focus {
   border-color: var(--accent);
 }
@@ -1248,6 +1304,7 @@ canvas.layer {
   border: 0;
 }
 
+.ai-send,
 #ai-send {
   background: none;
   border: 1px solid var(--border-strong);
@@ -1258,10 +1315,12 @@ canvas.layer {
   cursor: pointer;
 }
 
+.ai-send:hover,
 #ai-send:hover {
   border-color: var(--accent);
 }
 
+.ai-stop,
 #ai-stop {
   background: var(--danger-bg);
   border: 1px solid var(--danger);
@@ -1272,15 +1331,18 @@ canvas.layer {
   cursor: pointer;
 }
 
+.ai-stop:hover,
 #ai-stop:hover {
   background: var(--danger-bg-hover);
 }
 
+.ai-stop:disabled,
 #ai-stop:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
+.ai-stop[hidden],
 #ai-stop[hidden] {
   display: none;
 }
