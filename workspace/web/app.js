@@ -2040,7 +2040,7 @@ function aiHandleEvent(hub, ev) {
   }
   if (ev.type === "agent_settled") hub.run = [];
   else if (!layoutFrame) hub.run.push(ev);
-  for (const t of [...hub.targets]) aiHandleOne(t, ev);
+  for (const t of [...hub.targets]) aiHandleOne(hub, t, ev);
   if (ev.type === "agent_settled") aiHubSettle(hub);
 }
 
@@ -2062,16 +2062,20 @@ function aiHubError(hub, message) {
 
 // aiHubAnswer answers a pending question once, from whichever pane it was picked
 // in: every card the question put on screen closes, and the answer goes to the
-// conversation.
-function aiHubAnswer(hub, value) {
+// conversation. `pane` is the one the card belongs to — a question puts a card in
+// every pane showing the conversation, and the answer speaks for the tab the
+// pane is in (see aiAnswer).
+function aiHubAnswer(hub, pane, value) {
   for (const disable of [...hub.cards.values()]) disable();
   hub.cards.clear();
-  void aiAnswer(hub, value);
+  void aiAnswer(hub, pane, value);
 }
 
 // aiHandleOne draws one event into one pane's target. The events themselves are
-// the conversation's; where each one lands is the target's.
-function aiHandleOne(t, ev) {
+// the conversation's; where each one lands is the target's. The hub comes along
+// because a question is the conversation's too: the cards every pane was given
+// are answered once, so they are held on the hub (see aiHubAnswer).
+function aiHandleOne(hub, t, ev) {
   const pane = t.pane;
   aiRenderPane = pane;
   const settleAll = () => t.settle();
@@ -2135,7 +2139,7 @@ function aiHandleOne(t, ev) {
   }
   if (ev.type === "tool_execution_start") {
     if (ev.toolName === "ask_user") {
-      const card = aiAskUser(ev.args, (value) => aiHubAnswer(hub, value));
+      const card = aiAskUser(ev.args, (value) => aiHubAnswer(hub, pane, value));
       hub.cards.set(pane, card.disable);
     } else if (ev.toolName === "layout") {
       // Nothing yet: the tree the model *asked* for is not the tree that was
@@ -3350,13 +3354,46 @@ tabAddEl.addEventListener("click", () => {
   if (newTabOpen && newTabMode !== "home") newTabGo("home", "replace");
   else openNewTab();
 });
+// Esc unwinds one layer at a time, outermost first: the launcher, then the
+// conversation's own layers — the delete confirm, the theme menu, the pane's
+// drawer, and last the run in flight. It is one listener so the order is what the
+// code says rather than which handler happened to be registered first: the
+// conversation under the launcher must not act on the Esc that is closing it.
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && newTabOpen) {
+  if (event.key !== "Escape") return;
+  // The launcher is the outermost thing on screen, and the conversation behind it
+  // is not what the user is looking at.
+  if (newTabOpen) {
     event.preventDefault();
     // Esc backs out one step at a time: a sub-page first, then the launcher.
     if (newTabMode !== "home") newTabGo("home", "replace");
     else closeNewTab();
+    return;
   }
+  // A conversation's own layers. The focus may be anywhere by then — the drawer,
+  // a button inside the confirm, the menu — hence one window listener; the run it
+  // stops is the focused pane's conversation (the same one its stop button
+  // stops), not any other tab's.
+  if (aiPane?.confirm) {
+    event.preventDefault();
+    aiConfirmClose();
+    return;
+  }
+  if (!themeMenuEl.hidden) {
+    event.preventDefault();
+    themeMenuHide();
+    return;
+  }
+  if (aiPane?.drawer) {
+    event.preventDefault();
+    if (aiPane.drawer.kind === "session") aiCancelResume();
+    else aiDrawerHide();
+    return;
+  }
+  const hub = aiPane?.session ? aiHubs.get(aiPane.session) : null;
+  if (!hub?.streaming) return;
+  event.preventDefault();
+  aiStop();
 });
 
 // ---------- command system ----------
@@ -3493,7 +3530,8 @@ function aiCancelResume() {
 }
 
 // aiConfirmDelete opens a modal over the session picker asking whether to
-// delete the highlighted session. Esc (handled globally) cancels it.
+// delete the highlighted session. Esc cancels it (the window listener that
+// unwinds the conversation's layers, one modal before the drawer).
 function aiConfirmDelete(item) {
   if (!aiPane || aiPane.confirm || !item || !item.sessionId) return;
   if (!aiPane) return;
@@ -4103,7 +4141,10 @@ function aiCmdKeydown(pane, event) {
     if (pane.composing || event.isComposing || event.keyCode === 229) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     event.preventDefault();
-    pane.confirmDelete(pane.drawer.items[pane.drawer.index]);
+    // The confirm is the picker's own state and lives where the picker does
+    // (aiPane.confirm — see aiConfirmDelete): the drawer belongs to the pane the
+    // user is typing in, and that is the pane aiPane names.
+    aiConfirmDelete(pane.drawer.items[pane.drawer.index]);
   }
 }
 
