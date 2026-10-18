@@ -1,9 +1,0 @@
-edges:
-  - id: ai-to-static-validate
-    from: ai
-    from_interface: static-validate
-    to: static
-    to_interface: static-validate
-    channel: network
-    protocol: http
-    description: ai validates the schema tree (atoms / edges / contracts) after editing files directly

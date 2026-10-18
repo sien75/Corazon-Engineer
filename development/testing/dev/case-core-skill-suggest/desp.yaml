@@ -1,3 +1,0 @@
-id: core-skill-suggest
-description: suggested-skill scan — 30-run threshold, 10-run batches, run marking, de-duplication, promotion by mv
-atoms: [ai]

@@ -1,0 +1,3 @@
+id: core-agent-instantiate
+description: blueprint → agent — ai-new copies the prototype's two files under the new session id, appends the README to the system prompt, web serves that copy at /agent/<sessionId>/, and the two-file rule is enforced
+atoms: [ai, web, log]

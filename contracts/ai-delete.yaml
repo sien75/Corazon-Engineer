@@ -1,5 +1,5 @@
 id: ai-delete
-description: Delete a session and its stream
+description: Delete an agent — its live session, and the copy of its blueprint
 
 request:
   body:

@@ -1,6 +1,7 @@
 import YAML from "yaml";
 import type { Registry, EngineerEvent, IncomingBlock } from "./registry.ts";
 import { readBlob } from "./blobs.ts";
+import { BlueprintError, removeAgent, slugFrom } from "./blueprint.ts";
 
 // The ai API speaks YAML on the wire (application/yaml), like static / log.
 // JSON request bodies still parse, since JSON is a subset of YAML.
@@ -90,7 +91,30 @@ export function serve(registry: Registry, addr: string): void {
 
       switch (url.pathname) {
         case "/ai/new": {
-          const sess = await registry.new();
+          // An agent is instantiated from a blueprint: the prototype's two files
+          // are copied under this session's id and its README becomes the tail of
+          // the system prompt. A bad slug / a prototype that breaks the two-file
+          // rule is the caller's mistake (400), not a server failure.
+          let blueprint = "";
+          if (body.blueprint !== undefined && body.blueprint !== null) {
+            try {
+              blueprint = slugFrom(body.blueprint);
+            } catch (err) {
+              if (err instanceof BlueprintError) {
+                return errRes(400, "bad_request", err.message);
+              }
+              throw err;
+            }
+          }
+          let sess;
+          try {
+            sess = await registry.new(blueprint || undefined);
+          } catch (err) {
+            if (err instanceof BlueprintError) {
+              return errRes(400, "bad_request", err.message);
+            }
+            throw err;
+          }
           return yamlRes({ sessionId: sess.id });
         }
 
@@ -201,6 +225,8 @@ export function serve(registry: Registry, addr: string): void {
           if (!registry.delete(id)) {
             return errRes(404, "not_found", "session not found");
           }
+          // The agent's copy is its own: deleting an agent deletes it too.
+          removeAgent(registry.rootDir, id);
           return yamlRes({ sessionId: id });
         }
 

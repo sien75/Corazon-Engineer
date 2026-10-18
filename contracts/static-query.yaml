@@ -46,8 +46,7 @@ response:
     docs: [string]  # entries under docs/, relative paths
     notes: [string]  # entries under notes/, relative paths
     skills: [string]  # entries under .agents/skills/, e.g. ".agents/skills/<slug>/SKILL.md"
-    suggested-skills: [string]  # entries under .engineer/suggested-skills/, e.g. ".engineer/suggested-skills/<slug>.md"
-    blueprints: [string]  # entries under .agents/blueprints/, e.g. ".agents/blueprints/<slug>/index.html"
+    blueprints: [string]  # entries under .agents/blueprints/, e.g. ".agents/blueprints/<slug>/index.html" and its README.md — a blueprint is those two files and nothing else
 
 errors:
   - status: 400

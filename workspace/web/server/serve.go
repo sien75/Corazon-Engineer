@@ -10,7 +10,7 @@
 // which whitelists process execution sees as few distinct paths as possible.
 // Serve is the entry point behind the `serve-web` subcommand:
 //
-//	engineer serve-web --bind <host> --port <n> --assets <dir> --pages <dir> --static <url> --ai <url> --log <url>
+//	engineer serve-web --bind <host> --port <n> --assets <dir> --agents <dir> --static <url> --ai <url> --log <url>
 //
 // Every flag is required and there is no fallback. The launcher owns the bind
 // host (loopback unless ENGINEER_BIND opened the stack up), the port and the
@@ -22,14 +22,17 @@
 // style.css). It is deliberately not called --root: the other three services
 // take --root meaning the user's project, which is a different thing entirely.
 //
-// --pages is the second root, and the reason this server is multi-root: the
-// project's blueprints (`<project>/.agents/blueprints`) are served under
-// `/pages/…`, while everything else comes from --assets. A page tab lives at
-// `/pages/<id>` (no trailing slash) — a directory on disk, so the lookup fails
-// and the request falls through to the app shell, which is the SPA route the tab
-// renders; the iframe that tab holds asks for `/pages/<id>/` and gets the
-// blueprint itself. A server that only knew --assets could not tell those two
-// apart, and the web root is not handed the whole project for it either.
+// --agents is the second root, and the reason this server is multi-root: the
+// agents' own copies of their blueprints (`<project>/.engineer/agents`) are
+// served under `/agent/…`, while everything else comes from --assets. The path is
+// a session id, not a slug, because instantiating a blueprint copies it into
+// `.engineer/agents/<sessionId>/` — so what is served is the agent's copy and the
+// prototype directory is never exposed. `--pages` (the old blueprint root) is
+// gone: nothing is served straight out of `.agents/blueprints` any more.
+//
+// `/agent/<sessionId>` with no trailing slash is a directory on disk, so the
+// lookup fails and the request falls through to the app shell; the iframe a pane
+// holds asks for `/agent/<sessionId>/` and gets that agent's index.html.
 package server
 
 import (
@@ -50,6 +53,7 @@ var types = map[string]string{
 	".js":   "text/javascript; charset=utf-8",
 	".css":  "text/css; charset=utf-8",
 	".json": "application/json",
+	".md":   "text/markdown; charset=utf-8",
 	".png":  "image/png",
 	".svg":  "image/svg+xml",
 }
@@ -63,10 +67,10 @@ type runtimeConfig struct {
 }
 
 const usage = "usage: engineer serve-web --bind <host> --port <n> --assets <dir> " +
-	"--pages <dir> --static <url> --ai <url> --log <url>"
+	"--agents <dir> --static <url> --ai <url> --log <url>"
 
-// pagesPrefix is the URL prefix --pages is mounted at.
-const pagesPrefix = "/pages/"
+// agentsPrefix is the URL prefix --agents is mounted at.
+const agentsPrefix = "/agent/"
 
 // Serve runs the web file server until it is killed. argv is the argument list
 // following the subcommand; on failure it prints to stderr and exits.
@@ -74,7 +78,7 @@ func Serve(argv []string) {
 	bind := ""
 	port := 0
 	root := ""
-	pages := ""
+	agents := ""
 	rt := runtimeConfig{}
 
 	for i := 0; i < len(argv); i++ {
@@ -88,9 +92,9 @@ func Serve(argv []string) {
 		case argv[i] == "--assets" && i+1 < len(argv):
 			i++
 			root = argv[i]
-		case argv[i] == "--pages" && i+1 < len(argv):
+		case argv[i] == "--agents" && i+1 < len(argv):
 			i++
-			pages = argv[i]
+			agents = argv[i]
 		case argv[i] == "--static" && i+1 < len(argv):
 			i++
 			rt.Static = argv[i]
@@ -103,7 +107,7 @@ func Serve(argv []string) {
 		}
 	}
 
-	if bind == "" || port == 0 || root == "" || pages == "" || rt.Static == "" || rt.AI == "" || rt.Log == "" {
+	if bind == "" || port == 0 || root == "" || agents == "" || rt.Static == "" || rt.AI == "" || rt.Log == "" {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
@@ -112,13 +116,13 @@ func Serve(argv []string) {
 	if err != nil {
 		log.Fatalf("engineer web: bad --assets %q: %v", root, err)
 	}
-	// The blueprint root is allowed to be missing — a project with no blueprints
-	// yields the shell for every /pages/… request, which is what an empty
-	// launcher should show — but it is still resolved, so the traversal guard
-	// compares like with like.
-	pagesAbs, err := filepath.Abs(pages)
+	// The agents root is allowed to be missing — before the first agent exists
+	// there is no `.engineer/agents/` at all, and a request under /agent/… then
+	// falls through to the shell — but it is still resolved, so the traversal
+	// guard compares like with like.
+	agentsAbs, err := filepath.Abs(agents)
 	if err != nil {
-		log.Fatalf("engineer web: bad --pages %q: %v", pages, err)
+		log.Fatalf("engineer web: bad --agents %q: %v", agents, err)
 	}
 
 	addr := net.JoinHostPort(bind, strconv.Itoa(port))
@@ -130,7 +134,7 @@ func Serve(argv []string) {
 		log.Fatalf("engineer web: %v", err)
 	}
 	log.Printf("engineer web: http://%s:%d", displayHost(bind), port)
-	if err := http.Serve(ln, handler(abs, pagesAbs, rt)); err != nil {
+	if err := http.Serve(ln, handler(abs, agentsAbs, rt)); err != nil {
 		log.Fatalf("engineer web: %v", err)
 	}
 }
@@ -144,7 +148,7 @@ func displayHost(bind string) string {
 	return bind
 }
 
-func handler(root, pages string, rt runtimeConfig) http.Handler {
+func handler(root, agents string, rt runtimeConfig) http.Handler {
 	index := filepath.Join(root, "index.html")
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -167,15 +171,16 @@ func handler(root, pages string, rt runtimeConfig) http.Handler {
 			return
 		}
 
-		// Two roots: /pages/… is the project's blueprints, everything else the
-		// app's own assets. The path is not rewritten — `/pages/<id>` (no
-		// trailing slash) stays a directory, so it is never served and falls
-		// through to the shell, where the SPA route renders that page in a tab.
+		// Two roots: /agent/… is the agents' own copies of their blueprints,
+		// everything else the app's own assets. The path is not rewritten — so
+		// `/agent/<sessionId>/` on disk is that agent's index.html, and
+		// `/agent/<sessionId>` (no slash) stays a directory that is never served
+		// and falls through to the shell.
 		base := root
 		rel := urlPath
-		if strings.HasPrefix(urlPath, pagesPrefix) {
-			base = pages
-			rel = "/" + strings.TrimPrefix(urlPath, pagesPrefix)
+		if strings.HasPrefix(urlPath, agentsPrefix) {
+			base = agents
+			rel = "/" + strings.TrimPrefix(urlPath, agentsPrefix)
 		}
 
 		file := filepath.Join(base, filepath.FromSlash(rel))

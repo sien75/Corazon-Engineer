@@ -1,11 +1,13 @@
 # Test: core-blueprint-crud
 
-A blueprint is a **frontend resource**: a directory
-`<project>/.agents/blueprints/<slug>/` with an `index.html` entry and whatever
-files sit beside it. There is no discovery and no database — the directory
-listing is the whole truth. static lists and reads them; the agent creates,
-updates and deletes them with its own file tools. The ai service has no blueprint
-interface at all.
+A blueprint is a **directory** `<project>/.agents/blueprints/<slug>/` holding
+**exactly two files and nothing else**: `README.md` (what the agent instantiated
+from it is, and what its UI is for — this becomes that agent's opening context)
+and `index.html` (the UI itself, which must be self-contained). There is no
+discovery and no database — the directory listing is the whole truth, and static
+lists and reads it. The agent creates, updates and deletes blueprints with its own
+file tools; the ai service has no CRUD interface, its only blueprint involvement is
+**instantiation** (covered by `case-core-agent-instantiate`).
 
 ## Setup
 
@@ -44,78 +46,119 @@ for i in $(seq 1 60); do
 done
 ```
 
-## 1. a blueprint is a directory with an html entry
+## 1. a blueprint is those two files
 
 ```bash
 mkdir -p "$BPS/payment-logs"
-printf '<!doctype html>\n<html lang="zh"><head><meta charset="utf-8"><title>Payment logs</title></head>\n<body><div id="app"></div><script src="./app.js"></script></body></html>\n' \
+printf '# Payment logs\n\nYou drive a page that lists payment logs.\n' \
+  > "$BPS/payment-logs/README.md"
+printf '<!doctype html>\n<html lang="zh"><head><meta charset="utf-8"><title>Payment logs</title></head>\n<body><div id="app"></div><script>document.getElementById("app").textContent = "hello";</script></body></html>\n' \
   > "$BPS/payment-logs/index.html"
-printf 'document.getElementById("app").textContent = "hello";\n' \
-  > "$BPS/payment-logs/app.js"
 
 curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^blueprints:'
 curl -s -X POST $STATIC/static/query-detail -d 'type: blueprint
-id: .agents/blueprints/payment-logs/index.html'
+id: .agents/blueprints/payment-logs/index.html' | head -3
+curl -s -X POST $STATIC/static/query-detail -d 'type: blueprint
+id: .agents/blueprints/payment-logs/README.md'
 ```
 
-Expected: `blueprints` holds both files of the directory (recursive listing) —
-`.agents/blueprints/payment-logs/app.js` and `.../index.html`; the detail call
-returns the `index.html` verbatim under `blueprint`. The `<title>` is the display
-name; there is no manifest and no metadata beyond the document itself.
+Expected: `blueprints` holds exactly the two files of that directory —
+`.agents/blueprints/payment-logs/README.md` and `.../index.html`; the detail call
+returns each of them verbatim under `blueprint`, the README as markdown. The
+`<title>` is the display name; the README's first line is the description. There
+is no manifest and no metadata beyond those two files.
 
-## 2. a directory without index.html is not a blueprint
-
-```bash
-mkdir -p "$BPS/notes-only" && printf 'just notes\n' > "$BPS/notes-only/readme.txt"
-curl -s -X POST $STATIC/static/query -d '{}' | grep -A4 '^blueprints:'
-```
-
-Expected: `notes-only/readme.txt` is listed as a file (static lists the tree, it
-does not judge what a page is), but the frontend only keeps directories that hold
-an `index.html` — so the launcher shows `payment-logs` and not `notes-only`.
-
-## 3. a save is a write, not a replace
+## 2. the two-file rule is decided at instantiation, not by static
 
 ```bash
 printf 'body { margin: 0; }\n' > "$BPS/payment-logs/style.css"
-curl -s -X POST $STATIC/static/query -d '{}' | grep -A5 '^blueprints:'
+curl -s -X POST $STATIC/static/query -d '{}' | grep -A4 '^blueprints:'
 ```
 
-Expected: the listing now holds all three files. Writing one file beside the
-others never removes them — that is the point of a directory, and the agent
-edits files the same way it would in any project.
-
-## 4. delete is rm
+Expected: static lists all three files — it lists the tree and does not judge what
+a blueprint is. The rule is enforced where the copy is made: `POST /ai/new` with
+`blueprint: payment-logs` answers **400 `bad_request`** naming `style.css` and
+copies nothing (see `case-core-agent-instantiate` step 5). Delete the extra file
+before going on:
 
 ```bash
-rm -rf "$BPS/payment-logs"
+rm "$BPS/payment-logs/style.css"
+```
+
+## 3. an html-only directory still instantiates? no — it is refused
+
+```bash
+mkdir -p "$BPS/notes-only" && printf 'just notes\n' > "$BPS/notes-only/readme.txt"; touch "$BPS/notes-only/index.html"
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $STATIC/static/query-detail -d 'type: blueprint
+id: .agents/blueprints/notes-only/README.md'
+```
+
+Expected: `404` — there is no `README.md`, and the instantiation path refuses the
+directory for the same reason (`blueprint notes-only: README.md missing`). The
+launcher still shows a row for it (it keys off `index.html`), with an empty
+description; clicking it reports the 400 and nothing is created.
+
+## 4. a save is a write, not a replace
+
+```bash
+printf '\n# more detail\n' >> "$BPS/payment-logs/README.md"
+curl -s -X POST $STATIC/static/query-detail -d 'type: blueprint
+id: .agents/blueprints/payment-logs/README.md' | grep -c 'more detail'
+curl -s -X POST $STATIC/static/query-detail -d 'type: blueprint
+id: .agents/blueprints/payment-logs/index.html' | head -2
+```
+
+Expected: `1`, and the html still comes back — writing one file beside the other
+never removes it.
+
+## 5. an instantiated agent keeps its own copy
+
+```bash
+mkdir -p "$ROOT/.engineer/agents/s_test"
+cp "$BPS/payment-logs/README.md" "$BPS/payment-logs/index.html" "$ROOT/.engineer/agents/s_test/"
+printf '\n# edited after instantiation\n' >> "$BPS/payment-logs/README.md"
+grep -c 'edited after instantiation' "$ROOT/.engineer/agents/s_test/README.md" || echo "copy unchanged"
+```
+
+Expected: `copy unchanged` — the copy is the agent's, and editing the prototype
+afterwards never reaches it. (`case-core-agent-instantiate` covers the copy being
+made by the service; here it only has to stay put.)
+
+## 6. delete is rm
+
+```bash
+rm -rf "$BPS/payment-logs" "$ROOT/.engineer/agents/s_test"
 curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^blueprints:'
 ```
 
-Expected: `payment-logs` is gone, directory and assets together; `notes-only`
+Expected: `payment-logs` is gone, directory and files together; `notes-only`
 remains.
 
-## 5. there is no blueprint API and no database
+## 7. there is no blueprint CRUD API
 
 ```bash
 ls contracts/ai-blueprint* contracts/ai-skill-list* contracts/ai-skill-save* 2>/dev/null \
   || echo "(no blueprint / skill-crud contracts — the interfaces are gone)"
-ls "$ROOT/.engineer" 2>/dev/null || echo "(no .engineer data written)"
+grep -l 'blueprint' contracts/ai-new.yaml >/dev/null && echo "(instantiation is ai-new's only blueprint involvement)"
 ```
 
-Expected: no contract files (the interfaces were removed from the schema, which
-`static/validate` enforces); `$ROOT/.engineer` holds nothing — blueprints are
-files, and the ai service is not involved at all.
+Expected: no CRUD contract files; `ai-new` is the one place the ai service touches
+a blueprint, and it only reads it to copy it.
 
-## 6. static serves only what is registered
+## 8. static serves only what is registered
 
 ```bash
+mkdir -p "$BPS/../skills/x" && printf -- '---\nname: x\n---\nbody\n' > "$BPS/../skills/x/SKILL.md"
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $STATIC/static/query-detail -d 'type: blueprint
 id: .agents/blueprints/../skills/x/SKILL.md'
+curl -s -X POST $STATIC/static/query-detail -d 'type: blueprint
+id: .agents/blueprints/../skills/x/SKILL.md'
+rm -rf "$BPS/../skills"
 ```
 
-Expected: 400 `bad_request` — the path cleans out of the registered type
-directory.
+Expected: 400, and `error.message` says the id is a **skill** file, not a
+blueprint: the path is cleaned before the type is judged, so a traversal cannot
+be served under the wrong type. Reading the same file as `type: skill` is `200`.
 
 ## Teardown
 

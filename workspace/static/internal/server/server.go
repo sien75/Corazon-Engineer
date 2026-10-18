@@ -26,7 +26,6 @@ func New(root string) *Server {
 	s := &Server{root: root, mux: http.NewServeMux(), broker: NewBroker()}
 	s.mux.HandleFunc("POST /static/query", s.handleSchemaQuery)
 	s.mux.HandleFunc("POST /static/query-detail", s.handleSchemaQueryDetail)
-	s.mux.HandleFunc("POST /static/validate", s.handleValidate)
 	s.mux.HandleFunc("POST /static/stream", s.handleEvent)
 	return s
 }
@@ -148,9 +147,8 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 		"development": schema.ListEntries(s.root, "development"),
 		"docs":        schema.ListEntries(s.root, "docs"),
 		"notes":       schema.ListEntries(s.root, "notes"),
-		"skills":           schema.ListEntries(s.root, schema.TypeDirs["skill"]),
-		"suggested-skills": schema.ListEntries(s.root, schema.TypeDirs["suggested-skill"]),
-		"blueprints":       schema.ListEntries(s.root, schema.TypeDirs["blueprint"]),
+		"skills":      schema.ListEntries(s.root, schema.TypeDirs["skill"]),
+		"blueprints":  schema.ListEntries(s.root, schema.TypeDirs["blueprint"]),
 	})
 }
 
@@ -170,6 +168,19 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 	}
 	if req.ID == "" || !strings.HasPrefix(req.ID, schema.TypeDirs[req.Type]+"/") {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid id: "+req.ID)
+		return
+	}
+	// The id must be the type it is asked for. Without this check a path that
+	// traverses out of one type directory and into another (`.agents/blueprints/x/
+	// ../skills/y/SKILL.md`) would be read and returned under the wrong type — the
+	// file is inside the project either way, but the caller asked for a blueprint.
+	// Compare on the *cleaned* path: TypeOf matches prefixes of the string it is
+	// given, so `.agents/blueprints/../skills/x/SKILL.md` would still read as a
+	// blueprint before cleaning.
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(req.ID)))
+	if own := schema.TypeOf(clean); own != req.Type {
+		writeErr(w, http.StatusBadRequest, "bad_request",
+			fmt.Sprintf("invalid id %q: it is a %s file, not a %s", req.ID, own, req.Type))
 		return
 	}
 	path, err := s.safePath(req.ID)
@@ -195,18 +206,6 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 		resp[req.Type] = string(data)
 	}
 	writeYAMLResp(w, http.StatusOK, resp)
-}
-
-// ---------- static-validate ----------
-
-// handleValidate validates the whole schema tree (atoms / edges / contracts)
-// and returns every field-level error. Read-only; no side effects.
-func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
-	errs := schema.ValidateTree(s.root)
-	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
-		"ok":     len(errs) == 0,
-		"errors": errs,
-	})
 }
 
 // ---------- file watcher (feeds static-stream) ----------

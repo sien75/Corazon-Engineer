@@ -2,7 +2,7 @@
 
 # ai
 
-Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), validates the schema via static, writes/reads records via log, connects external systems via bash; it also owns automatic skill discovery — a skill is one piece of text, kept as a file at .agents/skills/<slug>/SKILL.md with candidates at .engineer/suggested-skills/<slug>.md, discovered from past conversation runs read back through log, and running one opens a session with that text; blueprints are frontend resources under .agents/blueprints/, written by the agent as plain files and served/listed by static — ai has no blueprint interface of its own
+Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), writes/reads records via log, connects external systems via bash; it owns two custom tools — ask_user (ask and end the turn) and layout, which reads and replaces the pane layout of the tab the session is shown in (a tree of agent panes stored per tabId via log, so the model can split the screen instead of only talking about it); it is also where an agent is born — ai-new takes a blueprint slug, copies the prototype's two files (.agents/blueprints/<slug>/{README.md,index.html}) into .engineer/agents/<sessionId>/, and appends that README last in the session's system prompt, so an agent carries its own copy of its UI and knows what it is from the first turn; skill discovery (the suggested-skills scan) is gone — skills are plain files that agents read, nothing more
 
 - runtime: bun 1.3
 
@@ -10,22 +10,23 @@ Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any 
 
 - `POST /ai/new` (network / http)
 
-Create a conversation; where it is shown is the tab's business
+Instantiate an agent from a blueprint; where it is shown is the tab's business
 
 ### Request body
 
 ```yaml
-{}
+blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required in practice: every agent is made from one. Its README.md and index.html are copied to .engineer/agents/<sessionId>/ and the copy's README is appended to this session's system prompt
 ```
 
 ### Response (status 200)
 
 ```yaml
-sessionId: string  # the new conversation. A conversation belongs to no tab: a tab references conversations, and several tabs may reference the same one
+sessionId: string  # the new agent. It belongs to no tab: a tab references agents, and several tabs may reference the same one. Its UI is served at /agent/<sessionId>/ from the copy
 ```
 
 ### Errors
 
+- 400 `bad_request` — blueprint missing, unknown, or a prototype that breaks the two-file rule (only README.md and index.html are allowed)
 - 500 `internal` — server error
 
 ### Example
@@ -33,6 +34,7 @@ sessionId: string  # the new conversation. A conversation belongs to no tab: a t
 ```bash
 curl -s -X POST <address>/ai/new \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+blueprint: schema-graph
 YAML
 ```
 
@@ -156,7 +158,7 @@ YAML
 
 - `POST /ai/delete` (network / http)
 
-Delete a session and its stream
+Delete an agent — its live session, and the copy of its blueprint
 
 ### Request body
 

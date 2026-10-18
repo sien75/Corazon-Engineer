@@ -19,6 +19,7 @@ import {
   projectText,
   type StoredRecord,
 } from "./recorder.ts";
+import { instantiateBlueprint } from "./blueprint.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import {
   describeLayout,
@@ -28,8 +29,6 @@ import {
   type PaneNode,
 } from "./layout.ts";
 import { dbg } from "./debug.ts";
-import { SkillStore } from "./skill/store.ts";
-import { SCAN_THRESHOLD, Suggester } from "./skill/suggest.ts";
 
 // A user turn as received on /ai/ask: ordered text/image blocks. Images carry
 // base64 + mime and are persisted to the blob store; text is the prompt text
@@ -110,7 +109,7 @@ const askUserTool = defineTool({
 function makeLayoutTool(
   logBase: string,
   sess: Sess,
-  newSession: () => Promise<Sess>,
+  newSession: (blueprint?: string) => Promise<Sess>,
   hasSession: (id: string) => Promise<boolean>,
 ) {
   const tabId = () => sess.speakingFor;
@@ -127,7 +126,7 @@ function makeLayoutTool(
       "              update, so writing without reading drops panes you never saw).",
       "",
       "A layout is a tree built from two node shapes:",
-      '  { pane: { paneId, contentType: "chat" | "page", contentId, flex? } }',
+      "  { pane: { paneId, contentId, flex? } }   — or blueprint: <slug> for a new agent",
       '  { split: { flexDirection: "row" | "column", flex?, children: [ … ] } }',
       'flexDirection is the CSS one: "row" puts the children side by side (left/',
       'right), "column" stacks them (top/bottom). At most 6 panes.',
@@ -138,19 +137,23 @@ function makeLayoutTool(
       "              same pane however you rearrange the tree, and it keeps what is on",
       "              screen (its half-typed draft, its scroll). Leave the id out and",
       "              the pane is a new one.",
-      "  contentId   what it shows: a sessionId — a handle this tool issued, or empty",
-      "              for a new conversation — or a blueprint's slug. The same contentId",
-      "              in two panes is one conversation shown twice; the views stay in",
-      "              step.",
+      "  contentId   which agent the pane shows: a sessionId — a handle this tool",
+      "              issued, never invented. Omit it and give `blueprint: <slug>`",
+      "              instead to instantiate a new agent into this pane. The same",
+      "              contentId in two panes is one agent shown twice; the views stay",
+      "              in step.",
       "  flex        CSS's `flex` shorthand for its share of its parent. Reach for the",
       '              ratio form: flex: "2 1 0" is twice a sibling that says nothing.',
       "              A leaf with no flex shares evenly. A fixed basis",
       '              (flex: "0 0 320px") is legal where the content really is a fixed',
       "              size, but ratios are what a layout should use.",
       "",
-      "Use it when showing beats telling: two things to compare, a page beside the",
-      "conversation about it, a short status band under a row of detail. The result",
-      "echoes the tree as stored.",
+      "An agent's UI is its blueprint's index.html, served from the agent's own",
+      "copy — so a pane always shows a page, and there are no other kinds of pane.",
+      "",
+      "Use it when showing beats telling: two things to compare, one agent beside",
+      "another, a short status band under a row of detail. The result echoes the",
+      "tree as stored.",
     ].join("\n"),
     promptSnippet: "layout: read (op=read) or replace (op=write) the tab's pane layout",
     parameters: Type.Object({
@@ -303,23 +306,12 @@ export class Registry {
   private model?: Model;
   private loader?: DefaultResourceLoader;
   private settings = SettingsManager.inMemory();
-  private skillStore?: SkillStore;
-  private suggester?: Suggester;
 
   constructor(private opts: RegistryOptions) {}
 
   // init resolves the model. Any pi-supported provider works; without any
   // authenticated provider it falls back to the dev echo stub.
   async init(): Promise<void> {
-    // The skill system is independent of the model: the run queue works
-    // without one; only the suggestion scan needs a model (and falls back to a
-    // deterministic stub when there is none).
-    this.skillStore = new SkillStore(this.opts.root);
-    this.suggester = new Suggester({
-      store: this.skillStore,
-      oneShot: (prompt) => this.oneShot(prompt),
-      inputBudgetTokens: () => this.scanBudget(),
-    });
     if (this.opts.forceStub) return; // dev stub forced (offline / tests)
     this.modelRuntime = await ModelRuntime.create();
     const requested = this.opts.model ?? DEFAULT_MODEL;
@@ -341,15 +333,26 @@ export class Registry {
     }
     this.model = withVisionCapability(this.model);
     if (!this.model) return; // stub mode
-    this.loader = new DefaultResourceLoader({
+    this.loader = this.makeLoader();
+    await this.loader.reload();
+  }
+
+  // makeLoader builds the resource loader whose system prompt is the tool's
+  // spec. `tail` is appended after everything else — an agent's blueprint README
+  // goes there, so it reads as the last word on what this particular agent's UI
+  // is.
+  private makeLoader(tail?: string): DefaultResourceLoader {
+    return new DefaultResourceLoader({
       cwd: this.opts.root,
       agentDir: getAgentDir(),
       // Append AGENTS.md instead of overriding the system prompt: pi only emits
       // its "Available tools" list (which is where custom tools like ask_user
       // surface) when the system prompt is not fully replaced.
-      appendSystemPromptOverride: (base) => [...base, this.opts.systemPrompt],
+      appendSystemPromptOverride: (base) =>
+        tail
+          ? [...base, this.opts.systemPrompt, tail]
+          : [...base, this.opts.systemPrompt],
     });
-    await this.loader.reload();
   }
 
   get stub(): boolean {
@@ -364,49 +367,21 @@ export class Registry {
     return this.model ? `${this.model.provider}/${this.model.id}` : "stub";
   }
 
-  private scanBudget(): number {
-    const cw = Number((this.model as any)?.contextWindow ?? 0);
-    if (!cw) return 8000;
-    return Math.max(2000, cw - 24000);
-  }
-
-  // oneShot is a single non-streaming model call outside any user session: no
-  // tools, no history, nothing recorded. Used by the suggestion scan.
-  private async oneShot(prompt: string): Promise<string | undefined> {
-    if (!this.model || !this.modelRuntime) return undefined;
-    const sessionManager = SessionManager.inMemory(this.opts.root);
-    const settings = SettingsManager.inMemory({
-      compaction: { enabled: false, reserveTokens: 0, keepRecentTokens: 0 },
-    });
-    const { session } = await createAgentSession({
-      cwd: this.opts.root,
-      model: this.model,
-      modelRuntime: this.modelRuntime,
-      sessionManager,
-      settingsManager: settings,
-      noTools: "all",
-    });
-    let out = "";
-    session.subscribe((ev) => {
-      if (
-        ev.type === "message_update" &&
-        ev.assistantMessageEvent?.type === "text_delta"
-      ) {
-        out += ev.assistantMessageEvent.delta;
-      }
-    });
-    try {
-      await session.prompt(prompt);
-    } finally {
-      session.dispose();
-    }
-    return out;
-  }
-
-  // new opens a conversation. It belongs to no tab: where it is shown is the
-  // frontend's business, recorded on the tab side (log-tab-mutation).
-  async new(): Promise<Sess> {
-    return this.build(`s_${randomBytes(8).toString("hex")}`);
+  // new opens a conversation (an *agent*). It belongs to no tab: where it is
+  // shown is the frontend's business, recorded on the tab side (log-tab-mutation).
+  //
+  // An agent is always instantiated from a blueprint: the prototype's two files
+  // are copied into `.engineer/agents/<sessionId>/`, and the copy's README is
+  // appended to this session's system prompt — last, after the spec and the
+  // project's own rules — so the model knows what its UI is without anything
+  // having to be sent first. The copy is what the web server serves, so editing
+  // the prototype afterwards does not touch an agent that already exists.
+  async new(blueprint?: string): Promise<Sess> {
+    const id = `s_${randomBytes(8).toString("hex")}`;
+    const readme = blueprint
+      ? instantiateBlueprint(this.opts.root, blueprint, id)
+      : undefined;
+    return this.build(id, [], readme);
   }
 
   // sessionExists answers "would /ai/resume find this?" — a live session, or one
@@ -431,6 +406,7 @@ export class Registry {
   private async build(
     id: string,
     history: StoredRecord[] = [],
+    blueprintReadme?: string,
   ): Promise<Sess> {
     const sess: Sess = {
       id,
@@ -446,6 +422,13 @@ export class Registry {
       active: false,
     };
     if (this.model) {
+      // An agent instantiated from a blueprint carries that README as the tail
+      // of its system prompt, so it knows its own UI from the first turn.
+      let loader = this.loader;
+      if (blueprintReadme) {
+        loader = this.makeLoader(blueprintReadme);
+        await loader.reload();
+      }
       const sessionManager = SessionManager.inMemory(this.opts.root);
       // Rebuild context compaction-aware: the latest compaction summary plus the
       // records after it. Summarized history is not re-sent to the provider.
@@ -463,7 +446,7 @@ export class Registry {
         cwd: this.opts.root,
         model: this.model,
         modelRuntime: this.modelRuntime,
-        resourceLoader: this.loader,
+        resourceLoader: loader,
         sessionManager,
         settingsManager: this.settings,
         // Capability surface: read/grep/find/ls + bash (execution, including
@@ -486,7 +469,7 @@ export class Registry {
           makeLayoutTool(
             this.opts.logBase,
             sess,
-            () => this.new(),
+            (blueprint?: string) => this.new(blueprint),
             (id) => this.sessionExists(id),
           ),
         ],
@@ -737,27 +720,6 @@ export class Registry {
     const full = { seq: sess.events.length + 1, ...ev } as EngineerEvent;
     sess.events.push(full);
     for (const l of sess.listeners) l(full);
-    // A settled run becomes a suggestion-scan candidate. Hooked here (not in the
-    // pi subscriber) because the dev stub settles through this same path.
-    if (ev.type === "agent_settled") this.onRunSettled(sess);
-  }
-
-  // onRunSettled queues the run's text for the suggestion scan and fires a scan
-  // once enough runs have piled up. It must never block or break a conversation:
-  // queueing is one local file write, and the scan itself runs as an
-  // independent async task that never touches a user session.
-  private onRunSettled(sess: Sess): void {
-    const text = sess.runText.trim();
-    sess.runText = "";
-    if (!this.skillStore || !text) return;
-    try {
-      this.skillStore.enqueueRun(sess.id, text);
-      if (this.skillStore.pendingCount() >= SCAN_THRESHOLD) {
-        void this.suggester?.maybeScan();
-      }
-    } catch (err) {
-      console.error(`engineer ai: skill queue failed: ${String(err)}`);
-    }
   }
 
   // Non-pi error event, reusing pi's assistant-error shape { type, reason, error }.

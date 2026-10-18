@@ -2,7 +2,7 @@
 
 # static
 
-Corazon Engineer static service — watches the schema file tree, serves the read-only views (query / query-detail / stream) to the web frontend, and validates atoms / edges / contracts; the views cover every file type — atoms, edges, contracts, how-to, development, docs, notes, and the dot-directory resources skills (.agents/skills), suggested skills (.engineer/suggested-skills) and blueprints (.agents/blueprints); writes go through the ai shell
+Corazon Engineer static service — watches the schema file tree and serves the read-only views (query / query-detail / stream) to the web frontend; it does not validate the tree — a malformed atom or a dangling edge is not its business; the views cover every file type — atoms, edges, contracts, how-to, development, docs, notes, and the dot-directory resources skills (.agents/skills) and blueprints (.agents/blueprints); writes go through the ai shell
 
 - runtime: go 1.22
 
@@ -65,7 +65,6 @@ notes:
     - string
 skills:
     - string
-suggested-skills:
     - string
 ```
 
@@ -94,7 +93,7 @@ Fetch content of a single leaf file
 
 ```yaml
 id: string
-type: how-to | development | contract | docs | notes | skill | suggested-skill | blueprint
+type: how-to | development | contract | docs | notes | skill | blueprint
 ```
 
 ### Response (status 200)
@@ -113,13 +112,12 @@ how-to?: string
 id: string
 notes?: string
 skill?: string
-suggested-skill?: string
-type: how-to | development | contract | docs | notes | skill | suggested-skill | blueprint
+type: how-to | development | contract | docs | notes | skill | blueprint
 ```
 
 ### Errors
 
-- 400 `bad_request` — invalid type or id
+- 400 `bad_request` — invalid type or id; also when the (cleaned) id is not a file of the requested type, e.g. `type: blueprint` with a path that traverses into `.agents/skills`
 - 404 `not_found` — file not found
 - 500 `internal` — server error
 
@@ -129,51 +127,8 @@ type: how-to | development | contract | docs | notes | skill | suggested-skill |
 curl -s -X POST <address>/static/query-detail \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
   id: string
-  type: how-to | development | contract | docs | notes | skill | suggested-skill | blueprint
+  type: how-to | development | contract | docs | notes | skill | blueprint
 YAML
-```
-
-## static-validate
-
-- `POST /static/validate` (network / http)
-
-Validate the whole schema tree — every file under `atoms/`, `edges/` and `contracts/` — and report every field-level error. Read-only: nothing is written.
-
-Checks:
-
-- yaml parse errors
-- contract: `id` / `description` / `request` / `response` required, and `id` unique across files
-- atom: `name` / `description` required; `runtime_type` / `role` are known enums; each interface's `channel` / `protocol` is valid; each referenced `contract` file exists
-- edge: required fields and a unique `id`; `channel` / `protocol` valid; `from` / `to` resolve to known atoms and `from_interface` / `to_interface` to that atom's consumes / provides
-
-`ok` is true when `errors` is empty. Each error carries `file`, `type`, an optional `field` and a `message`. Run it after any schema change, fix the reported fields, and rerun.
-
-### Request body
-
-```yaml
-{}
-```
-
-### Response (status 200)
-
-```yaml
-errors:
-    - field?: string
-      file: string
-      message: string
-      type: atom | edge | contract
-ok: boolean
-```
-
-### Errors
-
-- 500 `internal` — server internal error
-
-### Example
-
-```bash
-curl -s -X POST <address>/static/validate \
-  -H 'Content-Type: application/yaml' --data-binary ''
 ```
 
 ## static-stream

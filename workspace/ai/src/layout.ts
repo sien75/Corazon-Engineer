@@ -7,14 +7,15 @@ import YAML from "yaml";
 // defined here and shown to the model in the tool's description. Two node
 // shapes, recursive:
 //
-//   leaf:  { pane: { paneId, contentType: "chat" | "page", contentId, flex? } }
+//   leaf:  { pane: { paneId, contentId, flex? } }        (or blueprint: … for a new agent)
 //   split: { split: { flexDirection: "row" | "column", flex?, children: [ … ] } }
 //
 // A leaf keeps three things apart, and keeping them apart is the point:
 //
 //   paneId       which pane this is — a handle this tool issues, never invented
-//   contentType  what kind of content, with contentId: a session id, or a
-//                blueprint slug
+//   contentId    which agent the pane shows (a session id), or `blueprint: <slug>`
+//                to instantiate a new one; every pane shows an agent, and an
+//                agent's UI is its blueprint's index.html
 //   flex         the CSS shorthand for the share this node takes from its parent
 //
 // Because a pane's identity is a field of its own, the same content may appear in
@@ -29,7 +30,6 @@ import YAML from "yaml";
 export interface PaneLeaf {
   pane: {
     paneId: string;
-    contentType: "chat" | "page";
     contentId: string;
     flex?: string;
   };
@@ -46,9 +46,10 @@ export type PaneNode = PaneLeaf | PaneSplit;
 export const MAX_PANES = 6;
 
 export interface NormalizeOptions {
-  // Called for a chat pane that names no session: the caller creates one and its
-  // id is written back into the tree, so the frontend gets a pane it can open.
-  newSession?: () => Promise<string>;
+  // Called for a leaf that names no agent but asks for a blueprint: the caller
+  // instantiates one and its session id is written back into the tree, so the
+  // frontend gets a pane it can open.
+  newSession?: (blueprint: string) => Promise<string>;
   // Tells a handle the tool issued from one the model made up.
   hasSession?: (id: string) => Promise<boolean>;
   // The chat ids, and the pane ids, in the tab's current tree. Used to say what
@@ -138,12 +139,9 @@ export async function normalizeLayout(
     }
     if (rawLeaf.content !== undefined || rawLeaf.id !== undefined) {
       throw new LayoutError(
-        "a pane takes contentType and contentId, not content and id: " +
-          '{ pane: { paneId, contentType: "chat" | "page", contentId, flex? } }',
+        "a pane takes contentId, not content or id: " +
+          "{ pane: { paneId, contentId, flex? } } — or blueprint: <slug> for a new agent",
       );
-    }
-    if (rawLeaf.contentType !== "chat" && rawLeaf.contentType !== "page") {
-      throw new LayoutError('a pane needs contentType: "chat" or "page"');
     }
     let paneId = typeof rawLeaf.paneId === "string" ? rawLeaf.paneId.trim() : "";
     if (paneId && usedPaneIds.has(paneId)) {
@@ -164,32 +162,42 @@ export async function normalizeLayout(
     if (!paneId) paneId = newPaneId();
     usedPaneIds.add(paneId);
 
-    let contentId = typeof rawLeaf.contentId === "string" ? rawLeaf.contentId.trim() : "";
-    if (rawLeaf.contentType === "chat") {
-      // A chat pane's contentId is a handle this tool issued, not something the
-      // model knows: it either leaves it out (a new conversation) or passes back
-      // an id a previous read or write returned. An id that resolves to nothing is
-      // a mistake worth reporting — silently opening a *different* conversation in
-      // its place would lose the one the model was trying to keep.
-      if (contentId && opts.hasSession && !(await opts.hasSession(contentId))) {
-        const valid = opts.currentIds?.length
-          ? `This tab's panes: ${opts.currentIds.join(", ")}.`
-          : "This tab has no conversation panes yet.";
+    // Every pane shows one agent: a handle this tool issued (contentId), or a
+    // blueprint this call instantiates into a new agent. There is no other kind
+    // of pane — an agent always has UI, because it is always made from a
+    // blueprint.
+    const contentId = typeof rawLeaf.contentId === "string" ? rawLeaf.contentId.trim() : "";
+    const blueprint = typeof rawLeaf.blueprint === "string" ? rawLeaf.blueprint.trim() : "";
+    if (contentId && blueprint) {
+      throw new LayoutError("a pane takes contentId or blueprint, not both");
+    }
+    let resolved = contentId;
+    if (!resolved) {
+      if (!blueprint) {
         throw new LayoutError(
-          `no conversation ${contentId} — a chat pane's contentId must be one this tool returned. ` +
-            `${valid} Leave the id out to open a new one.`,
+          "a pane needs contentId (an agent already in this tab) or blueprint: <slug> (a new agent)",
         );
       }
-      if (!contentId) {
-        if (!opts.newSession) throw new LayoutError("a chat pane needs a contentId");
-        contentId = await opts.newSession();
+      if (!opts.newSession) {
+        throw new LayoutError("instantiating a blueprint is not available here");
       }
+      resolved = await opts.newSession(blueprint);
+    } else if (opts.hasSession && !(await opts.hasSession(resolved))) {
+      // A contentId is a handle this tool issued, not something the model knows:
+      // an id that resolves to nothing is a mistake worth reporting — silently
+      // showing a different agent would lose the one it meant to keep.
+      const valid = opts.currentIds?.length
+        ? `This tab's panes: ${opts.currentIds.join(", ")}.`
+        : "This tab has no agent panes yet.";
+      throw new LayoutError(
+        `no agent ${resolved} — a contentId must be one this tool returned. ${valid} ` +
+          `Use blueprint: <slug> to instantiate a new agent.`,
+      );
     }
-    if (!contentId) throw new LayoutError("a page pane needs the blueprint's id as contentId");
 
     panes++;
     if (panes > MAX_PANES) throw new LayoutError(`at most ${MAX_PANES} panes`);
-    const pane: PaneLeaf["pane"] = { paneId, contentType: rawLeaf.contentType, contentId };
+    const pane: PaneLeaf["pane"] = { paneId, contentId: resolved };
     if (rawLeaf.flex !== undefined) pane.flex = checkFlex(rawLeaf.flex, `pane ${paneId}`);
     return { pane };
   };
@@ -211,10 +219,9 @@ export function describeLayout(node: PaneNode, depth = 0): string {
   if ("pane" in node) {
     const p = node.pane as Record<string, any>;
     const paneId = p.paneId || "(none — a new pane)";
-    const contentType = p.contentType || p.content || "chat";
-    const contentId = p.contentId ?? p.id ?? "";
+    const contentId = p.contentId ?? p.id ?? p.content ?? "";
     const flex = p.flex ? ` flex="${p.flex}"` : "";
-    return `${pad}- pane ${paneId} ${contentType} ${contentId}${flex}`;
+    return `${pad}- pane ${paneId} agent ${contentId}${flex}`;
   }
   const s = node.split as Record<string, any>;
   const dir = s.flexDirection || (s.direction === "column" ? "column" : "row");

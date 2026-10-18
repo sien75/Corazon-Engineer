@@ -75,7 +75,7 @@ mkdir -p "$OUT"/{bin,web}
 # 3. web assets — shipped loose next to the binary, which serves them from `--assets`
 #    (the layout the launcher passes at runtime), so the frontend stays editable
 #    without a rebuild. Every local asset index.html links must be here: theme.css
-#    is the shell's palette and a blueprint's too — shipping without it strips the
+#    is the shell's palette and an agent page's too — shipping without it strips the
 #    whole UI of its colors.
 cp workspace/web/{index.html,app.js,style.css,theme.css} "$OUT/web/"
 cp -R workspace/web/vendor "$OUT/web/"
@@ -121,7 +121,7 @@ On macOS both toolchains ad-hoc sign their output, so no separate `codesign` ste
 
 `bin/engineer` is built from `how-to/deploy/prod/launch.go` (a single-file Go program compiled at pack time) — a native binary, shipped as the package's entry point:
 
-- picks free ports (defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free one on conflict), hands each service everything it needs (`--bind <host>` + `--port <n>` for all four; `--root` for log / static / ai; `--log` + `--static` + `--agents` for ai; `--assets` + `--pages` (the project's `.agents/blueprints`, served under `/pages/…`) + `--static` / `--ai` / `--log` for web), starts log → static → ai → web as children, prints the chosen addresses plus the bind host, then **holds the foreground**. Ctrl-C tears the whole stack down. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file and no stop script**.
+- picks free ports (defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free one on conflict), hands each service everything it needs (`--bind <host>` + `--port <n>` for all four; `--root` for log / static / ai; `--log` + `--static` + `--agents` for ai; `--assets` + `--agents` (the project's `.engineer/agents`, the agents' own blueprint copies, served under `/agent/…`) + `--static` / `--ai` / `--log` for web), starts log → static → ai → web as children, prints the chosen addresses plus the bind host, then **holds the foreground**. Ctrl-C tears the whole stack down. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file and no stop script**.
 - **Local by default.** The launcher binds the four services to `127.0.0.1`, so nothing about the stack is visible on the network — the ports are not reachable from another machine at all. (A service started by hand has no default at all: `--bind` is required.) `ENGINEER_BIND` overrides the bind host: `ENGINEER_BIND=0.0.0.0 engineer` opens the stack to the whole network, `ENGINEER_BIND=<this machine's IP>` to a single interface. Under a wildcard bind the launcher advertises this machine's outward IPv4 instead of `localhost` — both in what it prints and in the web UI's `/config.js` — since `localhost` would point a browser on another machine at itself.
 - also serves the `engineer` subcommands: `start` (default) / `status` / `version` / `uninstall [--purge]`.
 - native on purpose: the terminal's foreground process is named `engineer` (a shell script would show as `bash`/`zsh`), so terminals that title tabs from the process name — VS Code, notably — show `engineer` with no configuration.

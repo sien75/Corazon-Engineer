@@ -29,13 +29,6 @@ atoms:
           extend:
             path: /static/stream
             method: POST
-        - id: static-validate
-          channel: network
-          protocol: http
-          contract: ./contracts/static-validate.yaml
-          extend:
-            path: /static/validate
-            method: POST
         - id: ai-new
           channel: network
           protocol: http

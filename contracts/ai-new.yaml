@@ -1,14 +1,19 @@
 id: ai-new
-description: Create a conversation; where it is shown is the tab's business
+description: Instantiate an agent from a blueprint; where it is shown is the tab's business
 
-request: {}
+request:
+  body:
+    blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required in practice: every agent is made from one. Its README.md and index.html are copied to .engineer/agents/<sessionId>/ and the copy's README is appended to this session's system prompt
 
 response:
   status: 200
   body:
-    sessionId: string  # the new conversation. A conversation belongs to no tab: a tab references conversations, and several tabs may reference the same one
+    sessionId: string  # the new agent. It belongs to no tab: a tab references agents, and several tabs may reference the same one. Its UI is served at /agent/<sessionId>/ from the copy
 
 errors:
+  - status: 400
+    code: bad_request
+    description: blueprint missing, unknown, or a prototype that breaks the two-file rule (only README.md and index.html are allowed)
   - status: 500
     code: internal
     description: server error

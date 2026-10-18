@@ -1,3 +1,0 @@
-id: core-static-validate
-description: static-validate full-tree conformance + failure reporting
-atoms: [static]
