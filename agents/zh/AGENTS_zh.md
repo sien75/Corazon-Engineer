@@ -1,6 +1,6 @@
 # AGENTS.md — Corazon Engineer AI 能力(中文版)
 
-本文件描述 AI agent 如何**使用** Corazon Engineer,以及如何**开发**一个 Corazon-like 项目。
+本文件描述 AI Agent 如何**使用** Corazon Engineer,以及如何**开发**一个 Corazon-like 项目。
 
 > Corazon Engineer 本身就是一个 Corazon-like 项目:它遵循同一套规范(dogfooding)。
 
@@ -18,59 +18,28 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 - `bash` —— 运行 shell 命令。网络访问(如 `curl`)和外部 CLI 程序也都走它。
 - `write` `edit` —— 新建或修改文件。
 
-其它内部能力都从 `bash`(如 `curl`)访问。每个服务的用法 —— 端点、请求 / 响应结构、示例 —— 都写在已安装工具的 `docs/` 下(默认 `~/.engineer/apps/current/docs/`,如 `log.md`);调用前先读对应文档。你最常需要调用的内部接口是写记录(log,跑完测试后),上述文档里有说明。实际地址见本 prompt 末尾的 Runtime endpoints 段。
+写 log 记录就是从 `bash` 里 `curl` 一下,实际地址见本 prompt 末尾的 Runtime endpoints 段。
 
 ## 外部系统与工具
 
-不要指望固定的工具清单。任务需要什么工具 —— 数据库就用 SQL 客户端、Go 项目就用 Go 工具链、Redis 就用 Redis 客户端 —— 自己去找合适的 CLI 工具,缺就装,然后经 `bash` 运行。带安装 / 检测步骤的推荐清单见 `agents/zh/tools.md`。
+不要指望固定的工具清单。任务需要什么工具 —— 数据库就用 SQL 客户端、Go 项目就用 Go 工具链、Redis 就用 Redis 客户端 —— 自己去找合适的 CLI 工具,缺就装,然后经 `bash` 运行。带安装 / 检测步骤的推荐清单见 `./tools.md`。
 
-监听类工具(日志/指标/链路 tail、订阅、流读取)必须把监听结果以 `telemetry` log 记录形式接入(见 `~/.engineer/apps/current/docs/log.md`),让观测结果汇入日志,形成一条连续的流。
+监听类工具(日志/指标/链路 tail、订阅、流读取)必须把监听结果以 `telemetry` log 记录形式接入,让观测结果汇入日志,形成一条连续的流。
 
 外部工具的凭证由各工具自己存储(在各自的 `~/.xxx` 位置),没有项目级凭证目录。登录 / 鉴权是用户的事 —— 让用户来做。工具未鉴权就如实说明,不要到处翻找。凭证不得进入回复或日志。
 
-## 项目资源:skill 与 blueprint
+## Blueprint
 
-有两类资源以普通文件形式存在项目中,由前端读取。改它们就跟改任何文件一样 —— 两者都没有 API。
+**Blueprint 是类,Agent 是实例。** 每个 Agent 都从某个 Blueprint 实例化而来:原型的那两个文件被复制到这个 Agent 自己的 session id 下,副本的 `README.md` 成为该 Agent system prompt 的结尾。从实例化那一刻起 Agent 就是独立的 —— 改原型不会影响已经存在的 Agent。
 
-**Skill 是给 agent 读的说明**:它不被实例化,也没有谁会替你把它打开。
-
-- skill 是目录 `.agents/skills/<slug>/SKILL.md` —— frontmatter(`name`、`description`)加正文的 skill 文本。
-- 任务与某个 skill 自述的用途相符时就去读它;它们背后不再有自动候选或扫描。
-
-**Blueprint 是类,agent 是实例。** 前端里每个 agent 都从某个 blueprint 实例化而来:原型的那两个文件被复制到这个 agent 自己的 session id 下,副本的 `README.md` 成为该 agent system prompt 的结尾。从实例化那一刻起 agent 就是独立的 —— 改原型不会影响已经存在的 agent。
-
-- blueprint 是目录 `.agents/blueprints/<slug>/`,里面**只有两个文件,不能有别的**:`README.md`(这个 agent 是什么、它的 UI 用来干什么 —— 这就是 agent 的开场上下文)和 `index.html`(UI 本身,必须**自包含**:css / js 全部内联,不要同级文件)。
-- 文档的 `<title>` 就是用户看到的名字。
-- 副本由 `/agent/<sessionId>/` 提供,与外壳同源,因此页面可以链外壳的样式表、调用各服务。
-- 跟随外壳主题:链 `/theme.css`、用它色板里的 `var(--*)` 变量,并在首帧前给 `<html>` 设好 `data-theme`,避免闪出错误配色。最小入口:
-
-```html
-<!doctype html>
-<html lang="zh">
-<head>
-  <meta charset="utf-8">
-  <title>一个可读的名字</title>
-  <script>
-    document.documentElement.setAttribute(
-      "data-theme", localStorage.getItem("engineer.theme") || "light");
-  </script>
-  <link rel="stylesheet" href="/theme.css">
-  <style>
-    body { margin: 0; padding: 24px; font-size: 13px; }
-  </style>
-</head>
-<body>
-  ...
-</body>
-</html>
-```
+- Blueprint 是目录 `.agents/blueprints/<slug>/`,里面**只有两个文件,不能有别的**:`README.md`(这个 Agent 是什么、它的 UI 用来干什么 —— 这就是 Agent 的开场上下文)和 `index.html`(UI 本身,必须**自包含**:css / js 全部内联,不要同级文件)。
 
 ## 工作规则
 
 - 先查证再回答:对系统结构或状态不确定时,先查询拿真实数据,不要凭记忆编造。
 - 克制使用工具:任务确实需要时才调用,避免重复或试探性的调用,也不要把一步工作拆成一串相似的调用;不需要工具的步骤直接完成。必要的一定要用,但不能滥用。
 - 改 schema 直接编辑文件;其它有副作用的操作从 `bash` 发出 —— `curl` 调内部服务,或经 `bash` 跑外部 CLI。
-- 每次实际跑完测试后调用 log 的写记录接口,`kind: test`;监听 / 观测结果用 `kind: telemetry`。(`conversation` 记录由 ai 服务自己写,不要记录。)用法见 `~/.engineer/apps/current/docs/log.md`。
+- 每次实际跑完测试后调用 log 的写记录接口,`kind: test`;监听 / 观测结果用 `kind: telemetry`。(`conversation` 记录由 ai 服务自己写,不要记录。)
 - 回答使用与用户相同的语言(用户用中文就用中文)。
 - 能力尚未接通时如实说明,不要假装执行了。
 
@@ -102,9 +71,9 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 - `workspace/` — atom 的源码(本地检出)。不必放在本仓库内:atom 的 `repo` / `path` 分别关联上游与检出位置。
 - `how-to/` — 系统怎么构建与操作:构建 / 部署配方,以及资源的连接 / 观测;一个普通文件树,内部组织方式因项目而异;`how-to/README.md` 是它的概述。
 - `docs/` — 文档,即通常意义上的文档。
-- `agents/` — 项目面向 AI 的说明:AI 应如何在本项目上工作;以及 schema / contract / enum 参考。
+- `agents/` — 项目自己的 Agent 说明:AI Agent 应如何在本项目上工作;以及 schema / contract / enum 参考。
 - `development/` — 开发过程的产出:设计 / 迭代记录与 E2E 测试;一个普通文件树,内部组织方式因项目而异;`development/README.md` 是它的概述。
-- `.agents/` — agent 以文件形式保留、供其它 agent 读取的项目资源:`skills/<slug>/SKILL.md`(保留的 skill)与 `blueprints/<slug>/index.html`(页面)。
+- `.agents/` — Agent 以文件形式保留、供其它 Agent 读取的项目资源:`skills/<slug>/SKILL.md`(保留的 skill)与 `blueprints/<slug>/index.html`(页面)。
 - `notes/` — 自由笔记。
 - `.engineer/` — 项目的本地私有数据(数据库、运行数据、日志),不进 git,绝不提交。
 
@@ -113,18 +82,5 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 - `./schema.md` — schema 结构(atoms / edges / contracts / development / how-to / docs / notes)。
 - `./contract.md` — contract 文件书写规范。
 - `./enum.md` — 枚举取值(channel / protocol / runtime_type / role)。
-- `./how-to.md` — 如何和用户一起写、一起维护项目的 how-to 内容:完整的初始化步骤,按顺序。
+- `./how-to.md` — 如何和用户一起写、一起维护项目的 how-to 内容:完整的初始化路径,五步按顺序。项目还没有 how-to 时整篇读;只写或改其中一部分时,读对应那一步。现实与 how-to 脱节时先修 how-to,不要默默绕过去。
 
-## 开发类型
-
-在一个 Corazon-like 项目上的工作分为三类操作。具体阶段属于项目自己的 `AGENTS.md` —— 读它并遵循;下面只是分类。
-
-1. **常规需求开发** —— 把需求变成系统的一部分,固定顺序:设计记录写入 `development/`,然后 contracts → 静态关系(`atoms/` `edges/`)→ 测试(`development/`)→ 代码(`workspace/`),再构建运行,最后人工评审。契约先于代码,并且是请求 / 响应结构的事实源。
-
-2. **系统变更** —— 改变系统或其环境本身,而不是它规定的行为:打包发布、启动与操作基础服务、变更运行中资源的数据。不要自行发挥:每类变更都有自己的 how-to,全部放在 `how-to/` 下;找到它并遵循它。
-
-3. **更改 How-to 内容** —— 改的是说明本身:告诉人和 agent 如何构建、如何操作这个项目的内容。即 `how-to/` 加上项目自己的 SOP(`AGENTS.md`)。初始化是这一类的最初形态,此后是同一件事的延续 —— 项目的 how-to 内容是有待持续维护的产物,不是一次性动作。
-
-   - **步骤。** `./how-to.md` 是完整的初始化路径 —— 五步(建立系统地图 → 关联实际代码 → 分析 contract → 构建与运行方式 → 验证与操作方式),每步都写明要弄清楚什么、要问用户什么、要写什么。初始化项目时整篇读;只写或只改其中一部分材料时,读对应的那一步。
-   - **初始化。** 项目还没有 how-to 材料时,按 `./how-to.md` 从头走完:在根目录建项目标记 `engineer.yaml`,铺好 how-to 目录 `how-to/`,和用户一起写材料(`how-to/README.md` 和项目的开发 SOP)。
-   - **持续维护。** 当现实与 how-to 脱节(新增目录、流程变化、新约定),先向用户提出具体调整建议,确认后再更新 how-to —— 该动哪一部分,同样看这几步。绝不要默默绕过过时的 how-to —— 先改它,再遵循它。

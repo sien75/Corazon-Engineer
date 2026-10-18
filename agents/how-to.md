@@ -1,6 +1,6 @@
 # Writing the How-to Content
 
-How to write and maintain a project's how-to material — `how-to/` plus the project's SOP (`AGENTS.md`) — together with the user. This file is the detailed companion to Type 3 in `./AGENTS.md`: the steps below are the **complete initialization path**, in order.
+How to write and maintain a project's how-to material — `how-to/` plus the project's SOP (`AGENTS.md`) — together with the user. The steps below are the **complete initialization path**, in order.
 
 A fresh project walks all five steps; later work usually needs only one of them, so read that step rather than the whole file. Initialization is just the first pass — when reality drifts from the how-to, the same steps are how it is brought back in step.
 

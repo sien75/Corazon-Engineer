@@ -20,7 +20,7 @@ General rules:
 
 **Phase 1 — Design.** Scope: `development/`. Turn the requirement into a design record: the AI-generated plan is written under `development/iterations/` as one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created here and updated as the design evolves. `development/plans/<iteration-number>/` holds human discussion and raw notes only.
 
-**Phase 2 — Contracts, tests, code.** Scope: `contracts/`, `atoms/` `edges/`, `development/testing/`, `workspace/`. Order matters: define the **contracts** first, then the static relations (`atoms/` `edges/`), then the tests (`development/testing/`), and only then develop the code (`workspace/`).
+**Phase 2 — Contracts, tests, code.** Scope: `contracts/`, `atoms/` `edges/`, `development/testing/`, `workspace/`, `.agents/blueprints/`. Order matters: define the **contracts** first, then the static relations (`atoms/` `edges/`), then the tests (`development/testing/`), and only then develop the code (`workspace/`).
 
 **Phase 3 — Build, run, test.** Repack and launch per `how-to/deploy/dev/BOOK.md`, then run **the cases that cover what changed** — not the whole suite. Pick them by the same reasoning that produced the change: a case belongs in the run when its assertions read what you touched (the same file, endpoint, DOM or schema). Say which range you are running, and which cases you left out and why, before you start. Pass → continue; fail → return to Phase 2 with the error.
 
@@ -40,7 +40,9 @@ Currently only build & pack is wired: read `how-to/deploy/prod/BOOK.md` and foll
 
 Change the content that tells a human or an agent how this project is developed and operated: `how-to/`, `notes/`, this project's `AGENTS.md`, and the like. Initialization is the first instance of this type, not a separate one: a project with no how-to yet simply has it still to be written, and keeping it in step with reality is the same work continued.
 
-Edit as instructed: modify the files the user points to. If both an English file and its `_zh` mirror exist, update both. The scope is the instruction content: `how-to/`, `notes/`, and this project's `AGENTS.md`.
+Edit as instructed: modify the files the user points to. If both an English file and its `_zh` mirror exist, update both. The scope is the instruction content: `how-to/`, `notes/`, this project's `AGENTS.md`, and the instruction material under `.agents/` — `.agents/BLUEPRINT_how-to.md` / `_zh` and `.agents/skills/<slug>/SKILL.md`.
+
+`.agents/` holds both kinds, and the split follows what the file is: a Blueprint's `README.md` + `index.html` **are** the page — a product artifact, so changing them is Type 1; the how-to template and the skills are text an Agent reads to know how to work, so changing them is Type 3.
 
 Initialization is this same type applied to a project that has no how-to yet: create the project marker `engineer.yaml`, lay down the how-to material (`how-to/`, with `how-to/README.md`, and the SOP) together with the user.
 
@@ -49,4 +51,5 @@ Initialization is this same type applied to a project that has no how-to yet: cr
 - `development/` — what the development process produces: `iterations/` (the AI-generated plan per requirement, one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created in Phase 1 and kept updated), `plans/` (human discussion / raw notes, one dir per iteration number), `testing/` (E2E tests).
 - `how-to/` — how to build and operate the system: `deploy/` (build / pack / launch / deploy, per environment), `operation/` (connect to / observe resources).
 - `agents/` — the shipped AI capability spec (`agents/AGENTS.md`, Chinese in `agents/zh/`) plus schema / contract / enum reference and the how-to writing guide (`agents/how-to.md`).
+- `.agents/` — project resources the Agent keeps as files: `blueprints/<slug>/` (Blueprint pages) and `skills/<slug>/SKILL.md` (kept skills). **The Blueprint template is `.agents/BLUEPRINT_how-to.md`** — write every new Blueprint from it; it is the single source for the page's `<title>`, the theme, and the minimal entry.
 - `atoms/` `edges/` `contracts/` `docs/` `notes/` `workspace/` — this project's schema and code.
