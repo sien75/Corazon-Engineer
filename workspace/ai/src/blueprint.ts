@@ -1,14 +1,16 @@
 // Blueprints are the only "class" in the system: a prototype directory
-// `.agents/blueprints/<slug>/` holding exactly two files — README.md (what the
-// agent is told about the UI it drives) and index.html (the UI itself, which
-// must be self-contained: no sibling js / css / images).
+// `.agents/blueprints/<slug>/` with two required files — README.md (what the
+// agent is told about the UI it drives) and index.html (the UI's entry) — and
+// anything else the page needs: css, js, images, subdirectories. Relative URLs
+// work because the whole directory, and only it, is what gets served.
 //
-// Instantiating one copies both files into `.engineer/agents/<sessionId>/` and
-// returns the README text, which the registry appends to that session's system
-// prompt. From that moment the agent owns its copy: editing or deleting the
-// prototype does not touch it, and what the web server serves is the copy.
+// Instantiating one copies the whole directory into
+// `.engineer/agents/<sessionId>/` and returns the README text, which the registry
+// appends to that session's system prompt. From that moment the agent owns its
+// copy: editing or deleting the prototype does not touch it, and what the web
+// server serves is the copy.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
@@ -17,8 +19,8 @@ const AGENT_DIR = path.join(".engineer", "agents");
 const README = "README.md";
 const HTML = "index.html";
 
-// BlueprintError is a bad request: the slug is wrong or the prototype breaks the
-// two-file rule. The service turns it into a 400, never a 500.
+// BlueprintError is a bad request: the slug is wrong or the prototype is missing
+// one of its two required files. The service turns it into a 400, never a 500.
 export class BlueprintError extends Error {}
 
 // slugFrom validates the request's blueprint field. A slug is a directory name,
@@ -33,13 +35,11 @@ export function slugFrom(raw: unknown): string {
   return slug;
 }
 
-// readBlueprint reads a prototype and enforces the two-file rule: README.md and
-// index.html, nothing else. A stray file is refused here because the copy is
-// served as a whole directory — an unnoticed sibling would ship too.
-function readBlueprint(
-  root: string,
-  slug: string,
-): { readme: string; html: string } {
+// readBlueprint reads a prototype's README and checks that both required files
+// are there. Everything else in the directory is the page's own business: the
+// copy is made directory-wide, so an asset the page links with a relative URL
+// travels with it.
+function readBlueprint(root: string, slug: string): { readme: string; dir: string } {
   const dir = path.join(root, BLUEPRINT_DIR, slug);
   let entries: string[];
   try {
@@ -47,25 +47,13 @@ function readBlueprint(
   } catch {
     throw new BlueprintError(`blueprint not found: ${slug}`);
   }
-  const extra = entries.filter((name) => name !== README && name !== HTML);
-  if (extra.length) {
-    throw new BlueprintError(
-      `blueprint ${slug}: only ${README} and ${HTML} are allowed, found ${extra.join(", ")}`,
-    );
-  }
-  let readme = "";
-  try {
-    readme = readFileSync(path.join(dir, README), "utf8");
-  } catch {
+  if (!entries.includes(README)) {
     throw new BlueprintError(`blueprint ${slug}: ${README} missing`);
   }
-  let html = "";
-  try {
-    html = readFileSync(path.join(dir, HTML), "utf8");
-  } catch {
+  if (!entries.includes(HTML)) {
     throw new BlueprintError(`blueprint ${slug}: ${HTML} missing`);
   }
-  return { readme, html };
+  return { readme: readFileSync(path.join(dir, README), "utf8"), dir };
 }
 
 // agentDir is where an agent's own copy lives: keyed by session, so the URL the
@@ -74,19 +62,29 @@ export function agentDir(root: string, sessionId: string): string {
   return path.join(root, AGENT_DIR, sessionId);
 }
 
+// copyTree copies a prototype directory as-is: directories, then regular files.
+// Symbolic links are skipped on purpose — the copy is served as a directory, and
+// a link pointing outside it would serve files the blueprint never contained.
+function copyTree(from: string, to: string): void {
+  mkdirSync(to, { recursive: true });
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    const src = path.join(from, entry.name);
+    const dst = path.join(to, entry.name);
+    if (entry.isDirectory()) copyTree(src, dst);
+    else if (entry.isFile()) copyFileSync(src, dst);
+  }
+}
+
 // instantiateBlueprint copies the prototype into the agent's directory and
-// returns the README text. It writes nothing else — the directory is exactly the
-// two files, which is what makes "change the prototype, not the agent" true.
+// returns the README text. The copy is a snapshot: what the agent later edits is
+// its own, and changing the prototype never reaches it.
 export function instantiateBlueprint(
   root: string,
   slug: string,
   sessionId: string,
 ): string {
-  const { readme, html } = readBlueprint(root, slug);
-  const dir = agentDir(root, sessionId);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, README), readme);
-  writeFileSync(path.join(dir, HTML), html);
+  const { readme, dir } = readBlueprint(root, slug);
+  copyTree(dir, agentDir(root, sessionId));
   return readme;
 }
 

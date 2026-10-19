@@ -48,7 +48,7 @@ sleep 1
 
 (cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8900 --stub \
   --log http://localhost:8901 --static http://localhost:8902 \
-  --agents "$ROOTDIR/agents/AGENTS.md" \
+  --agents "$ROOTDIR/agents" \
   >/tmp/chat-route-ai.log 2>&1 &)
 
 # one saved skill, so the new tab page has something to run — a plain file

@@ -1,0 +1,19 @@
+id: log-tab-off
+description: Close a tab — take it out of the open list, keeping its record so it can be reopened
+
+request:
+  body:
+    tabId: string
+
+response:
+  status: 200
+  body:
+    tabId: string  # echoed
+
+errors:
+  - status: 400
+    code: bad_request
+    description: tabId missing
+  - status: 500
+    code: internal
+    description: server internal error

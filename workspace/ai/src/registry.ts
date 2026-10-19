@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import YAML from "yaml";
 import { Type } from "typebox";
 import {
   createAgentSession,
@@ -19,16 +22,31 @@ import {
   projectText,
   type StoredRecord,
 } from "./recorder.ts";
-import { instantiateBlueprint } from "./blueprint.ts";
+import { instantiateBlueprint, removeAgent } from "./blueprint.ts";
+import { makeWorkspaceTools } from "./workspace.ts";
 import { loadImage, saveImage } from "./blobs.ts";
-import {
-  describeLayout,
-  normalizeLayout,
-  readLayout,
-  writeLayout,
-  type PaneNode,
-} from "./layout.ts";
 import { dbg } from "./debug.ts";
+
+// The workspace tools main alone may call. Names are listed here because pi's
+// allowlist is by name, not by tool object.
+const WORKSPACE_TOOLS = [
+  "session-list",
+  "session-resume",
+  "session-delete",
+  "tab-list",
+  "tab-mutation",
+  "tab-on",
+  "tab-off",
+  "tab-delete",
+];
+
+// agentReadme reads a sub agent's own copy of its blueprint README — the copy,
+// not the prototype, so a resumed agent is exactly the agent it was.
+function agentReadme(root: string, id: string): string | undefined {
+  const file = path.join(root, ".engineer", "agents", id, "README.md");
+  if (!existsSync(file)) return undefined;
+  return readFileSync(file, "utf8");
+}
 
 // A user turn as received on /ai/ask: ordered text/image blocks. Images carry
 // base64 + mime and are persisted to the blob store; text is the prompt text
@@ -90,162 +108,6 @@ const askUserTool = defineTool({
   },
 });
 
-// layout: the model's handle on the tab it is talking in. The tab's pane tree is
-// stored by log as opaque text; this tool reads it and rewrites it whole.
-//
-// Writing replaces the tree rather than editing it: the model describes the layout
-// it wants, which is idempotent and survives replay.
-//
-// The tree used to hold no pane ids at all. The price was that a write without a
-// read silently dropped panes, and that position in the tree *was* identity — so a
-// pane the model merely moved was rebuilt, losing its draft, its scroll and its
-// place in the run. Now every leaf carries a paneId: this tool issues them, the
-// model passes back the ones it means to keep. A write without a read is still a
-// mistake the description warns about, but a pane that moved is recognized as the
-// same pane.
-//
-// One instance per session: it closes over the session's tabId, the key the tree
-// is stored under.
-function makeLayoutTool(
-  logBase: string,
-  sess: Sess,
-  newSession: (blueprint?: string) => Promise<Sess>,
-  hasSession: (id: string) => Promise<boolean>,
-) {
-  const tabId = () => sess.speakingFor;
-  return defineTool({
-    name: "layout",
-    label: "Layout",
-    description: [
-      "Read or replace the pane layout of the tab you are talking in. The layout",
-      "is shared by every conversation in that tab, so another pane's session can",
-      "change it between your turns: ALWAYS read before you write, every time.",
-      "",
-      "  op=read   — returns the current tree.",
-      '  op=write  — replaces it with `layout` (the whole tree; there is no partial',
-      "              update, so writing without reading drops panes you never saw).",
-      "",
-      "A layout is a tree built from two node shapes:",
-      "  { pane: { paneId, contentId, flex? } }   — or blueprint: <slug> for a new agent",
-      '  { split: { flexDirection: "row" | "column", flex?, children: [ … ] } }',
-      'flexDirection is the CSS one: "row" puts the children side by side (left/',
-      'right), "column" stacks them (top/bottom). At most 6 panes.',
-      "",
-      "A pane says three separate things:",
-      "  paneId      which pane this is — a handle this tool issues, not something to",
-      "              invent. Pass back the paneId you read to KEEP that pane: it is the",
-      "              same pane however you rearrange the tree, and it keeps what is on",
-      "              screen (its half-typed draft, its scroll). Leave the id out and",
-      "              the pane is a new one.",
-      "  contentId   which agent the pane shows: a sessionId — a handle this tool",
-      "              issued, never invented. Omit it and give `blueprint: <slug>`",
-      "              instead to instantiate a new agent into this pane. The same",
-      "              contentId in two panes is one agent shown twice; the views stay",
-      "              in step.",
-      "  flex        CSS's `flex` shorthand for its share of its parent. Reach for the",
-      '              ratio form: flex: "2 1 0" is twice a sibling that says nothing.',
-      "              A leaf with no flex shares evenly. A fixed basis",
-      '              (flex: "0 0 320px") is legal where the content really is a fixed',
-      "              size, but ratios are what a layout should use.",
-      "",
-      "An agent's UI is its blueprint's index.html, served from the agent's own",
-      "copy — so a pane always shows a page, and there are no other kinds of pane.",
-      "",
-      "Use it when showing beats telling: two things to compare, one agent beside",
-      "another, a short status band under a row of detail. The result echoes the",
-      "tree as stored.",
-    ].join("\n"),
-    promptSnippet: "layout: read (op=read) or replace (op=write) the tab's pane layout",
-    parameters: Type.Object({
-      op: Type.Union([Type.Literal("read"), Type.Literal("write")], {
-        description: "read the current layout, or write the one in `layout`",
-      }),
-      // The tree is validated by normalizeLayout, which reports what it did not
-      // like in words the model can act on; a schema here would only duplicate
-      // that in a poorer vocabulary.
-      layout: Type.Optional(
-        Type.Any({ description: "the whole pane tree; required when op=write" }),
-      ),
-    }),
-    executionMode: "sequential",
-    execute: async (_toolCallId, params) => {
-      const fail = (text: string) => ({
-        content: [{ type: "text" as const, text }],
-        isError: true,
-      });
-      if (!tabId()) {
-        return fail(
-          "No tab is in scope for this turn: the caller did not say which tab it is " +
-            "asking from, so there is no layout to read or write.",
-        );
-      }
-      try {
-        if (params.op === "read") {
-          const current = await readLayout(logBase, tabId());
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: current
-                  ? `Current layout of tab ${tabId()}:\n${describeLayout(current.layout)}`
-                  : `Tab ${tabId()} has no layout record yet: one pane, this conversation.`,
-              },
-            ],
-            details: { tabId: tabId(), layout: current?.layout },
-          };
-        }
-        if (params.layout === undefined) {
-          return fail("op=write needs `layout`: the whole pane tree to store.");
-        }
-        const current = await readLayout(logBase, tabId());
-        const layout = await normalizeLayout(params.layout, {
-          newSession: async () => (await newSession()).id,
-          hasSession,
-          currentIds: current ? chatIdsOf(current.layout) : [],
-          currentPaneIds: current ? paneIdsOf(current.layout) : [],
-        });
-        const saved = await writeLayout(logBase, tabId(), layout);
-        sess.speakingFor = saved.tabId;
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Layout applied to tab ${saved.tabId}:\n${describeLayout(saved.layout)}`,
-            },
-          ],
-          details: { tabId: saved.tabId, layout: saved.layout },
-        };
-      } catch (err) {
-        return fail(
-          `Layout rejected: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    },
-  });
-}
-
-// chatIdsOf lists the chat panes' session ids in a tree, in order, and paneIdsOf
-// the pane handles. Both are what a rejected write tells the model it *could* have
-// passed. Old field names are still read, for a record written before the current
-// shape existed.
-function chatIdsOf(node: PaneNode): string[] {
-  if ("pane" in node) {
-    const p = node.pane as Record<string, any>;
-    if ((p.contentType || p.content) !== "chat") return [];
-    const id = p.contentId ?? p.id;
-    return id ? [String(id)] : [];
-  }
-  return (node.split?.children ?? []).flatMap(chatIdsOf);
-}
-
-function paneIdsOf(node: PaneNode): string[] {
-  if ("pane" in node) {
-    const id = (node.pane as Record<string, any>).paneId;
-    return id ? [String(id)] : [];
-  }
-  return (node.split?.children ?? []).flatMap(paneIdsOf);
-}
-
 // pi's bundled catalog under-declares some vision models, and its
 // openai-completions adapter silently strips images unless the model's declared
 // `input` includes "image" (pi-ai: openai-completions.js). DeepSeek Flash
@@ -267,12 +129,9 @@ function withVisionCapability(model: Model | undefined): Model | undefined {
 
 interface Sess {
   id: string;
-  // The tab the *current run* is speaking for. Not an ownership link: the
-  // association lives on the tab (a tab references conversations; several tabs
-  // may reference the same conversation), so a session has no tab of its own.
-  // The caller says which tab it is asking from, and the layout tool acts on
-  // that one.
-  speakingFor: string;
+  // "main" is the one conversation the shell hosts (workspace tools); "sub" is
+  // everything instantiated from a blueprint (a page, ask_user, no workspace).
+  kind: "main" | "sub";
   agent?: AgentSession; // undefined in stub mode (no API key)
   events: EngineerEvent[];
   listeners: Set<Listener>;
@@ -292,7 +151,9 @@ const DEFAULT_MODEL = "deepseek/deepseek-flash";
 export interface RegistryOptions {
   root: string;
   logBase: string;
-  systemPrompt: string;
+  // The two role specs, already carrying the runtime endpoints. main gets the
+  // workspace tools; sub gets its blueprint's README appended after this.
+  specs: { main: string; sub: string };
   model?: string; // CLI model pattern, e.g. "deepseek/deepseek-chat" or "sonnet:high"
   forceStub?: boolean; // skip model resolution entirely (offline / tests)
 }
@@ -304,7 +165,6 @@ export class Registry {
   private sessions = new Map<string, Sess>();
   private modelRuntime?: ModelRuntime;
   private model?: Model;
-  private loader?: DefaultResourceLoader;
   private settings = SettingsManager.inMemory();
 
   constructor(private opts: RegistryOptions) {}
@@ -332,26 +192,21 @@ export class Registry {
         available.find((m) => m.provider === "deepseek") ?? available[0];
     }
     this.model = withVisionCapability(this.model);
-    if (!this.model) return; // stub mode
-    this.loader = this.makeLoader();
-    await this.loader.reload();
   }
 
-  // makeLoader builds the resource loader whose system prompt is the tool's
-  // spec. `tail` is appended after everything else — an agent's blueprint README
-  // goes there, so it reads as the last word on what this particular agent's UI
-  // is.
-  private makeLoader(tail?: string): DefaultResourceLoader {
+  // makeLoader builds the resource loader for one session's role. `tail` is
+  // appended after everything else — a sub agent's blueprint README goes there,
+  // so it reads as the last word on what this particular agent's UI is.
+  private makeLoader(kind: "main" | "sub", tail?: string): DefaultResourceLoader {
+    const spec = this.opts.specs[kind];
     return new DefaultResourceLoader({
       cwd: this.opts.root,
       agentDir: getAgentDir(),
-      // Append AGENTS.md instead of overriding the system prompt: pi only emits
+      // Append the spec instead of overriding the system prompt: pi only emits
       // its "Available tools" list (which is where custom tools like ask_user
       // surface) when the system prompt is not fully replaced.
       appendSystemPromptOverride: (base) =>
-        tail
-          ? [...base, this.opts.systemPrompt, tail]
-          : [...base, this.opts.systemPrompt],
+        tail ? [...base, spec, tail] : [...base, spec],
     });
   }
 
@@ -367,28 +222,75 @@ export class Registry {
     return this.model ? `${this.model.provider}/${this.model.id}` : "stub";
   }
 
-  // new opens a conversation (an *agent*). It belongs to no tab: where it is
-  // shown is the frontend's business, recorded on the tab side (log-tab-mutation).
-  //
-  // An agent is always instantiated from a blueprint: the prototype's two files
-  // are copied into `.engineer/agents/<sessionId>/`, and the copy's README is
-  // appended to this session's system prompt — last, after the spec and the
-  // project's own rules — so the model knows what its UI is without anything
-  // having to be sent first. The copy is what the web server serves, so editing
-  // the prototype afterwards does not touch an agent that already exists.
-  async new(blueprint?: string): Promise<Sess> {
+  // new opens a conversation. kind="main" is the shell's own chat (no blueprint,
+  // no page copy); kind="sub" is instantiated from a blueprint: the prototype
+  // directory is copied into `.engineer/agents/<sessionId>/`, and the copy's
+  // README is appended to this session's system prompt — last, after the role
+  // spec — so the model knows what its UI is without anything having to be sent
+  // first. The copy is what the web server serves, so editing the prototype
+  // afterwards does not touch an agent that already exists.
+  async new(blueprint?: string, kind: "main" | "sub" = "sub"): Promise<Sess> {
     const id = `s_${randomBytes(8).toString("hex")}`;
     const readme = blueprint
       ? instantiateBlueprint(this.opts.root, blueprint, id)
       : undefined;
-    return this.build(id, [], readme);
+    await this.writeSessionKind(id, kind);
+    return this.build(id, [], kind, readme);
   }
 
-  // sessionExists answers "would /ai/resume find this?" — a live session, or one
-  // with recorded history to rebuild from. The layout tool uses it to tell a
-  // real session id from one the model made up.
+  // writeSessionKind records what a conversation is; log owns the row.
+  private async writeSessionKind(id: string, kind: "main" | "sub"): Promise<void> {
+    const res = await fetch(`${this.opts.logBase}/log/session/upsert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: YAML.stringify({ sessionId: id, kind }),
+    });
+    if (!res.ok) {
+      throw new Error(`log/session/upsert: HTTP ${res.status}`);
+    }
+  }
+
+  // sessionKind reads a conversation's kind. undefined means "log has no row":
+  // the id is not one this workspace knows. A row with kind "sub" (or no kind at
+  // all) is a blueprint agent — which, unlike a conversation with no messages,
+  // can still be rebuilt from its own copy.
+  private async sessionKind(id: string): Promise<"main" | "sub" | undefined> {
+    try {
+      const res = await fetch(`${this.opts.logBase}/log/session/detail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/yaml" },
+        body: YAML.stringify({ sessionId: id }),
+      });
+      if (!res.ok) return undefined;
+      const data: any = YAML.parse(await res.text());
+      return data?.kind === "main" ? "main" : "sub";
+    } catch {
+      return undefined;
+    }
+  }
+
+  // deleteSession is the hard delete: the live session, its records, and the
+  // agent's copy of its blueprint.
+  async deleteSession(id: string): Promise<void> {
+    this.delete(id);
+    removeAgent(this.opts.root, id);
+    const res = await fetch(`${this.opts.logBase}/log/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: YAML.stringify({ sessionId: id }),
+    });
+    if (!res.ok) {
+      throw new Error(`log/delete: HTTP ${res.status}`);
+    }
+  }
+
+  // sessionExists answers "would /ai/resume find this?" — a live session, a row
+  // in sessions (an instantiated agent), or recorded history. main's tab-on uses
+  // it to tell a real session id from one the model made up, and session-delete
+  // uses it as its guard (log/delete is silent about unknown ids).
   private async sessionExists(id: string): Promise<boolean> {
     if (this.sessions.has(id)) return true;
+    if (await this.sessionKind(id)) return true;
     const history = await fetchRecords(this.opts.logBase, id);
     return history.length > 0;
   }
@@ -398,19 +300,30 @@ export class Registry {
   async resume(id: string): Promise<Sess | undefined> {
     const existing = this.sessions.get(id);
     if (existing) return existing;
-    const history = await fetchRecords(this.opts.logBase, id);
-    if (!history.length) return undefined;
-    return this.build(id, history);
+    const [history, rowKind] = await Promise.all([
+      fetchRecords(this.opts.logBase, id),
+      this.sessionKind(id),
+    ]);
+    // An instantiated agent has a session row (and a copy) before it has a single
+    // message; that is still a session worth resuming — otherwise a page that
+    // has never been asked would 404 for the rest of the process's life.
+    if (!rowKind && !history.length) return undefined;
+    const kind = rowKind ?? "sub";
+    // A sub agent's opening context lives in its own copy, so a resumed agent is
+    // still the agent its blueprint made.
+    const readme = kind === "sub" ? agentReadme(this.opts.root, id) : undefined;
+    return this.build(id, history, kind, readme);
   }
 
   private async build(
     id: string,
     history: StoredRecord[] = [],
+    kind: "main" | "sub" = "sub",
     blueprintReadme?: string,
   ): Promise<Sess> {
     const sess: Sess = {
       id,
-      speakingFor: "",
+      kind,
       events: [],
       listeners: new Set(),
       tail: Promise.resolve(),
@@ -422,13 +335,10 @@ export class Registry {
       active: false,
     };
     if (this.model) {
-      // An agent instantiated from a blueprint carries that README as the tail
-      // of its system prompt, so it knows its own UI from the first turn.
-      let loader = this.loader;
-      if (blueprintReadme) {
-        loader = this.makeLoader(blueprintReadme);
-        await loader.reload();
-      }
+      // The role's spec, plus (for a sub agent) its blueprint's README as the
+      // tail, so it knows its own UI from the first turn.
+      const loader = this.makeLoader(kind, blueprintReadme);
+      await loader.reload();
       const sessionManager = SessionManager.inMemory(this.opts.root);
       // Rebuild context compaction-aware: the latest compaction summary plus the
       // records after it. Summarized history is not re-sent to the provider.
@@ -451,8 +361,8 @@ export class Registry {
         settingsManager: this.settings,
         // Capability surface: read/grep/find/ls + bash (execution, including
         // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
-        // and layout are the custom tools and must be in the allowlist to stay
-        // enabled; skills and blueprints are plain files the agent writes itself.
+        // is every session's custom tool; the workspace tools belong to main
+        // alone (a blueprint's page is a view, not a workspace).
         tools: [
           "read",
           "grep",
@@ -462,16 +372,25 @@ export class Registry {
           "write",
           "edit",
           "ask_user",
-          "layout",
+          ...(kind === "main" ? WORKSPACE_TOOLS : []),
         ],
         customTools: [
           askUserTool,
-          makeLayoutTool(
-            this.opts.logBase,
-            sess,
-            (blueprint?: string) => this.new(blueprint),
-            (id) => this.sessionExists(id),
-          ),
+          ...(kind === "main"
+            ? makeWorkspaceTools({
+                root: this.opts.root,
+                logBase: this.opts.logBase,
+                selfId: sess.id,
+                newSession: async (blueprint?: string) =>
+                  (await this.new(blueprint, "sub")).id,
+                resumeSession: async (id: string) => {
+                  const resumed = await this.resume(id);
+                  return resumed ? { id: resumed.id, kind: resumed.kind } : undefined;
+                },
+                deleteSession: (id: string) => this.deleteSession(id),
+                hasSession: (id: string) => this.sessionExists(id),
+              })
+            : []),
         ],
       });
       sess.agent = session;
@@ -585,11 +504,7 @@ export class Registry {
   // before the next LLM call) and the in-flight run stays the sole owner of the
   // terminal agent_settled event. Otherwise a fresh run is started, serialized
   // on the tail chain so two idle asks cannot race.
-  ask(sess: Sess, incoming: IncomingBlock[], tabId = ""): void {
-    // Which tab this turn is speaking for — the layout tool's target. The same
-    // conversation may be shown in several tabs, so it is named per turn rather
-    // than remembered on the session.
-    if (tabId) sess.speakingFor = tabId;
+  ask(sess: Sess, incoming: IncomingBlock[]): void {
     // `content` is pi-shaped user content (text blocks; images as sha refs);
     // `piImages` re-inlines the base64 bytes for the prompt call.
     const content: any[] = [];

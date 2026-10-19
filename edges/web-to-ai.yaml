@@ -39,14 +39,6 @@ edges:
     channel: network
     protocol: http
     description: Web frontend aborts the run in flight; the session stays and can be asked again
-  - id: web-to-ai-delete
-    from: web
-    from_interface: ai-delete
-    to: ai
-    to_interface: ai-delete
-    channel: network
-    protocol: http
-    description: Web frontend deletes a session, releasing the live in-memory agent
   - id: web-to-ai-blobs
     from: web
     from_interface: ai-blobs

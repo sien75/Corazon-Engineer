@@ -125,7 +125,7 @@ func launch() {
 		{name: "ai", bin: filepath.Join(binDir, "engineer-ai"),
 			args: []string{"--root", root,
 				"--bind", bind, "--port", strconv.Itoa(ports["ai"]),
-				"--agents", filepath.Join(pkg, "agents", "AGENTS.md"),
+				"--agents", filepath.Join(pkg, "agents"),
 				"--log", svcURL("log"), "--static", svcURL("static")}},
 		{name: "web", bin: self,
 			args: []string{"serve-web",

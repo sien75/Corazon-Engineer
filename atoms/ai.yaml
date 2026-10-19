@@ -1,6 +1,6 @@
 atoms:
   - name: ai
-    description: Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), writes/reads records via log, connects external systems via bash; it owns two custom tools — ask_user (ask and end the turn) and layout, which reads and replaces the pane layout of the tab the session is shown in (a tree of agent panes stored per tabId via log, so the model can split the screen instead of only talking about it); it is also where an agent is born — ai-new takes a blueprint slug, copies the prototype's two files (.agents/blueprints/<slug>/{README.md,index.html}) into .engineer/agents/<sessionId>/, and appends that README last in the session's system prompt, so an agent carries its own copy of its UI and knows what it is from the first turn; skill discovery (the suggested-skills scan) is gone — skills are plain files that agents read, nothing more
+    description: Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), writes/reads records via log, connects external systems via bash; it owns two roles of custom tools — every session gets ask_user (ask and end the turn); main, the one conversation the shell itself hosts, additionally gets the workspace tools (session-list, session-resume, session-delete, tab-list, tab-mutation, tab-on, tab-off, tab-delete) that read and write sessions, tabs and current through log, so main opens, closes, splits and deletes the tabs the shell shows and can delete a single conversation outright (its own excepted — session-delete refuses the session it runs in, and a pane still showing a deleted agent is left as a dead pane); a sub agent, instantiated from a blueprint, has no workspace tools; ai-new takes a blueprint slug and copies the whole prototype directory (.agents/blueprints/<slug>/, README.md + index.html required, any css / js / images alongside them) into .engineer/agents/<sessionId>/, records the session's kind in log, and appends that README last in a sub agent's system prompt, so an agent carries its own copy of its UI and knows what it is from the first turn; the role's spec is agents/main or agents/sub; skill discovery is gone — skills are plain files that agents read, nothing more
     path: ./workspace/ai
     runtime_type: bun
     runtime_version: "1.3"
@@ -93,4 +93,60 @@ atoms:
           contract: ./contracts/log-tab-mutation.yaml
           extend:
             path: /log/tab/mutation
+            method: POST
+        - id: log-tab-new
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-new.yaml
+          extend:
+            path: /log/tab/new
+            method: POST
+        - id: log-tab-off
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-off.yaml
+          extend:
+            path: /log/tab/off
+            method: POST
+        - id: log-tab-delete
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-delete.yaml
+          extend:
+            path: /log/tab/delete
+            method: POST
+        - id: log-list
+          channel: network
+          protocol: http
+          contract: ./contracts/log-list.yaml
+          extend:
+            path: /log/list
+            method: POST
+        - id: log-delete
+          channel: network
+          protocol: http
+          contract: ./contracts/log-delete.yaml
+          extend:
+            path: /log/delete
+            method: POST
+        - id: log-session-upsert
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-upsert.yaml
+          extend:
+            path: /log/session/upsert
+            method: POST
+        - id: log-session-kind
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-kind.yaml
+          extend:
+            path: /log/session/detail
+            method: POST
+        - id: log-current-get
+          channel: network
+          protocol: http
+          contract: ./contracts/log-current-get.yaml
+          extend:
+            path: /log/current/get
             method: POST

@@ -19,17 +19,12 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <!-- The shell is one thing: main's own conversation, and the tabs main opens.
+       Both live in #tabs; both are drawn into #panes. There are no fixed views. -->
   <header id="topbar">
     <span id="logo">Corazon Engineer</span>
-    <nav id="tabs">
-      <button type="button" data-view="graph" class="tab fixed active">graph</button>
-      <button type="button" data-view="how-to" class="tab fixed">how-to</button>
-      <button type="button" data-view="development" class="tab fixed">development</button>
-      <button type="button" data-view="contracts" class="tab fixed">contracts</button>
-      <button type="button" data-view="docs" class="tab fixed">docs</button>
-      <button type="button" data-view="notes" class="tab fixed">notes</button>
-      <button type="button" id="tab-add" title="new tab">+</button>
-    </nav>
+    <nav id="tabs"></nav>
+    <button id="tab-add" type="button" title="new tab" aria-label="new tab"><span class="tab-label">+</span></button>
     <div id="theme-wrap">
       <button id="theme-toggle" type="button" title="theme">theme</button>
       <div id="theme-menu" hidden>
@@ -40,25 +35,23 @@
     </div>
   </header>
   <main id="main">
-    <div id="left">
-      <div id="graph"></div>
-      <div id="content" hidden></div>
-      <aside id="panel" hidden>
-        <button id="panel-close" type="button">×</button>
-        <h2 id="panel-title"></h2>
-        <div id="panel-body"></div>
-      </aside>
-    </div>
-    <div id="newtab" hidden></div>
-    <div id="page" hidden>
-      <iframe id="page-frame" title="page"></iframe>
-    </div>
-    <!-- The content area of a tab: its pane tree, rendered per tab. A chat pane
-         is the conversation view — message list plus composer — built per pane
-         (see makeChatPane), so every conversation is one you can type into. -->
-    <div id="panes" hidden></div>
+    <div id="panes"></div>
+    <div id="launcher" hidden></div>
+    <div id="toast" hidden></div>
   </main>
+  <script>
+    // A boot failure has nowhere else to go: show it instead of a blank page.
+    function bootError(message) {
+      var panes = document.getElementById("panes");
+      if (panes) panes.innerHTML = '<div class="empty-hint">engineer web: ' + message + "</div>";
+    }
+    window.addEventListener("error", function (e) { bootError(e.message || String(e)); });
+    window.addEventListener("unhandledrejection", function (e) {
+      bootError((e.reason && e.reason.message) || String(e.reason));
+    });
+  </script>
   <script src="/config.js"></script>
+  <script type="module" src="/components/chat.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

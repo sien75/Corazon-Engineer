@@ -3,17 +3,19 @@ description: Instantiate an agent from a blueprint; where it is shown is the tab
 
 request:
   body:
-    blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required in practice: every agent is made from one. Its README.md and index.html are copied to .engineer/agents/<sessionId>/ and the copy's README is appended to this session's system prompt
+    blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required for kind=sub, absent for kind=main. The whole directory is copied to .engineer/agents/<sessionId>/: README.md and index.html are required, and any other file (css / js / images / subdirectories) travels with it and is served from the copy by relative URL. The copy's README is appended to this session's system prompt
+    kind?: main | sub  # the role: "main" is the shell's own conversation (no blueprint, workspace tools), "sub" is a blueprint agent (default)
 
 response:
   status: 200
   body:
     sessionId: string  # the new agent. It belongs to no tab: a tab references agents, and several tabs may reference the same one. Its UI is served at /agent/<sessionId>/ from the copy
+    kind: main | sub  # echoed role; the session row in log stores it
 
 errors:
   - status: 400
     code: bad_request
-    description: blueprint missing, unknown, or a prototype that breaks the two-file rule (only README.md and index.html are allowed)
+    description: blueprint missing, unknown, or lacking one of its two required files (README.md, index.html); kind not main | sub
   - status: 500
     code: internal
     description: server error

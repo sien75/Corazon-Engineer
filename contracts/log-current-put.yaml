@@ -1,0 +1,22 @@
+id: log-current-put
+description: Replace the workspace row; used to repair or reorder the open list (opening and closing a tab has its own endpoints)
+
+request:
+  body:
+    openTabs: [string]  # the whole open list, in display order
+    mainSession?: string  # the main conversation's session id; omitted keeps nothing
+
+response:
+  status: 200
+  body:
+    openTabs: [string]
+    mainSession: string
+    updatedAt: string
+
+errors:
+  - status: 400
+    code: bad_request
+    description: bad request
+  - status: 500
+    code: internal
+    description: server internal error

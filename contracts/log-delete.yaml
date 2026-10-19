@@ -1,5 +1,5 @@
 id: log-delete
-description: Delete all conversation records belonging to a session
+description: Delete a conversation session's records and its session row (clearing it as main when it was)
 
 request:
   body:

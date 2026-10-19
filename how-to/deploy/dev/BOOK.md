@@ -23,7 +23,7 @@ The launcher binds `127.0.0.1` by default — this is a local tool, not a servic
 
 Logs and pids live under `.engineer/dev/`.
 
-To pin a model, pass it through: `AI_MODEL=... ` is not wired yet — run ai directly if needed: `cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 7501 --root <project root> --log <log url> --static <static url> --agents ../../agents/AGENTS.md --model anthropic/claude-sonnet-4-6`. **Every one of those flags is required**: ai has no default host, port, project root, log address, static address or spec file, so a hand-run must state all six (`--model` and `--stub` are the only optional ones).
+To pin a model, pass it through: `AI_MODEL=... ` is not wired yet — run ai directly if needed: `cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 7501 --root <project root> --log <log url> --static <static url> --agents ../../agents --model anthropic/claude-sonnet-4-6`. **Every one of those flags is required**: ai has no default host, port, project root, log address, static address or spec file, so a hand-run must state all six (`--model` and `--stub` are the only optional ones). `--agents` is the directory holding the two role specs (`main/AGENTS.md`, `sub/AGENTS.md`).
 
 ## Verify
 

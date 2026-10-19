@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Project</title>
+  <!-- Theme before first paint, from the same key the shell uses, so there is no light flash. -->
+  <script>
+    (function () {
+      var t = "light";
+      try {
+        var stored = localStorage.getItem("engineer.theme");
+        if (stored === "dark" || stored === "solarized" || stored === "light") t = stored;
+      } catch (e) {}
+      document.documentElement.setAttribute("data-theme", t);
+      document.documentElement.style.colorScheme = t === "dark" ? "dark" : "light";
+    })();
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    html, body { height: 100%; }
+    body { margin: 0; font-size: 13px; line-height: 1.6;
+           display: grid; grid-template-columns: 132px minmax(0, 1fr); }
+    nav { border-right: 1px solid var(--border); padding: 14px 8px; overflow: auto; }
+    nav .brand { font-size: 12px; color: var(--fg-muted); text-transform: uppercase;
+                 letter-spacing: .07em; padding: 0 8px 10px; }
+    nav a { display: block; padding: 4px 8px; border-radius: 5px; text-decoration: none;
+            color: var(--fg); font-size: 12px; }
+    nav a:hover { background: var(--surface-3); }
+    nav a.on { background: var(--accent-bg); color: var(--accent); }
+    main { padding: 18px 22px 28px; overflow: auto; }
+    main > * + * { margin-top: 14px; }
+    h1 { font-size: 15px; margin: 0; }
+    h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+         color: var(--fg-muted); margin: 16px 0 6px; font-weight: 600; }
+    .hint { color: var(--fg-muted); margin: 0; }
+    .cards { display: flex; gap: 10px; flex-wrap: wrap; }
+    .card { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2);
+            padding: 8px 14px; min-width: 78px; }
+    .card b { display: block; font-size: 20px; line-height: 1.2; }
+    .card span { color: var(--fg-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--fg-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    tbody tr.click { cursor: pointer; }
+    tbody tr.click:hover { background: var(--surface-3); }
+    tbody tr.sel { background: var(--accent-bg); color: var(--accent); }
+    td.mono, .mono { color: var(--fg-dim); font-size: 12px; }
+    .cols { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 18px; align-items: start; }
+    .group + .group { margin-top: 14px; }
+    ul { list-style: none; margin: 0; padding: 0; max-height: 68vh; overflow: auto; }
+    li { padding: 3px 8px; border-radius: 5px; cursor: pointer; font-size: 12px;
+         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    li:hover { background: var(--surface-3); }
+    li.sel { background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-border); padding: 2px 7px; }
+    li.empty { color: var(--fg-muted); font-style: italic; cursor: default; }
+    li.empty:hover { background: none; }
+    .preview { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+    .preview .head { padding: 7px 12px; border-bottom: 1px solid var(--border); color: var(--fg-dim);
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    pre { margin: 0; padding: 12px; max-height: 66vh; overflow: auto; font-size: 12px;
+          white-space: pre-wrap; word-break: break-word; }
+    .bar { display: flex; gap: 10px; align-items: center; }
+    select, button { font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 5px; cursor: pointer;
+                     border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--fg); }
+    .pill { padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid transparent; }
+    .ok { color: var(--ok); border-color: var(--ok); }
+    .bad { color: var(--err); border-color: var(--err); }
+    .skip { color: var(--fg-muted); border-color: var(--border-strong); }
+    #err { color: var(--err); margin-top: 14px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <nav id="nav"><div class="brand">Project</div></nav>
+  <main id="main"></main>
+  <div id="err" style="display:none"></div>
+
+  <script>
+    /* The whole project on one page: schema (atoms / edges / contracts), how-to,
+       iterations, log records, resources (skills / blueprints) and service endpoints.
+       Data comes from static and log only; both addresses are read from the same
+       origin's /config.js (window.ENGINEER), never hard-coded. */
+
+    let STATIC = "", LOG = "";
+    const $ = (id) => document.getElementById(id);
+    const err = (e) => {
+      const box = $("err");
+      box.style.display = "block";
+      box.textContent = (e && e.message) || String(e);
+    };
+    const clearErr = () => { $("err").style.display = "none"; $("err").textContent = ""; };
+
+    function el(tag, cls, text) {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;
+      return n;
+    }
+    function table(headers) {
+      const t = el("table");
+      const thead = el("thead");
+      const tr = el("tr");
+      for (const h of headers) tr.append(el("th", null, h));
+      thead.append(tr);
+      const tbody = el("tbody");
+      t.append(thead, tbody);
+      return { table: t, tbody };
+    }
+    function row(tbody, cells, cls) {
+      const tr = el("tr", cls);
+      for (const c of cells) tr.append(el("td", c && c.cls, c && c.text != null ? c.text : c));
+      tbody.append(tr);
+      return tr;
+    }
+
+    /* static and log answer application/yaml, not JSON. This page only needs the
+       top-level lists, block scalars and one level of `key: value`, so a minimal
+       reader is enough — no library. */
+    async function api(base, path, body) {
+      const r = await fetch(base + path, {
+        method: "POST", headers: { "Content-Type": "application/yaml" },
+        body: JSON.stringify(body || {}),
+      });
+      const text = await r.text();
+      if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+      return text;
+    }
+    // Scalar list under a top-level `key:` (paths, ids).
+    function scalarList(text, key) {
+      const out = []; let inside = false;
+      for (const line of text.split("\n")) {
+        const top = /^([A-Za-z0-9_-]+):/.exec(line);
+        if (top) { inside = top[1] === key; continue; }
+        if (!inside) continue;
+        const m = /^\s*-\s*(.+?)\s*$/.exec(line);
+        if (m) out.push(m[1].replace(/^["']|["']$/g, ""));
+      }
+      return out;
+    }
+    // Object list under a top-level `key:` (atoms / edges). Each item keeps only
+    // the fields on its own level: deeper `-` entries (one per interface) belong
+    // to the item's substructure and are skipped — otherwise `field(a, "path")`
+    // would hit an interface's `extend.path` first.
+    function objectList(text, key) {
+      const out = []; let inside = false, dash = -1;
+      for (const line of text.split("\n")) {
+        const top = /^([A-Za-z0-9_-]+):/.exec(line);
+        if (top) { inside = top[1] === key; dash = -1; continue; }
+        if (!inside) continue;
+        const d = /^(\s*)-\s(.*)$/.exec(line);
+        if (d) {
+          if (dash < 0) dash = d[1].length;
+          if (d[1].length === dash) out.push(d[2]);
+          continue;
+        }
+        if (!out.length) continue;
+        if (line.match(/^\s*/)[0].length === dash + 2) out[out.length - 1] += "\n" + line.trim();
+      }
+      return out;
+    }
+    function field(chunk, name) {
+      const m = new RegExp("(?:^|\\n)" + name + ":\\s*(.*)").exec(chunk);
+      return m ? m[1].trim().replace(/^["']|["']$/g, "") : "";
+    }
+    // query-detail returns the file body as the `key: |` block scalar.
+    function block(text, key) {
+      const lines = text.split("\n"); let start = -1;
+      for (let i = 0; i < lines.length; i++)
+        if (new RegExp("^" + key + ":\\s*\\|").test(lines[i])) { start = i + 1; break; }
+      if (start < 0) return "";
+      const out = []; let indent = -1;
+      for (let i = start; i < lines.length; i++) {
+        if (lines[i].trim() === "") { out.push(""); continue; }
+        const ind = lines[i].match(/^\s*/)[0].length;
+        if (ind === 0) break;
+        if (indent < 0) indent = ind;
+        out.push(lines[i].slice(indent));
+      }
+      return out.join("\n").replace(/\s+$/, "");
+    }
+
+    let SCHEMA = null;
+    async function schema() {
+      if (SCHEMA == null) SCHEMA = await api(STATIC, "/static/query", {});
+      return SCHEMA;
+    }
+    async function detail(id, type, key) {
+      const text = await api(STATIC, "/static/query-detail", { id, type });
+      return block(text, key || type) || text;
+    }
+
+    /* List on the left, file body on the right — the shape most views share. */
+    function masterDetail(root, groups, empty) {
+      const wrap = el("div", "cols");
+      const left = el("div");
+      const pane = el("div", "preview");
+      const head = el("div", "head", empty || "Pick a file…");
+      const pre = el("pre");
+      pre.textContent = "";
+      pane.append(head, pre);
+      wrap.append(left, pane);
+      root.append(wrap);
+      for (const g of groups) {
+        const box = el("div", "group");
+        box.append(el("h2", null, g.title));
+        const ul = el("ul");
+        box.append(ul);
+        left.append(box);
+        if (!g.files.length) { ul.append(el("li", "empty", "(empty)")); continue; }
+        for (const f of g.files) {
+          const li = el("li", null, g.label ? g.label(f) : f);
+          li.title = f;
+          li.onclick = async () => {
+            for (const x of root.querySelectorAll("li.sel")) x.classList.remove("sel");
+            li.classList.add("sel");
+            head.textContent = f;
+            pre.textContent = "Loading…";
+            try { pre.textContent = await detail(f, g.type, g.block); }
+            catch (e) { pre.textContent = ""; err(e); }
+          };
+          ul.append(li);
+        }
+      }
+    }
+
+    const shorten = (prefix, suffix) => (f) =>
+      f.slice(prefix.length).replace(suffix || /$^/, "");
+
+    const views = {
+      /* Overview: the whole schema at a glance. */
+      async overview(root) {
+        root.append(el("h1", null, "Overview"),
+          el("p", "hint", "atoms / edges / contracts are the whole schema; every other directory is just a list of files."));
+        const text = await schema();
+        const atoms = objectList(text, "atoms");
+        const edges = objectList(text, "edges");
+        const cards = el("div", "cards");
+        for (const [label, n] of [
+          ["atoms", atoms.length], ["edges", edges.length],
+          ["contracts", scalarList(text, "contracts").length],
+          ["how-to", scalarList(text, "how-to").length],
+          ["development", scalarList(text, "development").length],
+          ["docs", scalarList(text, "docs").length],
+          ["skills", scalarList(text, "skills").length],
+          ["blueprints", new Set(scalarList(text, "blueprints").map((f) => f.split("/").slice(0, 3).join("/"))).size],
+        ]) {
+          const c = el("div", "card");
+          c.append(el("b", null, String(n)), el("span", null, label));
+          cards.append(c);
+        }
+        root.append(cards);
+
+        root.append(el("h2", null, "atoms"));
+        const at = table(["name", "runtime", "role", "path"]);
+        for (const a of atoms)
+          row(at.tbody, [field(a, "name"), field(a, "runtime_type"),
+            field(a, "role") || "—", { text: field(a, "path") || "—", cls: "mono" }]);
+        root.append(at.table);
+
+        root.append(el("h2", null, "edges"));
+        const et = table(["from", "via", "to", "channel"]);
+        for (const e of edges)
+          row(et.tbody, [field(e, "from"), { text: field(e, "from_interface"), cls: "mono" },
+            field(e, "to") + " · " + field(e, "to_interface"), field(e, "channel")]);
+        root.append(et.table);
+      },
+
+      /* Contracts: click a row to read the file. */
+      async contracts(root) {
+        root.append(el("h1", null, "Contracts"),
+          el("p", "hint", "contracts/ is the single source of truth for request / response shapes — change the contract before the code."));
+        const files = scalarList(await schema(), "contracts");
+        const t = table(["id", "file"]);
+        root.append(t.table);
+        const pane = el("div", "preview");
+        const head = el("div", "head", "Click a row for the source");
+        const pre = el("pre");
+        pane.append(head, pre);
+        root.append(pane);
+        for (const f of files) {
+          const tr = row(t.tbody, [
+            f.replace(/^contracts\//, "").replace(/\.yaml$/, ""),
+            { text: f, cls: "mono" },
+          ], "click");
+          tr.onclick = async () => {
+            for (const x of t.tbody.querySelectorAll("tr.sel")) x.classList.remove("sel");
+            tr.classList.add("sel");
+            head.textContent = f;
+            pre.textContent = "Loading…";
+            try { pre.textContent = await detail(f, "contract", "contract"); }
+            catch (e) { pre.textContent = ""; err(e); }
+          };
+        }
+      },
+
+      /* How-to: how the system is built, run and connected to. */
+      async howto(root) {
+        root.append(el("h1", null, "How-to"),
+          el("p", "hint", "deploy/[env]/BOOK.md is the cookbook per environment, operation/ is connecting and observing."));
+        const files = scalarList(await schema(), "how-to");
+        masterDetail(root, [{ title: "how-to", files, type: "how-to",
+          label: shorten("how-to/") }], "Pick a book…");
+      },
+
+      /* Iterations: what Phase 1 produces, plus plans and testing. */
+      async iterations(root) {
+        root.append(el("h1", null, "Iterations"),
+          el("p", "hint", "iterations/ holds the design record per requirement, plans/ the human discussion, testing/ the cases."));
+        const files = scalarList(await schema(), "development").sort().reverse();
+        const pick = (p) => files.filter((f) => f.startsWith(p));
+        masterDetail(root, [
+          { title: "iterations", files: pick("development/iterations/"), type: "development",
+            label: shorten("development/iterations/", /\.md$/) },
+          { title: "plans", files: pick("development/plans/"), type: "development",
+            label: shorten("development/plans/", /\.md$/) },
+          { title: "testing", files: files.filter((f) => f.startsWith("development/testing/")),
+            type: "development", label: shorten("development/testing/", /\.md$/) },
+          { title: "development/", files: pick("development/").filter((f) =>
+              !/^development\/(iterations|plans|testing)\//.test(f)),
+            type: "development", label: shorten("development/") },
+        ], "Pick an iteration record…");
+      },
+
+      /* Records: test / telemetry / conversation from log. */
+      async records(root) {
+        root.append(el("h1", null, "Records"),
+          el("p", "hint", "From log/query. test = a case that was run, telemetry = an observation, conversation is written by ai itself."));
+        const bar = el("div", "bar");
+        const sel = document.createElement("select");
+        for (const [v, label] of [["", "all kinds"], ["test", "test"], ["telemetry", "telemetry"],
+          ["conversation", "conversation"]]) {
+          const o = el("option", null, label); o.value = v; sel.append(o);
+        }
+        sel.value = "test";
+        const reload = el("button", null, "Reload");
+        const stat = el("span", "hint");
+        bar.append(sel, reload, stat);
+        root.append(bar);
+
+        const t = table(["createdAt", "kind", "atom", "summary", "id"]);
+        root.append(t.table);
+        const pane = el("div", "preview");
+        const pre = el("pre");
+        pre.textContent = "";
+        pane.append(pre);
+        pane.style.display = "none";
+        root.append(pane);
+
+        const load = async () => {
+          t.tbody.textContent = "";
+          pane.style.display = "none";
+          stat.textContent = "Loading…";
+          const kind = sel.value;
+          const text = await api(LOG, "/log/query", kind ? { kind, pageNum: 1 } : { pageNum: 1 });
+          // Records are a list of objects; their fields sit on the `    key: value` level.
+          const recs = []; let inside = false;
+          for (const line of text.split("\n")) {
+            const top = /^([A-Za-z0-9_-]+):/.exec(line);
+            if (top) { inside = top[1] === "records"; continue; }
+            if (!inside) continue;
+            if (/^\s*-\s/.test(line)) recs.push(line.replace(/^\s*-\s*/, ""));
+            else if (recs.length && /^\s+\S/.test(line)) recs[recs.length - 1] += "\n" + line.trim();
+          }
+          stat.textContent = recs.length + " records";
+          if (!recs.length) { row(t.tbody, ["—", "—", "—", "(no records)", "—"]); return; }
+          for (const rec of recs) {
+            const id = field(rec, "id");
+            const tr = row(t.tbody, [
+              field(rec, "createdAt"), field(rec, "kind"), field(rec, "atom") || "—",
+              field(rec, "summary"), { text: id, cls: "mono" },
+            ], "click");
+            tr.onclick = async () => {
+              for (const x of t.tbody.querySelectorAll("tr.sel")) x.classList.remove("sel");
+              tr.classList.add("sel");
+              pane.style.display = "block";
+              pre.textContent = "Loading…";
+              try { pre.textContent = await api(LOG, "/log/query-detail", { id }); }
+              catch (e) { pre.textContent = ""; err(e); }
+            };
+          }
+        };
+        reload.onclick = () => { clearErr(); load().catch(err); };
+        sel.onchange = () => { clearErr(); load().catch(err); };
+        await load();
+      },
+
+      /* Resources: skills / suggested skills / blueprints, all plain files. */
+      async resources(root) {
+        root.append(el("h1", null, "Resources"),
+          el("p", "hint", ".agents/skills/<slug>/SKILL.md, .engineer/suggested-skills/<slug>.md and .agents/blueprints/<slug>/ are only files."));
+        const text = await schema();
+        const trim = (f) => f.replace(/^\.agents\/blueprints\//, "")
+          .replace(/\/(README\.md|index\.html)$/, "")
+          .replace(/^\.agents\/skills\//, "").replace(/\/SKILL\.md$/, "")
+          .replace(/^\.engineer\/suggested-skills\//, "").replace(/\.md$/, "");
+        // A blueprint is two files; the list shows them as README.md + index.html
+        // rows, so fold each directory back into a single entry.
+        const blueprints = [...new Set(scalarList(text, "blueprints").map((f) => {
+          const m = /^\.agents\/blueprints\/([^/]+)\//.exec(f);
+          return m ? ".agents/blueprints/" + m[1] + "/README.md" : f;
+        }))];
+        masterDetail(root, [
+          { title: "skills", files: scalarList(text, "skills"), type: "skill", label: trim },
+          { title: "suggested", files: scalarList(text, "suggested-skills"),
+            type: "suggested-skill", label: trim },
+          { title: "blueprints", files: blueprints, type: "blueprint", label: trim },
+        ], "Pick a resource…");
+      },
+
+      /* Endpoints: read-only probes only; ai has none, so it is not bothered. */
+      async endpoints(root) {
+        root.append(el("h1", null, "Endpoints"),
+          el("p", "hint", "Addresses come from the same origin's /config.js (window.ENGINEER). Probes are read-only, so ai is left alone."));
+        const bar = el("div", "bar");
+        const reload = el("button", null, "Probe again");
+        const stat = el("span", "hint");
+        bar.append(reload, stat);
+        root.append(bar);
+        const t = table(["service", "address", "status", "probe"]);
+        root.append(t.table);
+
+        const E = window.ENGINEER;
+        const YAML = { method: "POST", headers: { "Content-Type": "application/yaml" }, body: "{}" };
+        const probe = async (service, addr, label, url, opts) => {
+          const pill = el("span", "pill skip", url ? "…" : "not probed");
+          const tr = row(t.tbody, [service, { text: addr || "—", cls: "mono" },
+            "", { text: label, cls: "mono" }]);
+          tr.children[2].append(pill);
+          if (!url) return null;
+          try {
+            const r = await fetch(url, opts);
+            pill.textContent = "HTTP " + r.status;
+            pill.className = "pill " + (r.ok ? "ok" : "bad");
+            return label + " → " + r.status;
+          } catch (e) {
+            pill.textContent = "unreachable";
+            pill.className = "pill bad";
+            return label + " → " + ((e && e.message) || e);
+          }
+        };
+        const run = async () => {
+          t.tbody.textContent = "";
+          stat.textContent = "Probing…";
+          const out = await Promise.all([
+            probe("static", E.static, "POST /static/query", E.static + "/static/query", YAML),
+            probe("log", E.log, "POST /log/query", E.log + "/log/query",
+              { ...YAML, body: JSON.stringify({ pageNum: 1 }) }),
+            probe("ai", E.ai, "— (no read-only probe)", null, {}),
+            probe("web", location.origin, "GET /config.js", "/config.js", {}),
+          ]);
+          stat.textContent = out.filter(Boolean).join(" · ");
+        };
+        reload.onclick = () => { clearErr(); run().catch(err); };
+        await run();
+      },
+    };
+
+    const NAV = [
+      ["overview", "Overview"], ["contracts", "Contracts"], ["howto", "How-to"],
+      ["iterations", "Iterations"], ["records", "Records"], ["resources", "Resources"],
+      ["endpoints", "Endpoints"],
+    ];
+
+    async function render() {
+      const key = (location.hash || "#overview").slice(1);
+      const view = views[key] ? key : "overview";
+      const main = $("main");
+      main.textContent = "";
+      clearErr();
+      for (const a of $("nav").querySelectorAll("a"))
+        a.classList.toggle("on", a.getAttribute("href") === "#" + view);
+      try { await views[view](main); }
+      catch (e) { err(e); }
+    }
+
+    for (const [key, label] of NAV) {
+      const a = el("a", null, label);
+      a.href = "#" + key;
+      $("nav").append(a);
+    }
+    window.addEventListener("hashchange", render);
+
+    const cfg = document.createElement("script");
+    cfg.src = "/config.js";
+    cfg.onload = () => {
+      STATIC = window.ENGINEER.static;
+      LOG = window.ENGINEER.log;
+      render();
+    };
+    cfg.onerror = () => err("Loading /config.js failed");
+    document.head.appendChild(cfg);
+  </script>
+</body>
+</html>

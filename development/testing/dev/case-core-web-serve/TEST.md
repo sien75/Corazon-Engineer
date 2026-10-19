@@ -105,18 +105,20 @@ curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/t
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8960/agent/s_demo
 ```
 
-Expected: `same as the shell` and `200 text/html; charset=utf-8` — `/tab/<id>` is
-an SPA route, so the frontend gets the shell; `/agent/s_demo` (no slash) is a
-directory, so it falls through to the shell too.
+Expected: `same as the shell` and `404` — `/tab/<id>` is an SPA route, so the
+frontend gets the shell; `/agent/...` is not: a copy either has the file or it
+does not, and falling back to the shell would draw the shell inside the page's
+own frame.
 
-## 6. unknown paths fall back to the app shell (SPA routing)
+## 6. unknown paths fall back to the app shell (SPA routing) — except /agent/
 
 ```bash
 curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/nope
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:8960/agent/not-an-agent/
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8960/agent/not-an-agent/
 ```
 
-Expected: both `200 text/html; charset=utf-8` — the shell, not a 404.
+Expected: `200 text/html; charset=utf-8` for `/nope` (the shell), `404` for a
+missing agent copy — there is no page to draw there.
 
 ## 7. traversal and favicon
 

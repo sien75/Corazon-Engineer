@@ -6,7 +6,7 @@ edges:
     to_interface: static-query
     channel: network
     protocol: http
-    description: Web frontend pulls the full schema (atoms + edges) from static to render the architecture graph
+    description: the launcher lists the project's blueprints
   - id: web-to-static-detail
     from: web
     from_interface: static-query-detail
@@ -14,12 +14,4 @@ edges:
     to_interface: static-query-detail
     channel: network
     protocol: http
-    description: Web frontend fetches section content (how-to/development/contracts/docs/notes, and the skills / suggested-skills / blueprints files) for the top menu views and the launcher
-  - id: web-to-static-stream
-    from: web
-    from_interface: static-stream
-    to: static
-    to_interface: static-stream
-    channel: network
-    protocol: http
-    description: Web frontend subscribes to schema file-change events and reloads the graph / views live
+    description: the launcher reads a blueprint's index.html (its name) and README (its one-line description)

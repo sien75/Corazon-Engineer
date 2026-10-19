@@ -31,7 +31,7 @@ sleep 1
 cd workspace/ai && bun install && bun run src/main.ts \
   --bind 127.0.0.1 --port 8801 --root "$ROOT" \
   --log http://localhost:8800 --static http://localhost:8502 \
-  --agents ../../agents/AGENTS.md &
+  --agents ../../agents &
 
 # wait for it before asking: the blocks below run back to back
 for i in $(seq 1 60); do

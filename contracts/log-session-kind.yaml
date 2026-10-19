@@ -1,0 +1,24 @@
+id: log-session-kind
+description: Read one conversation's role; a session with no row is not an error to the caller, but this endpoint answers 404
+
+request:
+  body:
+    sessionId: string  # conversation session id
+
+response:
+  status: 200
+  body:
+    sessionId: string
+    kind: main | sub
+    createdAt: string
+
+errors:
+  - status: 400
+    code: bad_request
+    description: sessionId missing
+  - status: 404
+    code: not_found
+    description: session does not exist
+  - status: 500
+    code: internal
+    description: server internal error

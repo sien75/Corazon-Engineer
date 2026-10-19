@@ -23,7 +23,7 @@ process.env.no_proxy = withLocalNoProxy(process.env.no_proxy);
 process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 
 // usage: bun run src/main.ts --bind <host> --port <n> --root <project dir>
-//        --log <url> --static <url> --agents <AGENTS.md>
+//        --log <url> --static <url> --agents <spec dir>
 //        [--model provider/model-id] [--stub]
 //
 // Every flag above is required and there is no fallback. The launcher owns the
@@ -31,7 +31,7 @@ process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 // service that invents a default silently talks to a port nobody chose.
 const USAGE =
   "usage: engineer-ai --bind <host> --port <n> --root <project dir> " +
-  "--log <url> --static <url> --agents <AGENTS.md> " +
+  "--log <url> --static <url> --agents <spec dir> " +
   "[--model provider/model-id] [--stub]";
 
 function parseFlags(argv: string[]): Record<string, string> {
@@ -71,20 +71,24 @@ const addr = `${flags.bind}:${flags.port}`;
 const logBase = flags.log;
 const staticBase = flags.static;
 
-// The system prompt is the tool's own spec — how the agent behaves (verbs). A
-// project's agents/ files describe that project (nouns); they are never read
-// here. --agents points at the file the launcher resolved, so the packaged case
-// works from wherever the package sits and dev runs from the checkout.
-function resolveAgentsFile(explicit: string): string {
-  const file = path.resolve(explicit);
+// The system prompt is the tool's own spec — how the agent behaves (verbs). Two
+// roles need two specs: main runs in the shell and owns the workspace (tabs,
+// sessions); sub is a blueprint's page and only talks. --agents points at the
+// directory holding both (`main/AGENTS.md`, `sub/AGENTS.md`), so the packaged
+// case works from wherever the package sits and dev runs from the checkout.
+function resolveSpec(agentsDir: string, role: "main" | "sub"): string {
+  const file = path.join(path.resolve(agentsDir), role, "AGENTS.md");
   if (!existsSync(file)) {
-    console.error(`engineer ai: agents/AGENTS.md not found at ${file}`);
+    console.error(`engineer ai: spec not found at ${file}`);
     process.exit(1);
   }
-  return file;
+  return readFileSync(file, "utf8");
 }
 
-const agentsFile = resolveAgentsFile(flags.agents);
+const specs = {
+  main: resolveSpec(flags.agents, "main"),
+  sub: resolveSpec(flags.agents, "sub"),
+};
 // The address the model should call this service by: a wildcard or loopback
 // bind is reached as localhost; anything else (the launcher opened the stack to
 // a specific interface) keeps its host.
@@ -106,12 +110,13 @@ const runtimeEndpoints =
   `- static (schema): ${staticBase}\n` +
   `- log (records): ${logBase}\n` +
   `- ai (this service): ${aiBaseURL(addr)}\n`;
-const systemPrompt = readFileSync(agentsFile, "utf8") + runtimeEndpoints;
-
 const registry = new Registry({
   root,
   logBase,
-  systemPrompt,
+  specs: {
+    main: specs.main + runtimeEndpoints,
+    sub: specs.sub + runtimeEndpoints,
+  },
   model: flags.model, // e.g. "deepseek/deepseek-chat", "anthropic/claude-sonnet-4-6"
   forceStub,
 });
@@ -127,5 +132,5 @@ if (registry.stub) {
   console.log(`engineer ai: model=${registry.modelInfo}`);
 }
 console.log(`engineer ai: log=${logBase}`);
-console.log(`engineer ai: spec=${agentsFile}`);
+console.log(`engineer ai: spec=${path.resolve(flags.agents)}`);
 serve(registry, addr);

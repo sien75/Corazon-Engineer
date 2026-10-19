@@ -55,7 +55,7 @@ sleep 1
 
 (cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8970 --stub \
   --log http://localhost:8971 --static http://localhost:8972 \
-  --agents "$ROOTDIR/agents/AGENTS.md" \
+  --agents "$ROOTDIR/agents" \
   >/tmp/tabrec-ai.log 2>&1 &)
 
 for i in $(seq 1 60); do

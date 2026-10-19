@@ -10,6 +10,7 @@ response:
   body:
     sessions:
       - sessionId: string  # conversation session id
+        kind: main | sub  # the session's role; "sub" when it has no row in sessions
         createdAt: string  # first message time, RFC3339
         lastAt: string  # latest message time, RFC3339
         count: number  # number of messages in the session

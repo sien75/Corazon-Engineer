@@ -56,7 +56,7 @@ sleep 1
 ENGINEER_AI_DEBUG=/tmp/recover-ai-debug.log \
   bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8811 --root "$ROOT" \
   --log http://localhost:8810 --static http://localhost:8502 \
-  --agents "$ROOTDIR/agents/AGENTS.md" \
+  --agents "$ROOTDIR/agents" \
   >/tmp/recover-ai.log 2>&1 &
 
 # two fake log endpoints, so the writer can be driven off the happy path
@@ -90,13 +90,13 @@ python3 /tmp/recover-fake-log.py 8597 /tmp/recover-reject-count.txt reject &
 # ai B — writes through the flaky endpoint (first two requests 500, then 200)
 bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8812 --root "$ROOT" --stub \
   --log http://localhost:8599 --static http://localhost:8502 \
-  --agents "$ROOTDIR/agents/AGENTS.md" \
+  --agents "$ROOTDIR/agents" \
   >/tmp/recover-retry.log 2>&1 &
 
 # ai C — writes through an endpoint that answers 400 to everything
 bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8813 --root "$ROOT" --stub \
   --log http://localhost:8597 --static http://localhost:8502 \
-  --agents "$ROOTDIR/agents/AGENTS.md" \
+  --agents "$ROOTDIR/agents" \
   >/tmp/recover-reject.log 2>&1 &
 
 sleep 2

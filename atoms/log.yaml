@@ -1,6 +1,6 @@
 atoms:
   - name: log
-    description: Corazon Engineer log service — owns sqlite records (call / observe / conversation); exposes log query/detail/search/mutation/stream APIs
+    description: Corazon Engineer log service — owns the project's sqlite state — records (call / observe / conversation), tabs (each tab's pane tree), sessions (each conversation's kind, main or sub) and current (which tabs are open, and the main session); exposes log query/detail/search/mutation/stream APIs plus the tab, session and current ones
     path: ./workspace/log
     runtime_type: go
     runtime_version: "1.22"
@@ -91,6 +91,48 @@ atoms:
           contract: ./contracts/log-tab-list.yaml
           extend:
             path: /log/tab/list
+            method: POST
+        - id: log-tab-off
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-off.yaml
+          extend:
+            path: /log/tab/off
+            method: POST
+        - id: log-tab-delete
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-delete.yaml
+          extend:
+            path: /log/tab/delete
+            method: POST
+        - id: log-session-upsert
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-upsert.yaml
+          extend:
+            path: /log/session/upsert
+            method: POST
+        - id: log-session-kind
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-kind.yaml
+          extend:
+            path: /log/session/detail
+            method: POST
+        - id: log-current-get
+          channel: network
+          protocol: http
+          contract: ./contracts/log-current-get.yaml
+          extend:
+            path: /log/current/get
+            method: POST
+        - id: log-current-put
+          channel: network
+          protocol: http
+          contract: ./contracts/log-current-put.yaml
+          extend:
+            path: /log/current/put
             method: POST
 
       consumes: []

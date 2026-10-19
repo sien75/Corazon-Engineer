@@ -1,0 +1,16 @@
+id: log-current-get
+description: Read the workspace row — which tabs are open (in display order) and which session the shell's own chat is
+
+request: {}
+
+response:
+  status: 200
+  body:
+    openTabs: [string]  # t_<hex> ids, in display order; empty when nothing is open
+    mainSession: string  # the main conversation's session id; empty when none has been created
+    updatedAt: string  # last change, RFC3339
+
+errors:
+  - status: 500
+    code: internal
+    description: server internal error

@@ -1,12 +1,12 @@
 id: log-tab-new
-description: Create an empty tab record and assign its id; what it holds is written afterwards
+description: Create an empty tab record, assign its id, and add it to the open list (current); what it holds is written afterwards
 
 request: {}
 
 response:
   status: 200
   body:
-    tabId: string  # the assigned t_<hex>. The record exists but has no layout yet: a tab is created before whatever lives in it
+    tabId: string  # the assigned t_<hex>. The record exists but has no layout yet: a tab is created before whatever lives in it. It is appended to current.openTabs
 
 errors:
   - status: 500

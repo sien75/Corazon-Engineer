@@ -1,0 +1,22 @@
+id: log-session-upsert
+description: Store a conversation's role (main / sub); an existing row keeps its createdAt and takes the new kind
+
+request:
+  body:
+    sessionId: string  # conversation session id
+    kind?: main | sub  # the role; omitted or unknown reads as "sub"
+
+response:
+  status: 200
+  body:
+    sessionId: string
+    kind: main | sub
+    createdAt: string  # first write time, RFC3339
+
+errors:
+  - status: 400
+    code: bad_request
+    description: sessionId missing
+  - status: 500
+    code: internal
+    description: server internal error

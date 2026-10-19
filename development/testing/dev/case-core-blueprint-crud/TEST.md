@@ -1,9 +1,10 @@
 # Test: core-blueprint-crud
 
-A blueprint is a **directory** `<project>/.agents/blueprints/<slug>/` holding
-**exactly two files and nothing else**: `README.md` (what the agent instantiated
-from it is, and what its UI is for — this becomes that agent's opening context)
-and `index.html` (the UI itself, which must be self-contained). There is no
+A blueprint is a **directory** `<project>/.agents/blueprints/<slug>/` with **two
+required files**: `README.md` (what the agent instantiated from it is, and what its
+UI is for — this becomes that agent's opening context) and `index.html` (the UI's
+entry). Anything else in the directory belongs to the page and is copied with it
+(see `case-core-agent-instantiate`). There is no
 discovery and no database — the directory listing is the whole truth, and static
 lists and reads it. The agent creates, updates and deletes blueprints with its own
 file tools; the ai service has no CRUD interface, its only blueprint involvement is
@@ -46,7 +47,7 @@ for i in $(seq 1 60); do
 done
 ```
 
-## 1. a blueprint is those two files
+## 1. a blueprint is its directory
 
 ```bash
 mkdir -p "$BPS/payment-logs"
@@ -62,13 +63,13 @@ curl -s -X POST $STATIC/static/query-detail -d 'type: blueprint
 id: .agents/blueprints/payment-logs/README.md'
 ```
 
-Expected: `blueprints` holds exactly the two files of that directory —
+Expected: `blueprints` holds the files of that directory —
 `.agents/blueprints/payment-logs/README.md` and `.../index.html`; the detail call
 returns each of them verbatim under `blueprint`, the README as markdown. The
 `<title>` is the display name; the README's first line is the description. There
-is no manifest and no metadata beyond those two files.
+is no manifest and no metadata beyond the files themselves.
 
-## 2. the two-file rule is decided at instantiation, not by static
+## 2. the page's own files are part of the blueprint
 
 ```bash
 printf 'body { margin: 0; }\n' > "$BPS/payment-logs/style.css"
@@ -76,14 +77,9 @@ curl -s -X POST $STATIC/static/query -d '{}' | grep -A4 '^blueprints:'
 ```
 
 Expected: static lists all three files — it lists the tree and does not judge what
-a blueprint is. The rule is enforced where the copy is made: `POST /ai/new` with
-`blueprint: payment-logs` answers **400 `bad_request`** naming `style.css` and
-copies nothing (see `case-core-agent-instantiate` step 5). Delete the extra file
-before going on:
-
-```bash
-rm "$BPS/payment-logs/style.css"
-```
+a blueprint is. Extra files are not an error: instantiation copies the whole
+directory, so `style.css` ships with the page and `index.html` can link
+`./style.css` (see `case-core-agent-instantiate` step 1–2).
 
 ## 3. an html-only directory still instantiates? no — it is refused
 

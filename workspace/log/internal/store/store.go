@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"gopkg.in/yaml.v3"
+	_ "modernc.org/sqlite"
 )
 
 const PageSize = 100
@@ -114,7 +114,13 @@ func Open(root string) (*Store, error) {
 	)`); err != nil {
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	st := &Store{db: db}
+	// sessions + current are the workspace side of the same database (see
+	// workspace.go): what a conversation is, and what is open right now.
+	if err := st.createWorkspaceTables(); err != nil {
+		return nil, err
+	}
+	return st, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -269,6 +275,7 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 		COUNT(*) AS msg_count,
 		MIN(r.created_at) AS first_at,
 		MAX(r.created_at) AS last_at,
+		COALESCE(s.kind, 'sub') AS kind,
 		COALESCE(
 			(SELECT r2.payload FROM records r2
 				WHERE r2.kind = 'conversation' AND r2.session_id = r.session_id
@@ -279,6 +286,7 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 				ORDER BY r3.rowid ASC LIMIT 1)
 		) AS preview_payload
 		FROM records r
+		LEFT JOIN sessions s ON s.session_id = r.session_id
 		WHERE r.kind = 'conversation' AND r.session_id IS NOT NULL AND r.session_id <> ''
 		GROUP BY r.session_id
 		ORDER BY last_at DESC, r.session_id DESC
@@ -290,10 +298,10 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 	defer rows.Close()
 	sessions := []map[string]interface{}{}
 	for rows.Next() {
-		var sessionID, firstAt, lastAt string
+		var sessionID, firstAt, lastAt, kind string
 		var count int
 		var previewPayload sql.NullString
-		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &previewPayload); err != nil {
+		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &kind, &previewPayload); err != nil {
 			return nil, false, err
 		}
 		preview := ""
@@ -307,6 +315,7 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 		}
 		sessions = append(sessions, map[string]interface{}{
 			"sessionId": sessionID,
+			"kind":      kind,
 			"createdAt": firstAt,
 			"lastAt":    lastAt,
 			"count":     count,
@@ -345,11 +354,18 @@ func (s *Store) PutTab(tabID string, layout interface{}) (Tab, error) {
 	return s.GetTab(tabID)
 }
 
-// NewTab creates a tab with no layout yet and returns it. A tab is created
-// before whatever lives in it, so there is an id to hand to the service that
-// opens its conversation.
+// NewTab creates a tab with no layout yet, records it as open, and returns it. A
+// tab is created before whatever lives in it, so there is an id to hand to the
+// service that opens its conversation.
 func (s *Store) NewTab() (Tab, error) {
-	return s.PutTab("", map[string]interface{}{})
+	tab, err := s.PutTab("", map[string]interface{}{})
+	if err != nil {
+		return Tab{}, err
+	}
+	if err := s.AddOpenTab(tab.TabID); err != nil {
+		return Tab{}, err
+	}
+	return tab, nil
 }
 
 // GetTab returns one tab; sql.ErrNoRows when it does not exist.
@@ -459,12 +475,20 @@ func (s *Store) SessionMessages(sessionID string) ([]map[string]interface{}, err
 	return messages, rows.Err()
 }
 
-// DeleteSession removes every conversation record belonging to a session and
-// returns the number of deleted rows.
+// DeleteSession removes every conversation record belonging to a session, its
+// session row, and (when it is the main one) the main-session pointer, and
+// returns the number of deleted records.
 func (s *Store) DeleteSession(sessionID string) (int64, error) {
 	res, err := s.db.Exec(`DELETE FROM records
 		WHERE kind = 'conversation' AND session_id = ?`, sessionID)
 	if err != nil {
+		return 0, err
+	}
+	if _, err := s.db.Exec(`DELETE FROM sessions WHERE session_id = ?`, sessionID); err != nil {
+		return 0, err
+	}
+	if _, err := s.db.Exec(`UPDATE current SET main_session = '', updated_at = ?
+		WHERE id = 1 AND main_session = ?`, time.Now().UTC().Format(time.RFC3339), sessionID); err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()

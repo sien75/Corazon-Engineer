@@ -91,7 +91,7 @@ nohup "$BIN/engineer" serve-static --root "$ROOT" --bind "$BIND" --port "$PORT_S
 echo $! >"$D/static.pid"
 # exec so the recorded pid IS the server process (not a wrapper that outlives kill)
 ( cd "$ROOT/workspace/ai" && exec nohup bun src/main.ts \
-    --root "$ROOT" --agents "$ROOT/agents/AGENTS.md" \
+    --root "$ROOT" --agents "$ROOT/agents" \
     --bind "$BIND" --port "$PORT_AI" \
     --log "$BASE:$PORT_LOG" --static "$BASE:$PORT_STATIC" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"

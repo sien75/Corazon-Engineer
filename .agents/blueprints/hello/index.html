@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="zh">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Hello</title>
-  <!-- 初始化：蓝图自己在首帧前把主题设好，读的是同源共享的那个 key（外壳在别处
-       页面改了也由外壳推，这里只负责"第一眼就是对的"，不闪浅色）。 -->
+  <!-- Bootstrap: the page sets the theme itself before first paint, reading the
+       same key the shell shares; the shell pushes later changes. Only job here is
+       that the first paint is already right, with no light flash. -->
   <script>
     document.documentElement.setAttribute(
       "data-theme", localStorage.getItem("engineer.theme") || "light");

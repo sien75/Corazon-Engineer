@@ -36,6 +36,12 @@ func New(st *store.Store) *Server {
 	s.mux.HandleFunc("POST /log/tab/mutation", s.handleTabMutation)
 	s.mux.HandleFunc("POST /log/tab/detail", s.handleTabDetail)
 	s.mux.HandleFunc("POST /log/tab/list", s.handleTabList)
+	s.mux.HandleFunc("POST /log/tab/off", s.handleTabOff)
+	s.mux.HandleFunc("POST /log/tab/delete", s.handleTabDelete)
+	s.mux.HandleFunc("POST /log/session/upsert", s.handleSessionUpsert)
+	s.mux.HandleFunc("POST /log/session/detail", s.handleSessionGet)
+	s.mux.HandleFunc("POST /log/current/get", s.handleCurrentGet)
+	s.mux.HandleFunc("POST /log/current/put", s.handleCurrentPut)
 	s.mux.HandleFunc("POST /log/stream", s.handleStream)
 	return s
 }
@@ -124,11 +130,11 @@ func pageNum(raw interface{}) int {
 
 func (s *Server) handleMutation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Op        string          `yaml:"op"`
-		Kind      string          `yaml:"kind"`
-		Env       string          `yaml:"env"`
-		Atom      string          `yaml:"atom"`
-		SessionID string          `yaml:"sessionId"`
+		Op        string      `yaml:"op"`
+		Kind      string      `yaml:"kind"`
+		Env       string      `yaml:"env"`
+		Atom      string      `yaml:"atom"`
+		SessionID string      `yaml:"sessionId"`
 		Payload   interface{} `yaml:"payload"`
 	}
 	if !decode(w, r, &req) {
@@ -242,6 +248,132 @@ func (s *Server) handleTabList(w http.ResponseWriter, r *http.Request) {
 		"hasMore":  hasMore,
 		"pageSize": store.PageSize,
 	})
+}
+
+func (s *Server) handleTabOff(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TabID string `yaml:"tabId"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.TabID) == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "tabId missing")
+		return
+	}
+	// Closing a tab keeps its record (it can be reopened); only the open list
+	// changes.
+	if err := s.store.RemoveOpenTab(req.TabID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"tabId": req.TabID})
+}
+
+func (s *Server) handleTabDelete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TabID string `yaml:"tabId"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.TabID) == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "tabId missing")
+		return
+	}
+	if _, err := s.store.GetTab(req.TabID); errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "not_found", "tab does not exist")
+		return
+	}
+	if err := s.store.DeleteTab(req.TabID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"tabId": req.TabID})
+}
+
+// ---------- sessions ----------
+//
+// A session's kind is workspace state, not a record: one row per conversation,
+// read by ai to pick the spec and the tools, and by the shell to tell its own
+// chat from a blueprint's.
+
+func (s *Server) handleSessionUpsert(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `yaml:"sessionId"`
+		Kind      string `yaml:"kind"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "sessionId missing")
+		return
+	}
+	sess, err := s.store.UpsertSession(req.SessionID, req.Kind)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, sess)
+}
+
+func (s *Server) handleSessionGet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `yaml:"sessionId"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "sessionId missing")
+		return
+	}
+	sess, err := s.store.GetSession(req.SessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "not_found", "session does not exist")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, sess)
+}
+
+// ---------- current ----------
+//
+// The workspace row: which tabs are open (in display order) and which session the
+// shell's own chat is. The shell reads it on load instead of restoring anything
+// from local storage.
+
+func (s *Server) handleCurrentGet(w http.ResponseWriter, r *http.Request) {
+	var req struct{}
+	if !decode(w, r, &req) {
+		return
+	}
+	cur, err := s.store.Current()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, cur.Body())
+}
+
+func (s *Server) handleCurrentPut(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OpenTabs    []string `yaml:"openTabs"`
+		MainSession string   `yaml:"mainSession"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	cur, err := s.store.PutCurrent(req.OpenTabs, req.MainSession)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, cur.Body())
 }
 
 // ---------- log/list ----------

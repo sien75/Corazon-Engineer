@@ -106,16 +106,23 @@ export function serve(registry: Registry, addr: string): void {
               throw err;
             }
           }
+          // kind picks the role: "main" is the shell's own chat (no blueprint),
+          // anything else is a blueprint agent. Unknown values are the caller's
+          // mistake, not a server failure.
+          const kind = body.kind === undefined || body.kind === null ? "sub" : String(body.kind);
+          if (kind !== "main" && kind !== "sub") {
+            return errRes(400, "bad_request", `kind must be main | sub, got ${JSON.stringify(kind)}`);
+          }
           let sess;
           try {
-            sess = await registry.new(blueprint || undefined);
+            sess = await registry.new(blueprint || undefined, kind);
           } catch (err) {
             if (err instanceof BlueprintError) {
               return errRes(400, "bad_request", err.message);
             }
             throw err;
           }
-          return yamlRes({ sessionId: sess.id });
+          return yamlRes({ sessionId: sess.id, kind });
         }
 
         case "/ai/resume": {
@@ -151,9 +158,7 @@ export function serve(registry: Registry, addr: string): void {
           }
           const sess = registry.get(String(body.id ?? ""));
           if (!sess) return errRes(404, "not_found", "session not found");
-          // The tab this turn speaks for: the layout tool's target, named by the
-          // caller because a conversation may be shown in more than one tab.
-          registry.ask(sess, blocks, String(body.tabId ?? "").trim());
+          registry.ask(sess, blocks);
           return yamlRes({ sessionId: sess.id });
         }
 

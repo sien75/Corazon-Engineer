@@ -43,7 +43,7 @@ sleep 1
 
 (cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8910 --stub \
   --log http://localhost:8911 --static http://localhost:8502 \
-  --agents "$ROOTDIR/agents/AGENTS.md" \
+  --agents "$ROOTDIR/agents" \
   >/tmp/chat-scroll-ai.log 2>&1 &)
 
 # web assets

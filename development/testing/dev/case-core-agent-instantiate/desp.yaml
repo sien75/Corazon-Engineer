@@ -1,3 +1,3 @@
 id: core-agent-instantiate
-description: blueprint → agent — ai-new copies the prototype's two files under the new session id, appends the README to the system prompt, web serves that copy at /agent/<sessionId>/, and the two-file rule is enforced
+description: blueprint → agent — ai-new copies the prototype directory under the new session id, appends the README to the system prompt, web serves that copy at /agent/<sessionId>/ (assets by relative URL), and missing README.md / index.html is a 400
 atoms: [ai, web, log]

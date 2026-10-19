@@ -101,7 +101,7 @@ YAML
 
 - `POST /log/delete` (network / http)
 
-Delete all conversation records belonging to a session
+Delete a conversation session's records and its session row (clearing it as main when it was)
 
 ### Request body
 
@@ -350,7 +350,7 @@ YAML
 
 - `POST /log/tab/new` (network / http)
 
-Create an empty tab record and assign its id; what it holds is written afterwards
+Create an empty tab record, assign its id, and add it to the open list (current); what it holds is written afterwards
 
 ### Request body
 
@@ -485,5 +485,209 @@ tabs:
 curl -s -X POST <address>/log/tab/list \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
   pageNum?: number
+YAML
+```
+
+## log-tab-off
+
+- `POST /log/tab/off` (network / http)
+
+Close a tab — take it out of the open list, keeping its record so it can be reopened
+
+### Request body
+
+```yaml
+tabId: string
+```
+
+### Response (status 200)
+
+```yaml
+tabId: string  # echoed
+```
+
+### Errors
+
+- 400 `bad_request` — tabId missing
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/tab/off \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+tabId: t_1a2b3c
+YAML
+```
+
+## log-tab-delete
+
+- `POST /log/tab/delete` (network / http)
+
+Delete a tab record and take it out of the open list; its conversations are deleted separately (log-delete / ai-delete)
+
+### Request body
+
+```yaml
+tabId: string
+```
+
+### Response (status 200)
+
+```yaml
+tabId: string  # echoed
+```
+
+### Errors
+
+- 400 `bad_request` — tabId missing
+- 404 `not_found` — tab does not exist
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/tab/delete \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+tabId: t_1a2b3c
+YAML
+```
+
+## log-session-upsert
+
+- `POST /log/session/upsert` (network / http)
+
+Store a conversation's role (main / sub); an existing row keeps its createdAt and takes the new kind
+
+### Request body
+
+```yaml
+sessionId: string  # conversation session id
+kind?: main | sub  # the role; omitted or unknown reads as "sub"
+```
+
+### Response (status 200)
+
+```yaml
+sessionId: string
+kind: main | sub
+createdAt: string  # first write time, RFC3339
+```
+
+### Errors
+
+- 400 `bad_request` — sessionId missing
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/session/upsert \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+sessionId: s_1a2b3c
+kind: main
+YAML
+```
+
+## log-session-kind
+
+- `POST /log/session/detail` (network / http)
+
+Read one conversation's role; a session with no row is not an error to the caller, but this endpoint answers 404
+
+### Request body
+
+```yaml
+sessionId: string  # conversation session id
+```
+
+### Response (status 200)
+
+```yaml
+sessionId: string
+kind: main | sub
+createdAt: string
+```
+
+### Errors
+
+- 400 `bad_request` — sessionId missing
+- 404 `not_found` — session does not exist
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/session/detail \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+sessionId: s_1a2b3c
+YAML
+```
+
+## log-current-get
+
+- `POST /log/current/get` (network / http)
+
+Read the workspace row — which tabs are open (in display order) and which session the shell's own chat is
+
+### Request body
+
+```yaml
+{}
+```
+
+### Response (status 200)
+
+```yaml
+openTabs: [string]  # t_<hex> ids, in display order
+mainSession: string  # the main conversation's session id; empty when none
+updatedAt: string
+```
+
+### Errors
+
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/current/get \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+YAML
+```
+
+## log-current-put
+
+- `POST /log/current/put` (network / http)
+
+Replace the workspace row; used to repair or reorder the open list (opening and closing a tab has its own endpoints)
+
+### Request body
+
+```yaml
+openTabs: [string]  # the whole open list, in display order
+mainSession?: string
+```
+
+### Response (status 200)
+
+```yaml
+openTabs: [string]
+mainSession: string
+updatedAt: string
+```
+
+### Errors
+
+- 400 `bad_request` — bad request
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/current/put \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+openTabs: [t_1a2b3c]
+mainSession: s_1a2b3c
 YAML
 ```

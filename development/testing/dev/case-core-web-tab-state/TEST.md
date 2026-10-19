@@ -44,7 +44,7 @@ sleep 1
 
 (cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8843 --stub \
   --log http://localhost:8841 --static http://localhost:8842 \
-  --agents "$ROOTDIR/agents/AGENTS.md" \
+  --agents "$ROOTDIR/agents" \
   >/tmp/tab-state-ai.log 2>&1 &)
 
 # wait for ai first: the deep links below must not race the boot

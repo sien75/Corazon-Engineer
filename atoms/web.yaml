@@ -1,6 +1,6 @@
 atoms:
   - name: web
-    description: Corazon Engineer web frontend — renders the architecture graph (static-query), drives ai conversation, shows log records; its file server (workspace/web/server) is multi-root — /config.js and the app assets come from --assets, while /pages/<id>/ serves the blueprint files in --pages, and /pages/<id> (no slash) is an SPA route that renders that blueprint in an iframe; it also owns the page theme — /theme.css is the palette both the shell and blueprints link, and the shell writes the current data-theme into the page's document
+    description: Corazon Engineer web shell — one conversation (main) plus the tabs main opens (or the launcher opens, via the + button). every conversation — main and each tab — is the <engineer-chat> custom element under components/ (one implementation, shadow DOM, /components/chat.css); every page tab is an iframe onto an agent's own page. The workspace (which tabs are open, each tab's pane tree, which session is main) is read from log, and the shell resumes the conversations a tab shows before drawing it; main's workspace tools open, split, close and delete tabs, and their tool frames make the shell re-read the workspace. The launcher lists blueprints (static) and recent sessions (log). The file server (workspace/web/server) is multi-root — /config.js and the app assets come from --assets, while /agent/<sessionId>/ serves the agent's copy under --agents. It owns the page theme — /theme.css is the palette both the shell and blueprints link, and the shell writes the current data-theme into a page's document
     path: ./workspace/web
     runtime_type: browser
     role: service
@@ -21,13 +21,6 @@ atoms:
           contract: ./contracts/static-query-detail.yaml
           extend:
             path: /static/query-detail
-            method: POST
-        - id: static-stream
-          channel: network
-          protocol: http
-          contract: ./contracts/static-stream.yaml
-          extend:
-            path: /static/stream
             method: POST
         - id: ai-new
           channel: network
@@ -50,19 +43,19 @@ atoms:
           extend:
             path: /ai/stream
             method: POST
-        - id: ai-resume
-          channel: network
-          protocol: http
-          contract: ./contracts/ai-resume.yaml
-          extend:
-            path: /ai/resume
-            method: POST
         - id: ai-stop
           channel: network
           protocol: http
           contract: ./contracts/ai-stop.yaml
           extend:
             path: /ai/stop
+            method: POST
+        - id: ai-resume
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-resume.yaml
+          extend:
+            path: /ai/resume
             method: POST
         - id: ai-blobs
           channel: network
@@ -85,12 +78,12 @@ atoms:
           extend:
             path: /log/tab/new
             method: POST
-        - id: log-tab-list
+        - id: log-tab-mutation
           channel: network
           protocol: http
-          contract: ./contracts/log-tab-list.yaml
+          contract: ./contracts/log-tab-mutation.yaml
           extend:
-            path: /log/tab/list
+            path: /log/tab/mutation
             method: POST
         - id: log-tab-detail
           channel: network
@@ -99,26 +92,33 @@ atoms:
           extend:
             path: /log/tab/detail
             method: POST
-        - id: log-tab-mutation
+        - id: log-tab-off
           channel: network
           protocol: http
-          contract: ./contracts/log-tab-mutation.yaml
+          contract: ./contracts/log-tab-off.yaml
           extend:
-            path: /log/tab/mutation
+            path: /log/tab/off
             method: POST
-        - id: log-delete
+        - id: log-current-get
           channel: network
           protocol: http
-          contract: ./contracts/log-delete.yaml
+          contract: ./contracts/log-current-get.yaml
           extend:
-            path: /log/delete
+            path: /log/current/get
             method: POST
-        - id: ai-delete
+        - id: log-current-put
           channel: network
           protocol: http
-          contract: ./contracts/ai-delete.yaml
+          contract: ./contracts/log-current-put.yaml
           extend:
-            path: /ai/delete
+            path: /log/current/put
+            method: POST
+        - id: log-session-kind
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-kind.yaml
+          extend:
+            path: /log/session/detail
             method: POST
         - id: log-session-detail
           channel: network
@@ -126,18 +126,4 @@ atoms:
           contract: ./contracts/log-session-detail.yaml
           extend:
             path: /log/session-detail
-            method: POST
-        - id: log-query
-          channel: network
-          protocol: http
-          contract: ./contracts/log-query.yaml
-          extend:
-            path: /log/query
-            method: POST
-        - id: log-query-detail
-          channel: network
-          protocol: http
-          contract: ./contracts/log-query-detail.yaml
-          extend:
-            path: /log/query-detail
             method: POST

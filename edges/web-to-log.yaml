@@ -1,20 +1,4 @@
 edges:
-  - id: web-to-log
-    from: web
-    from_interface: log-query
-    to: log
-    to_interface: log-query
-    channel: network
-    protocol: http
-    description: Web frontend queries log records (call / observe / conversation) — the log-viewer and service-endpoints blueprints read them in the browser
-  - id: web-to-log-query-detail
-    from: web
-    from_interface: log-query-detail
-    to: log
-    to_interface: log-query-detail
-    channel: network
-    protocol: http
-    description: Web frontend opens one record's full content — the log-viewer blueprint shows the selected record
   - id: web-to-log-list
     from: web
     from_interface: log-list
@@ -22,23 +6,7 @@ edges:
     to_interface: log-list
     channel: network
     protocol: http
-    description: Web frontend lists conversation sessions for the /resume picker
-  - id: web-to-log-session-detail
-    from: web
-    from_interface: log-session-detail
-    to: log
-    to_interface: log-session-detail
-    channel: network
-    protocol: http
-    description: Web frontend fetches a session's messages to render resumed history
-  - id: web-to-log-delete
-    from: web
-    from_interface: log-delete
-    to: log
-    to_interface: log-delete
-    channel: network
-    protocol: http
-    description: Web frontend purges a session's conversation records when deleting it
+    description: the launcher lists recent conversations
   - id: web-to-log-tab-new
     from: web
     from_interface: log-tab-new
@@ -46,7 +14,7 @@ edges:
     to_interface: log-tab-new
     channel: network
     protocol: http
-    description: Web frontend creates a tab before anything goes in it — the id comes first, then the conversation that fills it
+    description: the launcher's pick creates the tab record for the agent it opens
   - id: web-to-log-tab-mutation
     from: web
     from_interface: log-tab-mutation
@@ -54,7 +22,7 @@ edges:
     to_interface: log-tab-mutation
     channel: network
     protocol: http
-    description: Web frontend creates a tab record (its tabId + default single-pane layout) when it opens a tab that has none
+    description: the launcher writes the new tab's single-pane layout
   - id: web-to-log-tab-detail
     from: web
     from_interface: log-tab-detail
@@ -62,12 +30,44 @@ edges:
     to_interface: log-tab-detail
     channel: network
     protocol: http
-    description: Web frontend reads a tab's layout when the launcher opens it from recents
-  - id: web-to-log-tab-list
+    description: the shell reads a tab's pane tree when it restores the workspace
+  - id: web-to-log-tab-off
     from: web
-    from_interface: log-tab-list
+    from_interface: log-tab-off
     to: log
-    to_interface: log-tab-list
+    to_interface: log-tab-off
     channel: network
     protocol: http
-    description: Web frontend lists tab records for the launcher's recent section
+    description: the shell closes a tab the user clicked away (the record is kept)
+  - id: web-to-log-current-get
+    from: web
+    from_interface: log-current-get
+    to: log
+    to_interface: log-current-get
+    channel: network
+    protocol: http
+    description: the shell reads which tabs are open and the main session on load
+  - id: web-to-log-current-put
+    from: web
+    from_interface: log-current-put
+    to: log
+    to_interface: log-current-put
+    channel: network
+    protocol: http
+    description: the shell repairs the open list (drops tab ids whose record is gone) and records a new main session
+  - id: web-to-log-session-kind
+    from: web
+    from_interface: log-session-kind
+    to: log
+    to_interface: log-session-kind
+    channel: network
+    protocol: http
+    description: the shell checks that the main session still exists before starting main on it
+  - id: web-to-log-session-detail
+    from: web
+    from_interface: log-session-detail
+    to: log
+    to_interface: log-session-detail
+    channel: network
+    protocol: http
+    description: the shell replays main's conversation into its chat pane on load

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Simple</title>
+  <!-- Theme before first paint. The shell keeps data-theme in sync afterwards. -->
+  <script>
+    (function () {
+      var t = "light";
+      try {
+        var stored = localStorage.getItem("engineer.theme");
+        if (stored === "dark" || stored === "solarized" || stored === "light") t = stored;
+      } catch (e) {}
+      document.documentElement.setAttribute("data-theme", t);
+      document.documentElement.style.colorScheme = t === "dark" ? "dark" : "light";
+    })();
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    html, body { height: 100%; margin: 0; background: var(--surface); color: var(--fg); }
+    engineer-chat { display: block; height: 100%; }
+  </style>
+</head>
+<body>
+  <!-- The whole conversation is one element. Its session is this page's own
+       /agent/<sessionId>/; it loads /config.js for the ai address itself. -->
+  <engineer-chat autofocus></engineer-chat>
+  <script type="module" src="/components/chat.js"></script>
+</body>
+</html>

@@ -7,7 +7,7 @@ Package Corazon Engineer as a one-click tarball and install it on a fresh machin
 ```
 engineer-<version>-<os>-<arch>/
 ├── bin/          engineer  engineer-ai
-├── web/          index.html  app.js  style.css  vendor/
+├── web/          index.html  app.js  style.css  theme.css  vendor/  components/
 ├── agents/       the AI capability description shipped with the tool
 ├── docs/         published documentation
 └── install.sh    install / upgrade
@@ -75,10 +75,11 @@ mkdir -p "$OUT"/{bin,web}
 # 3. web assets — shipped loose next to the binary, which serves them from `--assets`
 #    (the layout the launcher passes at runtime), so the frontend stays editable
 #    without a rebuild. Every local asset index.html links must be here: theme.css
-#    is the shell's palette and an agent page's too — shipping without it strips the
-#    whole UI of its colors.
+#    is the shell's palette (and an agent page's), and components/ holds the
+#    <engineer-chat> element every conversation mounts — shipping without either
+#    strips the UI of its colors or its chat.
 cp workspace/web/{index.html,app.js,style.css,theme.css} "$OUT/web/"
-cp -R workspace/web/vendor "$OUT/web/"
+cp -R workspace/web/vendor workspace/web/components "$OUT/web/"
 
 # 3b. guard: every asset index.html links (except the generated /config.js) must
 #     actually be in the package — this is how theme.css once went missing.

@@ -5,7 +5,7 @@ description: 按 development/testing 的约定补一个可复现的 E2E 用例�
 
 给某个行为补一个 E2E 用例，放进 `development/testing/<env>/`。
 
-1. 先看相邻用例（例如 `case-core-static-validate/`）的写法，格式保持一致。
+1. 先看相邻用例（例如 `case-core-static-query/`）的写法，格式保持一致。
 2. 建目录 `development/testing/dev/case-core-<atom>-<行为>/`：
    - `desp.yaml`：`id`、`description`、`atoms`
    - `TEST.md`：`# Test: <id>` → 说明 → `## Setup`（起服务 + 等端口）→ `## 1. <断言>`，每节一段可直接复制的 bash + Expected。

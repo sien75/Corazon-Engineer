@@ -4,7 +4,7 @@
 
 **Corazon Engineer** 是一个位于 Coding Agent 之上的 Engineering Agent。用 Corazon Engineer 开发本项目,即为 dogfooding。
 
-> 随工具发布的规范是 `agents/AGENTS.md`(中文在 `agents/zh/`):如何使用 Corazon Engineer 开发 Corazon-like 项目。
+> 随工具发布的规范分两份:`agents/main/AGENTS.md`(外壳里的 main)与 `agents/sub/AGENTS.md`(blueprint agent),中文镜像在 `agents/zh/`。
 
 ## 开发流程 SOP
 
@@ -17,6 +17,7 @@
 - 每步立即测试。同一失败连续 **3 次**,立即停止,报告报错、已尝试的方案与疑似阻塞,并给出备选思路。
 - 跑 E2E 用例时一律 **no-proxy**(`NO_PROXY='*' no_proxy='*'`,并清掉 `http_proxy` / `https_proxy`):本机代理可能连不通,会让 ai 的模型初始化空转 100% CPU 而不是报错。
 - 提交与推送都经 `my-server`(`ssh my-server`),不在本机做:在 `my-server` 上按仓库名找到本项目的 clone → 改动以 patch 传过去 → 在 `my-server` commit 并 push → 本机删除工作区变动并 pull 回来。**严禁本机直接 push。**
+- 每次提交前检查敏感信息:(1) 本地路径与用户名(`/Users/<name>`、主机名),(2) 凭据与密钥(API key / token、`.env`、私钥),(3) 个人信息与私有端点(邮箱、手机号、内网主机、`.engineer/` 运行数据)。查到了 → 先问再提交;没查到 → 说一句查过了。
 
 ### 第一类:常规需求开发
 

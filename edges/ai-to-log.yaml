@@ -30,7 +30,7 @@ edges:
     to_interface: log-tab-detail
     channel: network
     protocol: http
-    description: the layout tool reads the current tab's pane tree before it changes anything
+    description: tab-mutation (main's tool) reads the tab's pane tree before it rewrites it
   - id: ai-to-log-tab-mutation
     from: ai
     from_interface: log-tab-mutation
@@ -38,4 +38,68 @@ edges:
     to_interface: log-tab-mutation
     channel: network
     protocol: http
-    description: the layout tool replaces the current tab's pane tree
+    description: tab-mutation (main's tool) replaces a tab's pane tree
+  - id: ai-to-log-tab-new
+    from: ai
+    from_interface: log-tab-new
+    to: log
+    to_interface: log-tab-new
+    channel: network
+    protocol: http
+    description: tab-on (main's tool) creates the tab record for a new agent
+  - id: ai-to-log-tab-off
+    from: ai
+    from_interface: log-tab-off
+    to: log
+    to_interface: log-tab-off
+    channel: network
+    protocol: http
+    description: tab-off (main's tool) closes a tab, keeping its record
+  - id: ai-to-log-tab-delete
+    from: ai
+    from_interface: log-tab-delete
+    to: log
+    to_interface: log-tab-delete
+    channel: network
+    protocol: http
+    description: tab-delete (main's tool) removes the tab record after its agents are deleted
+  - id: ai-to-log-list
+    from: ai
+    from_interface: log-list
+    to: log
+    to_interface: log-list
+    channel: network
+    protocol: http
+    description: session-list (main's tool) reads the project's conversations
+  - id: ai-to-log-delete
+    from: ai
+    from_interface: log-delete
+    to: log
+    to_interface: log-delete
+    channel: network
+    protocol: http
+    description: tab-delete / session deletion removes a conversation's records and its session row
+  - id: ai-to-log-session-upsert
+    from: ai
+    from_interface: log-session-upsert
+    to: log
+    to_interface: log-session-upsert
+    channel: network
+    protocol: http
+    description: ai records a new conversation's kind (main / sub)
+  - id: ai-to-log-session-kind
+    from: ai
+    from_interface: log-session-kind
+    to: log
+    to_interface: log-session-kind
+    channel: network
+    protocol: http
+    description: resume reads a conversation's kind to pick the role spec and tools
+  - id: ai-to-log-current-get
+    from: ai
+    from_interface: log-current-get
+    to: log
+    to_interface: log-current-get
+    channel: network
+    protocol: http
+    description: tab-list (main's tool) reads which tabs are open and the main session

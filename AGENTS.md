@@ -2,7 +2,7 @@
 
 **Corazon Engineer** is an engineering agent above the coding agent. Developing this project with Corazon Engineer is dogfooding.
 
-> The spec shipped with the tool is `agents/AGENTS.md` (Chinese in `agents/zh/`): how to use Corazon Engineer to develop a Corazon-like project.
+> The spec shipped with the tool is two files — `agents/main/AGENTS.md` (the shell's main conversation) and `agents/sub/AGENTS.md` (a blueprint agent) — with Chinese mirrors in `agents/zh/`.
 
 ## Development workflow (SOP)
 
@@ -15,6 +15,7 @@ General rules:
 - Test each step immediately. If the same failure repeats **3 times in a row**, stop and report the error, what you tried, and the suspected blocker, with alternatives.
 - Run E2E test cases with **no proxy** (`NO_PROXY='*' no_proxy='*'`, and clear `http_proxy` / `https_proxy`): the local proxy may be unreachable, which makes ai's model init spin at 100% CPU instead of failing.
 - Commit & push go through `my-server` (`ssh my-server`), not the local machine: locate this project's clone on `my-server` (search by repo name) → send the changes as a patch → commit & push on `my-server` → delete the local working-tree changes and pull. **Never push directly from the local machine.**
+- Check for sensitive information before every commit: (1) local paths and usernames (`/Users/<name>`, hostnames), (2) credentials and keys (API keys / tokens, `.env`, private keys), (3) personal data and private endpoints (emails, phone numbers, internal hosts, `.engineer/` runtime data). Found something → ask before committing; nothing found → say so.
 
 ### Type 1 — Normal requirement development
 
@@ -50,6 +51,6 @@ Initialization is this same type applied to a project that has no how-to yet: cr
 
 - `development/` — what the development process produces: `iterations/` (the AI-generated plan per requirement, one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created in Phase 1 and kept updated), `plans/` (human discussion / raw notes, one dir per iteration number), `testing/` (E2E tests).
 - `how-to/` — how to build and operate the system: `deploy/` (build / pack / launch / deploy, per environment), `operation/` (connect to / observe resources).
-- `agents/` — the shipped AI capability spec (`agents/AGENTS.md`, Chinese in `agents/zh/`) plus schema / contract / enum reference and the how-to writing guide (`agents/how-to.md`).
+- `agents/` — the shipped AI capability spec (`agents/main/AGENTS.md` and `agents/sub/AGENTS.md`, Chinese in `agents/zh/`) plus schema / contract / enum reference and the how-to writing guide (`agents/how-to.md`).
 - `.agents/` — project resources the Agent keeps as files: `blueprints/<slug>/` (Blueprint pages) and `skills/<slug>/SKILL.md` (kept skills). **The Blueprint template is `.agents/BLUEPRINT_how-to.md`** — write every new Blueprint from it; it is the single source for the page's `<title>`, the theme, and the minimal entry.
 - `atoms/` `edges/` `contracts/` `docs/` `notes/` `workspace/` — this project's schema and code.

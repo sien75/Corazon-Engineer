@@ -152,6 +152,11 @@ func handler(root, agents string, rt runtimeConfig) http.Handler {
 	index := filepath.Join(root, "index.html")
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// This is a local tool: its files change when the tool or the project does,
+		// and a cached app.js served next to a fresh index.html is a broken shell.
+		// Never store anything the shell loads.
+		w.Header().Set("Cache-Control", "no-store")
+
 		// net/http has already percent-decoded the path.
 		urlPath := r.URL.Path
 
@@ -195,6 +200,14 @@ func handler(root, agents string, rt runtimeConfig) http.Handler {
 		if data, err := os.ReadFile(file); err == nil {
 			w.Header().Set("Content-Type", contentType(file))
 			w.Write(data)
+			return
+		}
+
+		// Under /agent/ there is no SPA: the copy either has the file or it does
+		// not. Falling back to the shell would draw the shell inside the page's
+		// own frame (an agent whose copy is gone is not a route).
+		if strings.HasPrefix(urlPath, agentsPrefix) {
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 
