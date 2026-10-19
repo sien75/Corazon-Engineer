@@ -1,6 +1,6 @@
 atoms:
   - name: log
-    description: Corazon Engineer log service — owns the project's sqlite state — records (call / observe / conversation), tabs (each tab's pane tree), sessions (each conversation's kind, main or sub) and current (which tabs are open, and the main session); exposes log query/detail/search/mutation/stream APIs plus the tab, session and current ones
+    description: Corazon Engineer log service — owns the project's sqlite state — records (call / observe / conversation), tabs (each tab's pane tree, name and last activity), sessions (each conversation's kind, main or sub, and the tab it belongs to) and current (which tabs are open, and the main session); exposes log query/detail/search/mutation/stream APIs plus the tab, session and current ones
     path: ./workspace/log
     runtime_type: go
     runtime_version: "1.22"
@@ -91,6 +91,13 @@ atoms:
           contract: ./contracts/log-tab-list.yaml
           extend:
             path: /log/tab/list
+            method: POST
+        - id: log-tab-on
+          channel: network
+          protocol: http
+          contract: ./contracts/log-tab-on.yaml
+          extend:
+            path: /log/tab/on
             method: POST
         - id: log-tab-off
           channel: network

@@ -1,5 +1,5 @@
 id: log-tab-list
-description: List tab records, most recently updated first
+description: List tab records, most recently active first (a message in one of the tab's sessions counts)
 
 request:
   body:
@@ -10,9 +10,11 @@ response:
   body:
     tabs:
       - tabId: string
+        title: string  # display name: its panes' page titles joined by " · "
         layout: object  # the pane tree as stored
         createdAt: string  # first write time, RFC3339
-        updatedAt: string  # latest write time, RFC3339
+        updatedAt: string  # layout's latest write time, RFC3339
+        lastAt: string  # last activity: a layout write or a message in one of its sessions
     pageNum: number  # echoed page number
     hasMore: boolean  # whether more pages exist
     pageSize: 100  # fixed page size, 100 tabs per page

@@ -1,10 +1,17 @@
 # Test: core-log-tab
 
-Contract conformance for `log-tab-mutation` / `log-tab-detail` / `log-tab-list`.
+Contract conformance for `log-tab-new` / `log-tab-mutation` / `log-tab-detail` /
+`log-tab-list` / `log-tab-on` / `log-tab-off`.
 
-A tab record is **state**, not a record stream: one row per `tabId`, and a mutation
-with an existing `tabId` overwrites it in place (no second row). Log does not
-interpret the pane tree — it stores it as text and hands it back.
+A tab record is **state**, not a record stream: one row per `tabId`. A tab always
+has a pane tree (there is no empty tab) and a name — the caller resolves the name
+from the pages' titles and log only stores it. A tab also **owns** the
+conversations it shows: a session is bound to one tab, once, and a second tab
+claiming the same session is refused. `lastAt` moves when the layout is written or
+when a message lands in one of the tab's conversations; `updatedAt` only moves on
+a layout write.
+
+Log does not interpret the pane tree — it stores it as text and hands it back.
 
 `log` owns the sqlite database, so this case runs its own instance against a
 throwaway root and never touches the real project's `.engineer/engineer.db`.
@@ -43,27 +50,57 @@ for i in $(seq 1 30); do
 done
 ```
 
-## 1. mutation without tabId creates a tab
+## 1. tab/new creates a named tab and binds its conversations
 
 ```bash
-TAB=$(curl -s -X POST http://localhost:8830/log/tab/mutation \
+curl -s -X POST http://localhost:8830/log/tab/new \
   -H 'Content-Type: application/yaml' \
-  --data-binary $'layout:\n  pane:\n    paneId: p_abc123\n    contentType: chat\n    contentId: s_abc123' \
-  | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["tabId"])')
-echo "tab=$TAB"
+  --data-binary $'title: Pure Chat
+layout:
+  pane:
+    paneId: p_abc123
+    contentId: s_abc123
+sessionIds: [s_abc123]
+open: true'
 ```
 
-Expected: `tabId` matching `t_[0-9a-f]+`, `layout.pane.contentType` is `chat`,
-`layout.pane.contentId` is `s_abc123`, and both `createdAt` / `updatedAt` are RFC3339.
+Expected: `tabId` matching `t_[0-9a-f]+`, `title: Pure Chat`, the tree echoed,
+and `createdAt` / `updatedAt` / `lastAt` all RFC3339.
 
 ```bash
-curl -s -X POST http://localhost:8830/log/tab/detail \
-  -H 'Content-Type: application/yaml' --data-binary "tabId: $TAB"
+curl -s -X POST http://localhost:8830/log/tab/new \
+  -H 'Content-Type: application/yaml' --data-binary $'title: x'
 ```
 
-Expected: 200, same tree, same `createdAt` / `updatedAt`.
+Expected: 400, `error.code` is `bad_request` — a tab always arrives with a layout.
 
-## 2. a second mutation with the same tabId overwrites in place
+## 2. the tab owns its session
+
+```bash
+TAB=$(curl -s -X POST http://localhost:8830/log/tab/list -H 'Content-Type: application/yaml' -d '{}' \
+  | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["tabs"][0]["tabId"])')
+curl -s -X POST http://localhost:8830/log/session/detail -d 'sessionId: s_abc123'
+```
+
+Expected: `tabId` equals `$TAB` — the binding is visible on the session row.
+
+## 3. a second tab cannot claim the same session
+
+```bash
+curl -s -X POST http://localhost:8830/log/tab/new \
+  -H 'Content-Type: application/yaml' \
+  --data-binary $'title: Second
+layout:
+  pane:
+    paneId: p_dup
+    contentId: s_abc123
+sessionIds: [s_abc123]'
+```
+
+Expected: 400, `error.message` names `session s_abc123 already belongs to tab <$TAB>`,
+and no new tab was created (step 6's list still has one entry).
+
+## 4. mutation overwrites in place, keeping createdAt
 
 ```bash
 FIRST=$(curl -s -X POST http://localhost:8830/log/tab/detail \
@@ -72,72 +109,114 @@ FIRST=$(curl -s -X POST http://localhost:8830/log/tab/detail \
 sleep 1
 curl -s -X POST http://localhost:8830/log/tab/mutation \
   -H 'Content-Type: application/yaml' \
-  --data-binary $'tabId: '"$TAB"$'\nlayout:\n  split:\n    flexDirection: row\n    children:\n      - pane:\n          paneId: p_a1\n          contentType: chat\n          contentId: s_abc123\n      - pane:\n          paneId: p_a2\n          contentType: page\n          contentId: my-blueprint\n          flex: "2 1 0"'
+  --data-binary $'tabId: '"$TAB"$'
+title: Pure Chat · Project
+layout:
+  split:
+    flexDirection: row
+    children:
+      - pane:
+          paneId: p_a1
+          contentId: s_abc123
+      - pane:
+          paneId: p_a2
+          contentId: s_def456
+          flex: "2 1 0"
+sessionIds: [s_abc123, s_def456]'
 ```
 
-Expected: 200, `tabId` equals `$TAB`; `layout.split.flexDirection` is `row`;
-`layout.children[1].pane.flex` is `2 1 0`; `createdAt` equals `$FIRST` (the first
-write) while `updatedAt` is later.
+Expected: 200, `tabId` equals `$TAB`; `title` is `Pure Chat · Project`;
+`layout.split.flexDirection` is `row`; `layout.children[1].pane.flex` is `2 1 0`;
+`createdAt` equals `$FIRST` (the first write) while `updatedAt` and `lastAt` are
+later.
 
 The overwrite did not add a row — the same tabId appears exactly once:
 
 ```bash
 curl -s -X POST http://localhost:8830/log/tab/list -H 'Content-Type: application/yaml' -d '{}' \
-  | python3 -c 'import sys,yaml;t=yaml.safe_load(sys.stdin)["tabs"];print(sum(1 for x in t if x["tabId"]=="'"$TAB"'"))'
+  | python3 -c 'import sys,yaml;t=yaml.safe_load(sys.stdin)["tabs"];print(len(t), sum(1 for x in t if x["tabId"]=="'"$TAB"'"))'
 ```
 
-Expected: `1`.
+Expected: `1 1`.
 
-## 3. detail round-trips the stored tree
+## 5. a message in one of its conversations moves lastAt, not updatedAt
 
 ```bash
+curl -s -X POST http://localhost:8830/log/mutation \
+  -H 'Content-Type: application/yaml' \
+  --data-binary $'op: add
+kind: conversation
+sessionId: s_def456
+payload:
+  seq: 1
+  role: user
+  content: hello'
+sleep 1
 curl -s -X POST http://localhost:8830/log/tab/detail \
-  -H 'Content-Type: application/yaml' --data-binary "tabId: $TAB"
+  -H 'Content-Type: application/yaml' --data-binary "tabId: $TAB" \
+  | python3 -c 'import sys,yaml;d=yaml.safe_load(sys.stdin);print("lastAt>updatedAt", d["lastAt"] > d["updatedAt"])'
 ```
 
-Expected: 200, body identical to what step 2 wrote: `split` with `flexDirection: row`,
-two children, the second a `page` / `my-blueprint` leaf with `flex: 2 1 0`.
+Expected: `lastAt>updatedAt True` — the message is activity, the layout is not.
 
-Deeply nested trees survive too — `layout.children[0]` and the leaf's `size` are
-the interesting fields; a naive shallow store would drop them.
-
-## 4. detail on an unknown tabId
-
-```bash
-curl -s -X POST http://localhost:8830/log/tab/detail \
-  -H 'Content-Type: application/yaml' --data-binary 'tabId: t_nope'
-```
-
-Expected: 404, `error.code` is `not_found`.
-
-## 5. mutation without layout
-
-```bash
-curl -s -X POST http://localhost:8830/log/tab/mutation \
-  -H 'Content-Type: application/yaml' --data-binary 'tabId: t_nope'
-```
-
-Expected: 400, `error.code` is `bad_request`.
-
-## 6. detail without tabId
-
-```bash
-curl -s -X POST http://localhost:8830/log/tab/detail \
-  -H 'Content-Type: application/yaml' -d '{}'
-```
-
-Expected: 400, `error.code` is `bad_request`.
-
-## 7. list shape
+## 6. list shape and ordering
 
 ```bash
 curl -s -X POST http://localhost:8830/log/tab/list -H 'Content-Type: application/yaml' -d '{}'
 ```
 
 Expected: 200, `pageSize` is `100`, `pageNum` is `1`, `hasMore` is `false`,
-`tabs` has one entry with `tabId` / `layout` / `createdAt` / `updatedAt`.
+`tabs` has one entry carrying `tabId` / `title` / `layout` / `createdAt` /
+`updatedAt` / `lastAt`.
 
-## 8. the tab survives a restart
+## 7. on / off take several ids and are idempotent
+
+```bash
+curl -s -X POST http://localhost:8830/log/tab/off -H 'Content-Type: application/yaml' \
+  --data-binary "tabIds: [$TAB]"
+curl -s -X POST http://localhost:8830/log/tab/off -H 'Content-Type: application/yaml' \
+  --data-binary "tabIds: [$TAB]" >/dev/null   # closing a closed tab is a no-op
+curl -s -X POST http://localhost:8830/log/tab/on -H 'Content-Type: application/yaml' \
+  --data-binary "tabIds: [$TAB]"
+```
+
+Expected: the first `off` answers `openTabs: []`, the second is not an error, and
+`on` answers `openTabs` holding `$TAB`.
+
+```bash
+curl -s -X POST http://localhost:8830/log/tab/on -H 'Content-Type: application/yaml' \
+  --data-binary 'tabIds: [t_nope]'
+```
+
+Expected: 400 — opening a tab that does not exist is not a silent success.
+
+## 8. detail on an unknown tabId / detail without tabId
+
+```bash
+curl -s -X POST http://localhost:8830/log/tab/detail \
+  -H 'Content-Type: application/yaml' --data-binary 'tabId: t_nope'
+curl -s -X POST http://localhost:8830/log/tab/detail \
+  -H 'Content-Type: application/yaml' -d '{}'
+```
+
+Expected: 404 `not_found`, then 400 `bad_request`.
+
+## 9. mutation for a tab that does not exist
+
+```bash
+curl -s -X POST http://localhost:8830/log/tab/mutation \
+  -H 'Content-Type: application/yaml' \
+  --data-binary $'tabId: t_nope
+title: x
+layout:
+  pane:
+    paneId: p_x
+    contentId: s_x'
+```
+
+Expected: 404 `not_found` — mutation overwrites, it does not create.
+
+## 10. the tab survives a restart
 
 ```bash
 pkill -f 'serve-log --root .*/.log-tab' ; sleep 1
@@ -150,7 +229,8 @@ curl -s -X POST http://localhost:8830/log/tab/detail \
   -H 'Content-Type: application/yaml' --data-binary "tabId: $TAB"
 ```
 
-Expected: 200, same tree as step 3 — it is state in sqlite, not in memory.
+Expected: 200, same tree and same title as step 4 — it is state in sqlite, not in
+memory.
 
 ## Teardown
 

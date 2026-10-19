@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -20,6 +22,11 @@ type Session struct {
 	// /agent/<sessionId>/ through it — the database is the only place the mapping
 	// lives, so a page is never inferred from the URL.
 	Blueprint string `yaml:"blueprint"`
+	// TabID is the tab this conversation belongs to; "" when it belongs to none.
+	// It is written once, by the tab's own write, and never changed afterwards: a
+	// conversation is only reachable through its tab, so a tab that is deleted
+	// takes its conversations with it.
+	TabID     string `yaml:"tabId"`
 	CreatedAt string `yaml:"createdAt"`
 }
 
@@ -51,6 +58,7 @@ func (s *Store) createWorkspaceTables() error {
 			session_id TEXT PRIMARY KEY,
 			kind TEXT NOT NULL DEFAULT 'sub',
 			blueprint TEXT NOT NULL DEFAULT '',
+			tab_id TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS current (
@@ -68,6 +76,13 @@ func (s *Store) createWorkspaceTables() error {
 	// resolved through it, so every project started before this change must not
 	// fall over. "duplicate column name" is the already-migrated case.
 	if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN blueprint TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column name") {
+		return err
+	}
+	// The tab a conversation belongs to arrived with tabs-as-containers: a project
+	// started before it keeps "belongs to none", which reads as "reachable only if
+	// something still shows it".
+	if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN tab_id TEXT NOT NULL DEFAULT ''`); err != nil &&
 		!strings.Contains(err.Error(), "duplicate column name") {
 		return err
 	}
@@ -113,9 +128,56 @@ func (s *Store) UpsertSession(sessionID, kind, blueprint string) (Session, error
 // GetSession returns one session; sql.ErrNoRows when it does not exist.
 func (s *Store) GetSession(sessionID string) (Session, error) {
 	var out Session
-	err := s.db.QueryRow(`SELECT session_id, kind, blueprint, created_at FROM sessions WHERE session_id = ?`,
-		sessionID).Scan(&out.SessionID, &out.Kind, &out.Blueprint, &out.CreatedAt)
+	err := s.db.QueryRow(`SELECT session_id, kind, blueprint, tab_id, created_at FROM sessions WHERE session_id = ?`,
+		sessionID).Scan(&out.SessionID, &out.Kind, &out.Blueprint, &out.TabID, &out.CreatedAt)
 	return out, err
+}
+
+// BindSessions records that these conversations are shown by this tab. A binding
+// is written once and never moved: a conversation already bound to another tab is
+// an error that names that tab, because the caller should reopen it instead of
+// putting a second copy on screen.
+func (s *Store) BindSessions(tabID string, sessionIDs []string) error {
+	for _, id := range sessionIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		var current string
+		err := s.db.QueryRow(`SELECT tab_id FROM sessions WHERE session_id = ?`, id).Scan(&current)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// A conversation with no row yet still gets one, so the binding has
+			// somewhere to live; kind and blueprint are filled by ai's own upsert.
+			if _, err := s.db.Exec(`INSERT INTO sessions (session_id, kind, blueprint, tab_id, created_at)
+				VALUES (?, 'sub', '', ?, ?)`, id, tabID, time.Now().UTC().Format(time.RFC3339)); err != nil {
+				return err
+			}
+			continue
+		case err != nil:
+			return err
+		case current == tabID:
+			continue // already this tab's
+		case current != "":
+			return fmt.Errorf("session %s already belongs to tab %s", id, current)
+		}
+		if _, err := s.db.Exec(`UPDATE sessions SET tab_id = ? WHERE session_id = ? AND tab_id = ''`, tabID, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TouchSessionTab moves the lastAt of the tab a conversation belongs to. A record
+// write is the only thing that makes a tab look recently used without its layout
+// changing, so this is what keeps the launcher's order honest.
+func (s *Store) TouchSessionTab(sessionID, at string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE tabs SET last_at = ? WHERE tab_id =
+		(SELECT tab_id FROM sessions WHERE session_id = ?) AND last_at < ?`, at, sessionID, at)
+	return err
 }
 
 // Current returns the workspace row.
@@ -164,35 +226,84 @@ func (s *Store) PutCurrent(openTabs []string, mainSession string) (Current, erro
 	return s.Current()
 }
 
-// AddOpenTab appends a tab id to the open list (idempotent).
-func (s *Store) AddOpenTab(tabID string) error {
+// AddOpenTabs appends tab ids to the open list (idempotent). index places the
+// first newly opened tab; -1 appends. Already-open tabs keep their place.
+func (s *Store) AddOpenTabs(tabIDs []string, index int) error {
 	cur, err := s.Current()
 	if err != nil {
 		return err
 	}
-	for _, id := range cur.OpenTabs {
-		if id == tabID {
-			return nil
+	open := append([]string{}, cur.OpenTabs...)
+	fresh := make([]string, 0, len(tabIDs))
+	for _, id := range tabIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		seen := false
+		for _, have := range open {
+			if have == id {
+				seen = true
+				break
+			}
+		}
+		for _, have := range fresh {
+			if have == id {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			fresh = append(fresh, id)
 		}
 	}
-	_, err = s.PutCurrent(append(cur.OpenTabs, tabID), cur.MainSession)
+	if len(fresh) == 0 {
+		return nil
+	}
+	if index < 0 || index > len(open) {
+		_, err := s.PutCurrent(append(open, fresh...), cur.MainSession)
+		return err
+	}
+	tail := open[index:]
+	joined := make([]string, 0, len(open)+len(fresh))
+	joined = append(joined, open[:index]...)
+	joined = append(joined, fresh...)
+	joined = append(joined, tail...)
+	_, err = s.PutCurrent(joined, cur.MainSession)
 	return err
+}
+
+// RemoveOpenTabs drops tab ids from the open list, keeping their records.
+func (s *Store) RemoveOpenTabs(tabIDs []string) error {
+	cur, err := s.Current()
+	if err != nil {
+		return err
+	}
+	drop := map[string]bool{}
+	for _, id := range tabIDs {
+		drop[strings.TrimSpace(id)] = true
+	}
+	kept := make([]string, 0, len(cur.OpenTabs))
+	for _, id := range cur.OpenTabs {
+		if !drop[id] {
+			kept = append(kept, id)
+		}
+	}
+	if len(kept) == len(cur.OpenTabs) {
+		return nil
+	}
+	_, err = s.PutCurrent(kept, cur.MainSession)
+	return err
+}
+
+// AddOpenTab appends a tab id to the open list (idempotent).
+func (s *Store) AddOpenTab(tabID string) error {
+	return s.AddOpenTabs([]string{tabID}, -1)
 }
 
 // RemoveOpenTab drops a tab id from the open list, keeping the tab's record.
 func (s *Store) RemoveOpenTab(tabID string) error {
-	cur, err := s.Current()
-	if err != nil {
-		return err
-	}
-	kept := make([]string, 0, len(cur.OpenTabs))
-	for _, id := range cur.OpenTabs {
-		if id != tabID {
-			kept = append(kept, id)
-		}
-	}
-	_, err = s.PutCurrent(kept, cur.MainSession)
-	return err
+	return s.RemoveOpenTabs([]string{tabID})
 }
 
 // DeleteTab removes a tab record and takes it out of the open list.

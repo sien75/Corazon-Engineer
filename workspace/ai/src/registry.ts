@@ -30,14 +30,11 @@ import { dbg } from "./debug.ts";
 // The workspace tools main alone may call. Names are listed here because pi's
 // allowlist is by name, not by tool object.
 const WORKSPACE_TOOLS = [
-  "session-list",
-  "session-resume",
-  "session-delete",
-  "tab-list",
-  "tab-mutation",
-  "tab-on",
-  "tab-off",
+  "current-tab-list",
+  "current-tab-mutation",
+  "tab-new",
   "tab-delete",
+  "tab-layout-mutation",
 ];
 
 // legacyReadme reads a session's old per-agent copy, if the project still has
@@ -413,12 +410,9 @@ export class Registry {
                 selfId: sess.id,
                 newSession: async (blueprint?: string) =>
                   (await this.new(blueprint, "sub")).id,
-                resumeSession: async (id: string) => {
-                  const resumed = await this.resume(id);
-                  return resumed ? { id: resumed.id, kind: resumed.kind } : undefined;
-                },
+                sessionBlueprint: async (id: string) =>
+                  (await this.sessionMeta(id))?.blueprint ?? "",
                 deleteSession: (id: string) => this.deleteSession(id),
-                hasSession: (id: string) => this.sessionExists(id),
               })
             : []),
         ],

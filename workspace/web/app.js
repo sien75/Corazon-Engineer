@@ -99,7 +99,11 @@ const logCurrent = () => logCall("/log/current/get");
 const logCurrentPut = (openTabs, mainSession) =>
   logCall("/log/current/put", { openTabs, mainSession });
 const logTabDetail = (tabId) => logCall("/log/tab/detail", { tabId });
-const logTabOff = (tabId) => logCall("/log/tab/off", { tabId });
+const logTabOn = (tabIds, index) =>
+  logCall("/log/tab/on", typeof index === "number" ? { tabIds, index } : { tabIds });
+const logTabOff = (tabId) => logCall("/log/tab/off", { tabIds: [tabId] });
+const logTabNew = (body) => logCall("/log/tab/new", body);
+const logTabList = (pageNum = 1) => logCall("/log/tab/list", { pageNum });
 const logSessionKind = (sessionId) => logCall("/log/session/detail", { sessionId });
 
 async function aiResume(id) {
@@ -138,7 +142,10 @@ function tabFromRecord(rec) {
   return {
     id: rec.tabId,
     tabId: rec.tabId,
-    name: "", // filled from the page's <title> (see hydrateTabNames)
+    // The tab's name is stored with its record, so a reload draws the tab bar
+    // without loading a single page. hydrateTabNames fills in the records that
+    // predate the field.
+    name: rec.title || "",
     sessionId: "",
     panes: new Map(),
     layout: normalizeTree(rec.layout) || null,
@@ -333,6 +340,9 @@ async function doRefreshWorkspace() {
     try {
       const rec = await logTabDetail(tab.tabId);
       const next = normalizeTree(rec.layout) || null;
+      if (rec.title && rec.title !== tab.name) {
+        tab.name = rec.title;
+      }
       if (JSON.stringify(next) !== JSON.stringify(tab.layout)) {
         tab.layout = next;
         dropTabPanes(tab);
@@ -405,6 +415,9 @@ function installTitleWatchers() {
       if (!pane.frameEl || pane.frameEl.dataset.watch) continue;
       pane.frameEl.dataset.watch = "1";
       const read = () => {
+        // The stored title is the tab's name; the page is only consulted for a
+        // record that has none (one written before titles existed).
+        if (tab.name) return;
         const title = pane.frameEl.contentDocument?.title;
         if (title && tab.name !== title) {
           tab.name = title;
@@ -481,12 +494,18 @@ async function blueprintEntries() {
   return out;
 }
 
+// recentEntries is the tabs that exist, most recently active first — a tab with
+// none of its panes on screen is still a thing you can bring back, and bringing it
+// back is the same tab, not a copy of it. A conversation reaches the screen only
+// through the tab that holds it, so there is nothing else to list here.
 async function recentEntries() {
-  const data = await logCall("/log/list", { pageNum: 1 });
-  // Only blueprint agents have a page; a past main conversation has none.
-  return (data.sessions || []).filter(
-    (s) => s.kind !== "main" && s.sessionId !== mainTab?.sessionId,
-  );
+  const data = await logTabList(1);
+  return (data.tabs || []).map((t) => ({
+    tabId: t.tabId,
+    title: t.title || "",
+    panes: sessionsOf([{ layout: normalizeTree(t.layout) }]).length,
+    lastAt: t.lastAt || t.updatedAt || "",
+  }));
 }
 
 // A row opens on a single click — the list is a list of things to open, not one
@@ -534,7 +553,7 @@ async function openLauncher() {
       launcherRow({
         name: b.name,
         desc: b.desc,
-        onOpen: () => void openAgentFromLauncher({ blueprint: b.slug }),
+        onOpen: () => void openBlueprintFromLauncher(b),
       }),
     );
   }
@@ -554,45 +573,53 @@ async function openLauncher() {
   for (const r of recents) {
     recent.appendChild(
       launcherRow({
-        name: (r.preview || r.sessionId).slice(0, 80),
-        desc: `${r.kind === "main" ? "main" : "sub"} · ${r.count} msgs · ${r.lastAt}`,
-        onOpen: () => void openAgentFromLauncher({ sessionId: r.sessionId }),
+        name: r.title || "(untitled)",
+        desc: `${r.panes} pane(s) · ${r.lastAt}`,
+        onOpen: () => void openRecentTab(r.tabId),
       }),
     );
   }
   launcherEl.appendChild(recent);
 }
 
-// openAgentFromLauncher opens a tab for a new agent (blueprint) or an existing
-// conversation (sessionId) — the same shape main's tab-on writes, from the UI.
-async function openAgentFromLauncher({ blueprint, sessionId }) {
-  let id = sessionId || "";
+// openBlueprintFromLauncher makes a new agent from a blueprint and puts it in a
+// tab of its own — the same two writes main's tab-new does, from the UI.
+async function openBlueprintFromLauncher(b) {
   try {
-    if (!id) {
-      const res = await fetch(`${AI_BASE}/ai/new`, {
-        method: "POST",
-        headers: { "Content-Type": "application/yaml" },
-        body: yaml.dump({ blueprint }),
-      });
-      const data = yaml.load(await res.text()) || {};
-      if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-      id = data.sessionId;
-    }
-    // A stored conversation can outlive its agent's copy (it was deleted, or it
-    // predates the copy). Opening it would show a page that does not exist.
-    const page = await fetch(agentFrameSrc(id), { cache: "no-store" });
-    if (!page.ok) {
-      toast("this conversation has no page any more (its agent copy is gone)");
-      return;
-    }
-    await aiResume(id);
-    const tab = await logCall("/log/tab/new", {});
-    await logCall("/log/tab/mutation", {
-      tabId: tab.tabId,
-      layout: { pane: { paneId: mintPaneId(), contentId: id } },
+    const res = await fetch(`${AI_BASE}/ai/new`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml.dump({ blueprint: b.slug }),
+    });
+    const data = yaml.load(await res.text()) || {};
+    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+    const id = data.sessionId;
+    const layout = { pane: { paneId: mintPaneId(), contentId: id } };
+    await logTabNew({
+      title: b.name || b.slug,
+      layout,
+      sessionIds: [id],
+      open: true,
     });
     launcherClose();
     await refreshWorkspace();
+  } catch (err) {
+    toast(`could not open: ${err.message}`);
+  }
+}
+
+// openRecentTab brings an existing tab back. A closed tab is reopened, never
+// re-created: a conversation belongs to the tab that made it, so a second copy of
+// it is not something the workspace can represent.
+async function openRecentTab(tabId) {
+  try {
+    if (!openTabs.some((t) => t.tabId === tabId)) {
+      await logTabOn([tabId]);
+      await refreshWorkspace();
+    }
+    launcherClose();
+    const tab = openTabs.find((t) => t.tabId === tabId);
+    if (tab) await activateTab(tab.id);
   } catch (err) {
     toast(`could not open: ${err.message}`);
   }

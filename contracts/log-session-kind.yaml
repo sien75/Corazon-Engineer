@@ -11,6 +11,7 @@ response:
     sessionId: string
     kind: main | sub
     blueprint: string  # slug of the page this session drives, "" when it has none; the web server resolves /agent/<sessionId>/ through this
+    tabId: string  # the tab this session belongs to; "" when it belongs to none. Written once, by the tab's own write, and never changed
     createdAt: string
 
 errors:

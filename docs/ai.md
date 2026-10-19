@@ -2,7 +2,7 @@
 
 # ai
 
-Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), writes/reads records via log, connects external systems via bash; it owns two roles of custom tools — every session gets ask_user (ask and end the turn); main, the one conversation the shell itself hosts, additionally gets the workspace tools (session-list, session-resume, tab-list, tab-mutation, tab-on, tab-off, tab-delete) that read and write sessions, tabs and current through log, so main opens, closes, splits and deletes the tabs the shell shows; a sub agent, instantiated from a blueprint, has no workspace tools; ai-new takes a blueprint slug, checks its two required files (README.md + index.html, any css / js / images alongside them), records the session's kind and blueprint in log, and appends that README plus the path of the blueprint directory last in a sub agent's system prompt, so the agent knows what its UI is and where it lives from the first turn; nothing is copied — the web server serves the prototype directory itself, so one page is shared by every agent made from it, and an edit reaches all of them on reload; the role's spec is agents/main or agents/sub; skill discovery is gone — skills are plain files that agents read, nothing more
+Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), writes/reads records via log, connects external systems via bash; it owns two roles of custom tools — every session gets ask_user (ask and end the turn); main, the one conversation the shell itself hosts, additionally gets the workspace tools (current-tab-list, current-tab-mutation, tab-new, tab-delete, tab-layout-mutation) that read and write tabs and current through log, so main opens, closes, splits and deletes the tabs the shell shows; a sub agent, instantiated from a blueprint, has no workspace tools; ai-new takes a blueprint slug, checks its two required files (README.md + index.html, any css / js / images alongside them), records the session's kind and blueprint in log, and appends that README plus the path of the blueprint directory last in a sub agent's system prompt, so the agent knows what its UI is and where it lives from the first turn; nothing is copied — the web server serves the prototype directory itself, so one page is shared by every agent made from it, and an edit reaches all of them on reload; the role's spec is agents/main or agents/sub; skill discovery is gone — skills are plain files that agents read, nothing more
 
 - runtime: bun 1.3
 
@@ -257,19 +257,25 @@ curl -s -X GET <address>/blobs/<sha256> -o image.png
 
 Two roles, two tool surfaces. Every session gets the pi built-ins (`read` / `grep` / `find` / `ls` / `bash` / `write` / `edit`) plus **`ask_user`** — ask a question and end the turn; the answer arrives as an ordinary text block on `/ai/ask`.
 
-**main** — the one conversation the shell itself hosts — also gets the workspace tools:
+**main** — the one conversation the shell itself hosts — also gets the workspace tools. There is
+no session-level tool: a conversation is only reachable through the tab that holds it, so opening
+the tab resumes it and deleting the tab deletes it.
 
-- **`session-list`** — the project's conversations (id, kind, message count, preview).
-- **`session-resume`** — rebuild a conversation server-side so it can be asked again.
-- **`session-delete`** — delete one conversation for good: the agent and its records. The page
-  belongs to its blueprint and stays. It refuses the conversation it runs in (main cannot delete itself), and it
-  does not touch tabs — a tab still showing that agent keeps a dead pane, so a tab that should
-  go too is `tab-delete`'s job. An unknown id is an error, not a silent success (`/log/delete`
-  answers 200 with `deleted: 0` for ids that never existed).
-- **`tab-list`** — the open tabs, each one's pane tree and the agents in it, plus the main session.
-- **`tab-mutation`** — replace one tab's pane tree. The tree is `{ pane: { paneId, contentId, flex? } }`, `{ pane: { blueprint: "<slug>" } }` to instantiate a new agent into a pane, or `{ split: { flexDirection: "row" | "column", flex?, children: [ … ] } }`; at most 6 panes. A write replaces the whole tree, so the model is told to read `tab-list` first and pass back the paneIds it means to keep.
-- **`tab-on`** — open a tab for a new agent (`blueprint`) or an existing conversation (`sessionId`).
-- **`tab-off`** — close a tab, keeping its record so it can be reopened.
-- **`tab-delete`** — delete a tab and its conversations' records (pages belong to their blueprints and stay).
+- **`current-tab-list`** — the tabs that are open, in display order, each with its title, pane count
+  and last activity.
+- **`current-tab-mutation`** — open and close tabs: `ops: [{ op: "on" | "off", tabIds, index? }]`,
+  applied in order. Opening a tab puts the same record back (it never creates one); both ops are
+  idempotent.
+- **`tab-new`** — a new agent from a required `blueprint` slug, in a new tab holding one pane. The
+  session id is assigned here — the model cannot pass one, and a conversation cannot be moved into
+  a tab, because it belongs to the tab that made it.
+- **`tab-delete`** — delete a tab and every conversation it showed: the record, the agents and their
+  records. The pages belong to their blueprints and stay.
+- **`tab-layout-mutation`** — add or remove panes with `ops`: `{ op: "add", nextTo, side, blueprint,
+  flex? }` puts a new agent on `side` (`left` / `right` / `top` / `bottom`) of the pane `nextTo`;
+  `{ op: "delete", paneId }` removes one. The tree is derived, never written: a side that crosses the
+  surrounding split wraps the anchor and the new pane in a split of their own, a split left with one
+  child collapses, a tab keeps 1 to 6 panes, and the whole call is refused if any op does not fit.
+  The tab's title is recomputed from its pages on every change.
 
 There is no `layout` tool any more: layout is a tab's business, and main is the only one that changes it. A **sub** agent — instantiated from a blueprint — has `ask_user` and the built-ins, nothing else: its page is a view, not a workspace.

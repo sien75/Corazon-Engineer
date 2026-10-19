@@ -5,13 +5,14 @@ keeps them in step:
 
 - `sessions` — one row per conversation: `kind` is `main` (the shell's own chat)
   or `sub` (a blueprint agent). A session with no row reads as `sub`.
-- `tabs` — one row per tab: its pane tree.
+- `tabs` — one row per tab: its pane tree and its name. A tab always has a tree:
+  there is no empty tab.
 - `current` — one row: which tab ids are open (in display order) and which
   session is main.
 
 `tab/new` adds the tab to the open list, `tab/off` takes it out but keeps the
-record, `tab/delete` removes the record and the list entry. This case is
-HTTP-level: no browser and no model.
+record, `tab/on` puts it back, `tab/delete` removes the record and the list entry.
+This case is HTTP-level: no browser and no model.
 
 ## Setup
 
@@ -67,29 +68,43 @@ Expected: `mainSession: s_main01`.
 
 ## 4. tab/new opens a tab
 
+A tab arrives with a layout and a name — there is no empty tab to fill later.
+
 ```bash
-TAB=$(curl -s -X POST $LOG/log/tab/new -d '{}' | sed -n 's/^tabId: //p')
+NEW='
+title: Probe
+layout:
+  pane:
+    paneId: p_one
+    contentId: s_sub01'
+TAB=$(printf '%s\n' "$NEW" | curl -s -X POST $LOG/log/tab/new \
+  -H 'Content-Type: application/yaml' --data-binary @- | sed -n 's/^tabId: //p')
 echo "tab=$TAB"
 curl -s -X POST $LOG/log/current/get -d '{}' | grep -A3 openTabs
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $LOG/log/tab/new -d 'title: bare'
 ```
 
-Expected: `openTabs` now holds `$TAB`.
+Expected: `openTabs` now holds `$TAB`, and a `tab/new` without a layout is `400`.
 
-## 5. tab/off closes it, the record stays
+## 5. tab/off closes it, tab/on brings it back, the record stays
 
 ```bash
-curl -s -X POST $LOG/log/tab/off -d "tabId: $TAB"
+curl -s -X POST $LOG/log/tab/off -H 'Content-Type: application/yaml' --data-binary "tabIds: [$TAB]"
 curl -s -X POST $LOG/log/current/get -d '{}' | grep -A3 openTabs
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $LOG/log/tab/detail -d "tabId: $TAB"
+curl -s -X POST $LOG/log/tab/on -H 'Content-Type: application/yaml' --data-binary "tabIds: [$TAB]"
+curl -s -X POST $LOG/log/current/get -d '{}' | grep -A3 openTabs
 ```
 
-Expected: the open list is empty again, and the tab record is still there
-(`200`) — closing is not deleting.
+Expected: the open list is empty after `off` while the tab record is still there
+(`200`) — closing is not deleting — and `on` puts the same id back.
 
 ## 6. tab/delete removes the record and the list entry
 
 ```bash
-TAB2=$(curl -s -X POST $LOG/log/tab/new -d '{}' | sed -n 's/^tabId: //p')
+TAB2=$(printf 'title: Probe 2\nlayout:\n  pane:\n    paneId: p_two\n    contentId: s_sub02\n' \
+  | curl -s -X POST $LOG/log/tab/new -H 'Content-Type: application/yaml' --data-binary @- \
+  | sed -n 's/^tabId: //p')
 curl -s -X POST $LOG/log/tab/delete -d "tabId: $TAB2"
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $LOG/log/tab/detail -d "tabId: $TAB2"
 curl -s -X POST $LOG/log/current/get -d '{}' | grep -A3 openTabs

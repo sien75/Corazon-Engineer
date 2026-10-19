@@ -45,174 +45,9 @@ export type PaneNode = PaneLeaf | PaneSplit;
 // layout that is unreadable rather than merely unusual.
 export const MAX_PANES = 6;
 
-export interface NormalizeOptions {
-  // Called for a leaf that names no agent but asks for a blueprint: the caller
-  // instantiates one and its session id is written back into the tree, so the
-  // frontend gets a pane it can open.
-  newSession?: (blueprint: string) => Promise<string>;
-  // Tells a handle the tool issued from one the model made up.
-  hasSession?: (id: string) => Promise<boolean>;
-  // The chat ids, and the pane ids, in the tab's current tree. Used to say what
-  // *is* valid when a handle is rejected.
-  currentIds?: string[];
-  currentPaneIds?: string[];
-}
-
-export class LayoutError extends Error {}
-
-// newPaneId issues a pane handle. Random, like a session id, so two tabs cannot
-// collide on one value.
-function newPaneId(): string {
-  return `p_${randomBytes(4).toString("hex")}`;
-}
-
-// The flex shorthand, narrowed. The numbers are small on purpose: a layout that
-// says 47 and 39 is not one anybody reads as a proportion.
-const FLEX_RE = /^([0-3])(?:\s+([01]))?(?:\s+(0|auto|\d{1,4}px))?$/;
-
-// checkFlex accepts the ratio form a layout should use, and the fixed basis it may
-// sometimes need; everything else CSS allows is refused with the reason.
-function checkFlex(value: unknown, where: string): string {
-  const s = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
-  const m = s ? FLEX_RE.exec(s) : null;
-  if (!m) {
-    throw new LayoutError(
-      `${where}: cannot read flex ${JSON.stringify(value)}. Write it the way CSS does, ` +
-        `"<grow> [<shrink>] [<basis>]" — grow 0..3, shrink 0 or 1, basis 0, auto or <n>px. ` +
-        `Reach for the ratio form ("2 1 0"); leave flex out to share the space evenly.`,
-    );
-  }
-  return m[0];
-}
-
-// normalizeLayout checks a tree and returns a copy with pane handles filled in and
-// flex validated, so what the model wrote and what log stores never drift. A leaf
-// that arrives without a paneId is a new pane and is issued one; a leaf that passes
-// an unknown one is a mistake worth reporting, because quietly handing it a fresh
-// handle would rebuild a pane the model meant to keep.
-export async function normalizeLayout(
-  raw: unknown,
-  opts: NormalizeOptions = {},
-): Promise<PaneNode> {
-  let panes = 0;
-  const usedPaneIds = new Set<string>();
-
-  const walk = async (node: unknown, depth: number): Promise<PaneNode> => {
-    if (!node || typeof node !== "object") {
-      throw new LayoutError("each node must be an object");
-    }
-    const n = node as Record<string, any>;
-    if (typeof n.split === "string") {
-      throw new LayoutError(
-        `a split carries its direction as CSS does: ` +
-          `{ split: { flexDirection: "${n.split === "col" ? "column" : "row"}", children: [ … ] } }`,
-      );
-    }
-    if (n.pane !== undefined) {
-      return await leaf(n.pane);
-    }
-    if (n.split === undefined) {
-      throw new LayoutError('each node is either { pane: … } or { split: … }');
-    }
-    const s = n.split;
-    if (!s || typeof s !== "object") {
-      throw new LayoutError("a split must be an object: { split: { … } }");
-    }
-    if (s.flexDirection !== "row" && s.flexDirection !== "column") {
-      throw new LayoutError(
-        'a split needs flexDirection: "row" (left/right) or "column" (top/bottom)',
-      );
-    }
-    if (!Array.isArray(s.children) || !s.children.length) {
-      throw new LayoutError("a split needs at least one child");
-    }
-    const children: PaneNode[] = [];
-    for (const c of s.children) children.push(await walk(c, depth + 1));
-    const out: PaneSplit = { split: { flexDirection: s.flexDirection, children } };
-    if (s.flex !== undefined) out.split.flex = checkFlex(s.flex, "a split");
-    return out;
-  };
-
-  const leaf = async (rawLeaf: any): Promise<PaneLeaf> => {
-    if (!rawLeaf || typeof rawLeaf !== "object") {
-      throw new LayoutError("a pane must be an object");
-    }
-    if (rawLeaf.content !== undefined || rawLeaf.id !== undefined) {
-      throw new LayoutError(
-        "a pane takes contentId, not content or id: " +
-          "{ pane: { paneId, contentId, flex? } } — or blueprint: <slug> for a new agent",
-      );
-    }
-    let paneId = typeof rawLeaf.paneId === "string" ? rawLeaf.paneId.trim() : "";
-    if (paneId && usedPaneIds.has(paneId)) {
-      throw new LayoutError(
-        `paneId ${paneId} is on two panes — each pane needs its own; leave the id ` +
-          `out for a pane that is new`,
-      );
-    }
-    if (paneId && opts.currentPaneIds && !opts.currentPaneIds.includes(paneId)) {
-      const valid = opts.currentPaneIds.length
-        ? `This tab's panes: ${opts.currentPaneIds.join(", ")}.`
-        : "This tab has no panes yet.";
-      throw new LayoutError(
-        `no pane ${paneId} in this tab — a paneId must be one this tool returned. ${valid} ` +
-          `Leave the id out to open a new pane.`,
-      );
-    }
-    if (!paneId) paneId = newPaneId();
-    usedPaneIds.add(paneId);
-
-    // Every pane shows one agent: a handle this tool issued (contentId), or a
-    // blueprint this call instantiates into a new agent. There is no other kind
-    // of pane — an agent always has UI, because it is always made from a
-    // blueprint.
-    const contentId = typeof rawLeaf.contentId === "string" ? rawLeaf.contentId.trim() : "";
-    const blueprint = typeof rawLeaf.blueprint === "string" ? rawLeaf.blueprint.trim() : "";
-    if (contentId && blueprint) {
-      throw new LayoutError("a pane takes contentId or blueprint, not both");
-    }
-    let resolved = contentId;
-    if (!resolved) {
-      if (!blueprint) {
-        throw new LayoutError(
-          "a pane needs contentId (an agent already in this tab) or blueprint: <slug> (a new agent)",
-        );
-      }
-      if (!opts.newSession) {
-        throw new LayoutError("instantiating a blueprint is not available here");
-      }
-      resolved = await opts.newSession(blueprint);
-    } else if (opts.hasSession && !(await opts.hasSession(resolved))) {
-      // A contentId is a handle this tool issued, not something the model knows:
-      // an id that resolves to nothing is a mistake worth reporting — silently
-      // showing a different agent would lose the one it meant to keep.
-      const valid = opts.currentIds?.length
-        ? `This tab's panes: ${opts.currentIds.join(", ")}.`
-        : "This tab has no agent panes yet.";
-      throw new LayoutError(
-        `no agent ${resolved} — a contentId must be one this tool returned. ${valid} ` +
-          `Use blueprint: <slug> to instantiate a new agent.`,
-      );
-    }
-
-    panes++;
-    if (panes > MAX_PANES) throw new LayoutError(`at most ${MAX_PANES} panes`);
-    const pane: PaneLeaf["pane"] = { paneId, contentId: resolved };
-    if (rawLeaf.flex !== undefined) pane.flex = checkFlex(rawLeaf.flex, `pane ${paneId}`);
-    return { pane };
-  };
-
-  const tree = await walk(raw, 0);
-  // The root has no parent to take a share from.
-  if ("split" in tree && tree.split.flex) {
-    throw new LayoutError("the tree's root split has no parent to share with: drop its flex");
-  }
-  return tree;
-}
-
 // describeLayout is the tree as one line per pane, for the tool's result: the model
-// gets the same picture the frontend will render, handles included, so a later
-// write can name the panes it means to keep. Old field names are printed too, for a
+// gets the same picture the frontend will render, handles included, so a later call
+// can name the pane it means to change. Old field names are printed too, for a
 // record written before this shape existed.
 export function describeLayout(node: PaneNode, depth = 0): string {
   const pad = "  ".repeat(depth);
@@ -232,38 +67,173 @@ export function describeLayout(node: PaneNode, depth = 0): string {
   ].join("\n");
 }
 
-// readLayout fetches a tab's stored tree, or undefined when the tab has none —
-// including the empty record log-tab-new creates, which is a tab that exists but
-// does not hold anything yet.
-export async function readLayout(
-  logBase: string,
-  tabId: string,
-): Promise<{ tabId: string; layout: PaneNode } | undefined> {
-  const res = await fetch(`${logBase}/log/tab/detail`, {
-    method: "POST",
-    headers: { "Content-Type": "application/yaml" },
-    body: YAML.stringify({ tabId }),
-  });
-  if (res.status === 404) return undefined;
-  if (!res.ok) throw new Error(`log/tab/detail: HTTP ${res.status}`);
-  const data: any = YAML.parse(await res.text());
-  if (!data?.layout || Object.keys(data.layout).length === 0) return undefined;
-  return { tabId: data.tabId ?? tabId, layout: data.layout as PaneNode };
+// ---------- incremental edits ----------
+//
+// The model does not write the tree any more: it says where a pane goes and reads
+// back what that made. `nextTo` + `side` is enough to derive the structure, which
+// is the point — a layout the model has to echo is a layout it can silently lose.
+
+export type Side = "left" | "right" | "top" | "bottom";
+
+// sideAxis is the split direction a side lives in: left/right sit side by side,
+// top/bottom stack.
+function sideAxis(side: Side): "row" | "column" {
+  return side === "left" || side === "right" ? "row" : "column";
 }
 
-// writeLayout stores a tab's tree. No tabId allocates one, which is how a tab
-// gets its record when the frontend opens one.
-export async function writeLayout(
-  logBase: string,
-  tabId: string,
-  layout: PaneNode,
-): Promise<{ tabId: string; layout: PaneNode }> {
-  const res = await fetch(`${logBase}/log/tab/mutation`, {
-    method: "POST",
-    headers: { "Content-Type": "application/yaml" },
-    body: YAML.stringify(tabId ? { tabId, layout } : { layout }),
-  });
-  if (!res.ok) throw new Error(`log/tab/mutation: HTTP ${res.status}`);
-  const data: any = YAML.parse(await res.text());
-  return { tabId: data.tabId, layout: (data.layout ?? layout) as PaneNode };
+// The pane a node shows, or "" for a split.
+function paneIdOf(node: PaneNode): string {
+  const p = (node as PaneLeaf).pane as Record<string, any> | undefined;
+  return p && typeof p.paneId === "string" ? p.paneId : "";
+}
+
+function flexOf(node: PaneNode): string | undefined {
+  return (node as any)?.pane?.flex ?? (node as any)?.split?.flex;
+}
+
+function withFlex(node: PaneNode, flex: string | undefined): PaneNode {
+  const copy = JSON.parse(JSON.stringify(node)) as PaneNode;
+  if (!flex) return copy;
+  if ("pane" in copy) copy.pane.flex = flex;
+  else copy.split.flex = flex;
+  return copy;
+}
+
+function withoutFlex(node: PaneNode): PaneNode {
+  const copy = JSON.parse(JSON.stringify(node)) as PaneNode;
+  if ("pane" in copy) delete copy.pane.flex;
+  else delete copy.split.flex;
+  return copy;
+}
+
+// addPane puts `leaf` beside the pane `nextTo`. When the side lives in the same
+// direction as the parent split the pane simply joins its siblings; when it
+// crosses them (bottom, inside a row) the anchor is lifted out and wrapped with
+// the new pane in a fresh split of its own — so its share of the tab is kept.
+export function addPane(
+  tree: PaneNode,
+  nextTo: string,
+  side: Side,
+  leaf: PaneLeaf,
+): { tree: PaneNode; added: boolean } {
+  const axis = sideAxis(side);
+  const before = side === "left" || side === "top";
+
+  const walk = (node: PaneNode): { tree: PaneNode; added: boolean } => {
+    if ("pane" in node) {
+      // The anchor is the whole tab: the new split becomes the tree, and the
+      // pane keeps its (single) share of it.
+      if (paneIdOf(node) !== nextTo) return { tree: node, added: false };
+      const share = flexOf(node);
+      const out: PaneNode = {
+        split: {
+          flexDirection: axis,
+          ...(share ? { flex: share } : {}),
+          children: before
+            ? [withoutFlex(leaf), withoutFlex(node)]
+            : [withoutFlex(node), withoutFlex(leaf)],
+        },
+      };
+      return { tree: out, added: true };
+    }
+    const children = node.split.children.map((c) => c);
+    const at = children.findIndex((c) => paneIdOf(c) === nextTo);
+    if (at >= 0 && node.split.flexDirection === axis) {
+      const placed = before
+        ? [...children.slice(0, at), leaf, ...children.slice(at)]
+        : [...children.slice(0, at + 1), leaf, ...children.slice(at + 1)];
+      const out: PaneNode = {
+        split: { ...node.split, children: placed },
+      };
+      return { tree: out, added: true };
+    }
+    if (at >= 0) {
+      const anchor = children[at];
+      const share = flexOf(anchor) ?? "1 1 0";
+      const wrapped: PaneNode = {
+        split: {
+          flexDirection: axis,
+          flex: share,
+          children: before
+            ? [withoutFlex(leaf), withoutFlex(anchor)]
+            : [withoutFlex(anchor), withoutFlex(leaf)],
+        },
+      };
+      const placed = [...children.slice(0, at), wrapped, ...children.slice(at + 1)];
+      const out: PaneNode = { split: { ...node.split, children: placed } };
+      return { tree: out, added: true };
+    }
+    for (let i = 0; i < children.length; i++) {
+      const res = walk(children[i]);
+      if (res.added) {
+        const placed = [...children.slice(0, i), res.tree, ...children.slice(i + 1)];
+        return { tree: { split: { ...node.split, children: placed } }, added: true };
+      }
+    }
+    return { tree: node, added: false };
+  };
+
+  return walk(tree);
+}
+
+// deletePane removes one pane. A split left with a single child collapses into
+// that child — an empty container is not a layout, it is a residue.
+export function deletePane(
+  tree: PaneNode,
+  paneId: string,
+): { tree: PaneNode; deleted: boolean } {
+  const walk = (node: PaneNode): { tree: PaneNode; deleted: boolean } => {
+    // Deleting the tab's only pane is reported as deleted; the caller refuses it
+    // on the pane count, which is where "a tab keeps one pane" belongs.
+    if ("pane" in node) return { tree: node, deleted: paneIdOf(node) === paneId };
+    const children = node.split.children;
+    const at = children.findIndex((c) => paneIdOf(c) === paneId);
+    if (at >= 0) {
+      const left = [...children.slice(0, at), ...children.slice(at + 1)];
+      return { tree: collapse(node, left), deleted: true };
+    }
+    for (let i = 0; i < children.length; i++) {
+      const res = walk(children[i]);
+      if (res.deleted) {
+        const placed = [...children.slice(0, i), res.tree, ...children.slice(i + 1)];
+        return { tree: collapse(node, placed), deleted: true };
+      }
+    }
+    return { tree: node, deleted: false };
+  };
+
+  const collapse = (node: PaneNode, children: PaneNode[]): PaneNode => {
+    if (children.length === 1) {
+      const only = withoutFlex(children[0]);
+      return withFlex(only, flexOf(node)) as PaneNode;
+    }
+    return { split: { ...(node as PaneSplit).split, children } };
+  };
+
+  return walk(tree);
+}
+
+export function paneCount(node: PaneNode): number {
+  if ("pane" in node) return 1;
+  return node.split.children.reduce((n, c) => n + paneCount(c), 0);
+}
+
+export function paneIds(node: PaneNode, out: string[] = []): string[] {
+  if ("pane" in node) {
+    const id = paneIdOf(node);
+    if (id) out.push(id);
+    return out;
+  }
+  for (const c of node.split.children) paneIds(c, out);
+  return out;
+}
+
+export function contentIds(node: PaneNode, out: string[] = []): string[] {
+  if ("pane" in node) {
+    const id = (node.pane as Record<string, any>).contentId;
+    if (id) out.push(String(id));
+    return out;
+  }
+  for (const c of node.split.children) contentIds(c, out);
+  return out;
 }

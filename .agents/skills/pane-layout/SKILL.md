@@ -1,6 +1,6 @@
 ---
 name: pane-layout
-description: 让 main 用 tab-list / tab-mutation 把某个 tab 拆成多个 pane（每个 pane 装一个 agent）
+description: 让 main 用 current-tab-list / tab-layout-mutation 把某个 tab 拆成多个 pane（每个 pane 装一个 agent）
 ---
 
 把一张 tab 拆成多个 pane —— 屏幕上并排看多个 agent，而不是只在对话里描述。
@@ -9,73 +9,68 @@ description: 让 main 用 tab-list / tab-mutation 把某个 tab 拆成多个 pan
 
 ## 工具
 
-- `tab-list` —— 看当前开着的 tab、每张 tab 的 pane 树（`paneId` / `contentId` / `flex`），以及已关闭但记录还在的 tab。
-- `tab-mutation { tabId, layout }` —— 用一棵树替换那张 tab。
-- `tab-on { blueprint | sessionId }` —— 新开一张 tab（给 slug 就现开一个新 agent）。
-- `tab-off { tabId }` —— 关掉，记录保留（还能再开）。
-- `tab-delete { tabId }` —— 连 tab、它的对话记录和 agent 副本一起删。
+- `current-tab-list` —— 当前开着的 tab（按显示顺序）：标题、pane 数、最近活动时间。
+- `tab-layout-mutation { tabId, ops }` —— 给 tab 加一格或删一格。
+- `tab-new { blueprint }` —— 造一个新 agent 并放进新 tab（session id 由它分配）。
+- `current-tab-mutation { ops: [{ op: on|off, tabIds }] }` —— 开关 tab；关掉的 tab 记录还在，重开是同一条。
+- `tab-delete { tabId }` —— 连 tab 带它装着的对话一起删，不可逆。
 
-## 先读，每次都要读
+## 先看一眼，涉及 paneId 的时候
 
-**只要事情涉及布局，先 `tab-list` 一次。**
+`tab-layout-mutation` 的锚点是一个 **paneId**，它只能从 `current-tab-list` / 上一次工具结果里拿到。编一个一定会失败——工具会报错并列出这张 tab 真正有哪些 pane。
 
-不是"最好读一下"，是必须 —— 树是 **tab 级共享状态**：同一个 tab 下另一个 pane 里的 agent、或上一次对话，都可能已经改过它。而 `tab-mutation` 是**整树替换**：不读就写，会把你这轮没见过的 pane 一起抹掉。
+树本身**不用你写**：结构由「往哪一个 pane 的哪一边加」推出来。
 
-## 树怎么写
+## 怎么加一格
 
 ```yaml
-# 叶子：一个 pane 装一个 agent
-pane:
-  paneId: p_1a2b3c4d     # 这是哪一格 —— 工具发的句柄，见下
-  contentId: s_9f8e7d6c  # 装哪个 agent：已有 agent 的会话 id
-  # blueprint: project    # 或者不要 contentId，给一个 blueprint slug = 现开一个新 agent
-  flex: "2 1 0"          # 它从父 split 拿多少（可选，见下）
-
-# 分割
-split:
-  flexDirection: row     # CSS 的 flex-direction：row = 左右排，column = 上下排
-  flex: "1 1 0"          # 可选
-  children: [ … ]
+tab-layout-mutation:
+  tabId: t_1a2b3c
+  ops:
+    - { op: add, nextTo: p_1a2b3c4d, side: right, blueprint: project }
 ```
 
-- **只有一种 pane**：每格都是一个 agent。agent 的界面就是它 blueprint 的页面。
-- **`flex` 就是 CSS 的 `flex` 简写**（`<grow> [<shrink>] [<basis>]`）。一律用占比：`flex: "2 1 0"` = 拿兄弟的两倍；不写 = 均分。固定尺寸（`flex: "0 0 320px"`）只在内容真的固定大小时才用。
-- 一棵树最多 6 个 pane。
+`side` 是 `left | right | top | bottom`，就是"加在 `nextTo` 那格的哪一边"：
 
-## paneId 和 contentId：两个句柄，都由工具发
+- `left/right` → 和它**并排**；`top/bottom` → 和它**上下摞**。
+- 如果这一边和它周围的排法冲突（比如在左右排的 tab 里要 `bottom`），工具会自动把 `nextTo` 那格和新格一起装进一个新容器 —— 你不用管。
+- 想要更大份额就带 `flex: "2 1 0"`；不写就是均分。
 
-| 你想要 | 怎么写 |
-|---|---|
-| **保留**某一格（它现在就在屏幕上） | 把 `tab-list` 读到的 `paneId` **原样传回** |
-| 加一格**新的** | **省略 `paneId`** —— 工具会发一个，并放在结果里 |
-| 保留某个 agent | 把它的 `contentId` 传回 |
-| 现开一个**新** agent | 不给 `contentId`，给 `blueprint: <slug>` |
+## 怎么删一格
 
-**`paneId` 是"这是哪一格"**：只要传回它，哪怕把这一格挪到树里别的位置，它还是同一格 —— 屏幕上那一格不会被重建，输入状态和滚动位置都还在。
+```yaml
+tab-layout-mutation:
+  tabId: t_1a2b3c
+  ops:
+    - { op: delete, paneId: p_9f8e7d6c }
+```
 
-**编一个 id 一定失败**：两个句柄都必须是工具发过的，工具会报错并列出真正有效的值。
+- 一个容器只剩一格时自动塌陷，不会留下空壳。
+- **至少留一格**：删到最后一格会整条拒绝，那就该 `tab-delete`。
+- 删 pane **不删对话**：那个会话还属于这个 tab，只是暂时不显示。真要删对话，删整个 tab。
+
+## 关于会话
+
+- 一个会话只属于一个 tab，永不变更。所以**不能**把已有会话塞进另一个 tab —— 新 tab 永远意味着新 agent。
+- 想再看某个已有对话：`current-tab-mutation { op: on, tabIds: [t_xxx] }` 把那个 tab 开回来。
 
 ## 典型配方
 
 **新开一张 tab，再拆成 2:1**
 
 ```yaml
-tab-on: { blueprint: project }          # → tabId: t_1a2b3c
+tab-new: { blueprint: project }         # → tabId: t_1a2b3c，一格里一个 agent
 ```
 
 ```yaml
-tab-mutation:
+tab-layout-mutation:
   tabId: t_1a2b3c
-  layout:
-    split:
-      flexDirection: row
-      children:
-        - pane: { paneId: p_1a2b3c4d, contentId: s_9f8e7d6c, flex: "2 1 0" }
-        - pane: { contentId: s_9f8e7d6c, flex: "1 1 0" }
+  ops:
+    - { op: add, nextTo: p_1a2b3c4d, side: right, blueprint: pure-chat, flex: "1 1 0" }
 ```
 
-第二格省略了 `paneId`，所以是新的一格（同一个 agent 看两次）。
+**把一格关掉**：`{ op: delete, paneId: p_... }`。
 
-**关掉一张 tab**：`tab-off { tabId }`。记录还在，之后 `tab-on { sessionId }` 能把它再打开。
+**整张 tab 收起来**：`current-tab-mutation { ops: [{ op: off, tabIds: [t_1a2b3c] }] }` —— 记录还在。
 
-**删掉**：`tab-delete { tabId }` —— 不可逆。
+**删掉**：`tab-delete { tabId: t_1a2b3c }` —— 不可逆。

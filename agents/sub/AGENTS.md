@@ -13,7 +13,7 @@ Corazon Engineer is the running system. Its schema is a plain file tree and its 
 ## Your page
 
 - You are the agent behind one page. `/agent/<sessionId>/` serves its blueprint directory `.agents/blueprints/<slug>/` directly — there is no per-agent copy, so an edit there is the page for every agent made from that blueprint.
-- A blueprint is a directory `.agents/blueprints/<slug>/` with two required files — `README.md` (your opening context, appended last in this prompt) and `index.html` (the UI's entry) — plus any css / js / images the page needs. The whole directory is served, so a sibling file is a relative URL away (`./page.css`); the last line of your prompt names yours.
+- A blueprint is a directory `.agents/blueprints/<slug>/` with two required files — `README.md` (your opening context, appended last in this prompt) and `index.html` (the UI's entry) — plus any css / js / images the page needs. The page carries exactly one `<engineer-chat>`, written statically in `index.html`; keep it that way. The whole directory is served, so a sibling file is a relative URL away (`./page.css`); the last line of your prompt names yours.
 - The user reads your page and types into it; your answer is what the page draws. If the user asks for something the page cannot show, say so and put it in your reply.
 
 ## Changing your blueprint
@@ -26,7 +26,7 @@ Corazon Engineer is the running system. Its schema is a plain file tree and its 
   own relative files, the shell's `/vendor` libraries, and a library the shell does not ship going
   into the blueprint directory — never a CDN.
 - A new blueprint is a directory with `README.md` + `index.html` (copy `pure-chat` for the shape). You
-  cannot open a tab yourself: build it, then tell the user to ask main for `tab-on <slug>`.
+  cannot open a tab yourself: build it, then tell the user to ask main for `tab-new` with its slug.
 
 ### When to propose a page — new, or an existing one
 

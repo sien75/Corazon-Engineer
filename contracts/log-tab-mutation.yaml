@@ -1,30 +1,30 @@
 id: log-tab-mutation
-description: Create a tab record or overwrite an existing one's layout; the layout is a pane tree stored as text and returned as-is — log does not interpret it
+description: Overwrite a tab's layout and name, binding any session that is now shown; the layout is stored as text and returned as-is — log does not interpret it
 
 request:
   body:
-    tabId?: string  # existing tab id to overwrite; omitted creates a tab and the server assigns the id (t_<hex>)
-    layout: object  # the pane tree; log stores it without validating its structure
-      # Two node shapes, recursive:
-      #   leaf:  { pane: { content: chat | page, id: string, size?: fill | brief } }
-      #   split: { split: col | row, weight?: 1 | 2 | 3, children: [ <node>, ... ] }
-      # col splits left/right, row splits top/bottom; weight is the relative share
-      # within a split (1..3, default 1); size brief marks a short pane and is only
-      # valid on a leaf; a pane's id is its content id (chat = sessionId,
-      # page = blueprint slug).
+    tabId: string  # the tab to overwrite
+    title: string  # recomputed from the panes' page titles; log only stores it
+    layout: object  # the pane tree; a tab always has one
+    sessionIds?: [string]  # conversations shown after this write; an unbound one is bound to this tab, one bound elsewhere is refused
 
 response:
   status: 200
   body:
-    tabId: string  # echoed, or the assigned id when the request omitted it
+    tabId: string
+    title: string
     layout: object  # echoed as written
-    createdAt: string  # first write time, RFC3339
-    updatedAt: string  # latest write time, RFC3339
+    createdAt: string
+    updatedAt: string
+    lastAt: string
 
 errors:
   - status: 400
     code: bad_request
-    description: layout missing
+    description: layout missing, or a sessionId is already bound to another tab
+  - status: 404
+    code: not_found
+    description: tab does not exist
   - status: 500
     code: internal
     description: server internal error

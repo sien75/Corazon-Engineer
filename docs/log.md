@@ -2,7 +2,7 @@
 
 # log
 
-Corazon Engineer log service — owns sqlite records (call / observe / conversation); exposes log query/detail/search/mutation/stream APIs
+Corazon Engineer log service — owns the project's sqlite state — records (call / observe / conversation), tabs (each tab's pane tree, name and last activity), sessions (each conversation's kind, main or sub, and the tab it belongs to) and current (which tabs are open, and the main session); exposes log query/detail/search/mutation/stream APIs plus the tab, session and current ones
 
 - runtime: go 1.22
 
@@ -350,22 +350,31 @@ YAML
 
 - `POST /log/tab/new` (network / http)
 
-Create an empty tab record, assign its id, and add it to the open list (current); what it holds is written afterwards
+Create a tab record with its first layout, bind the sessions it shows, add it to the open list (current), and name it
 
 ### Request body
 
 ```yaml
-{}
+layout: object
+open?: boolean
+sessionIds?: [string]
+title: string
 ```
 
 ### Response (status 200)
 
 ```yaml
+createdAt: string
+lastAt: string
+layout: object
 tabId: string
+title: string
+updatedAt: string
 ```
 
 ### Errors
 
+- 400 `bad_request` — layout missing, or a sessionId is already bound to another tab
 - 500 `internal` — server error
 
 ### Example
@@ -373,6 +382,10 @@ tabId: string
 ```bash
 curl -s -X POST <address>/log/tab/new \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+  layout: object
+  open?: boolean
+  sessionIds?: [string]
+  title: string
 YAML
 ```
 
@@ -380,27 +393,32 @@ YAML
 
 - `POST /log/tab/mutation` (network / http)
 
-Create a tab record or overwrite an existing one's layout; the layout is a pane tree stored as text and returned as-is — log does not interpret it
+Overwrite a tab's layout and name, binding any session that is now shown; the layout is stored as text and returned as-is — log does not interpret it
 
 ### Request body
 
 ```yaml
 layout: object
-tabId?: string
+sessionIds?: [string]
+tabId: string
+title: string
 ```
 
 ### Response (status 200)
 
 ```yaml
 createdAt: string
+lastAt: string
 layout: object
 tabId: string
+title: string
 updatedAt: string
 ```
 
 ### Errors
 
-- 400 `bad_request` — layout missing
+- 400 `bad_request` — layout missing, or a sessionId is already bound to another tab
+- 404 `not_found` — tab does not exist
 - 500 `internal` — server error
 
 ### Example
@@ -409,7 +427,9 @@ updatedAt: string
 curl -s -X POST <address>/log/tab/mutation \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
   layout: object
-  tabId?: string
+  sessionIds?: [string]
+  tabId: string
+  title: string
 YAML
 ```
 
@@ -429,8 +449,10 @@ tabId: string
 
 ```yaml
 createdAt: string
+lastAt: string
 layout: object
 tabId: string
+title: string
 updatedAt: string
 ```
 
@@ -453,7 +475,7 @@ YAML
 
 - `POST /log/tab/list` (network / http)
 
-List tab records, most recently updated first
+List tab records, most recently active first (a message in one of the tab's sessions counts)
 
 ### Request body
 
@@ -466,12 +488,8 @@ pageNum?: number
 ```yaml
 hasMore: boolean
 pageNum: number
-pageSize: 100
-tabs:
-    - createdAt: string
-      layout: object
-      tabId: string
-      updatedAt: string
+pageSize: number
+tabs: [object]
 ```
 
 ### Errors
@@ -488,27 +506,62 @@ curl -s -X POST <address>/log/tab/list \
 YAML
 ```
 
-## log-tab-off
+## log-tab-on
 
-- `POST /log/tab/off` (network / http)
+- `POST /log/tab/on` (network / http)
 
-Close a tab — take it out of the open list, keeping its record so it can be reopened
+Put existing tabs back in the open list (idempotent) — reopening a tab keeps its record and does not create a new one
 
 ### Request body
 
 ```yaml
-tabId: string
+index?: number
+tabIds: [string]
 ```
 
 ### Response (status 200)
 
 ```yaml
-tabId: string  # echoed
+openTabs: [string]
 ```
 
 ### Errors
 
-- 400 `bad_request` — tabId missing
+- 400 `bad_request` — tabIds missing, or one of them does not exist
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/tab/on \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+  index?: number
+  tabIds: [string]
+YAML
+```
+
+## log-tab-off
+
+- `POST /log/tab/off` (network / http)
+
+Close tabs — take them out of the open list, keeping their records so they can be reopened
+
+### Request body
+
+```yaml
+tabId?: string
+tabIds: [string]
+```
+
+### Response (status 200)
+
+```yaml
+openTabs: [string]
+```
+
+### Errors
+
+- 400 `bad_request` — tabIds missing
 - 500 `internal` — server error
 
 ### Example
@@ -516,7 +569,8 @@ tabId: string  # echoed
 ```bash
 curl -s -X POST <address>/log/tab/off \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
-tabId: t_1a2b3c
+  tabId?: string
+  tabIds: [string]
 YAML
 ```
 
@@ -593,7 +647,7 @@ YAML
 
 - `POST /log/session/detail` (network / http)
 
-Read one conversation's role; a session with no row is not an error to the caller, but this endpoint answers 404
+Read one conversation's role and the blueprint it was made from; a session with no row is not an error to the caller, but this endpoint answers 404
 
 ### Request body
 
@@ -604,9 +658,11 @@ sessionId: string  # conversation session id
 ### Response (status 200)
 
 ```yaml
-sessionId: string
-kind: main | sub
+blueprint: string
 createdAt: string
+kind: main | sub
+sessionId: string
+tabId: string
 ```
 
 ### Errors

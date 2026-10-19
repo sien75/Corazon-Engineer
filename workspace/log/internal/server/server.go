@@ -36,6 +36,7 @@ func New(st *store.Store) *Server {
 	s.mux.HandleFunc("POST /log/tab/mutation", s.handleTabMutation)
 	s.mux.HandleFunc("POST /log/tab/detail", s.handleTabDetail)
 	s.mux.HandleFunc("POST /log/tab/list", s.handleTabList)
+	s.mux.HandleFunc("POST /log/tab/on", s.handleTabOn)
 	s.mux.HandleFunc("POST /log/tab/off", s.handleTabOff)
 	s.mux.HandleFunc("POST /log/tab/delete", s.handleTabDelete)
 	s.mux.HandleFunc("POST /log/session/upsert", s.handleSessionUpsert)
@@ -160,6 +161,12 @@ func (s *Server) handleMutation(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	// A message is activity on the tab that holds its conversation: the launcher
+	// orders tabs by that, so a tab you just talked in comes first even though its
+	// layout has not changed.
+	if req.Kind == "conversation" {
+		_ = s.store.TouchSessionTab(req.SessionID, rec.CreatedAt)
+	}
 	s.broker.Publish(rec)
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"id": rec.ID, "createdAt": rec.CreatedAt})
 }
@@ -171,22 +178,11 @@ func (s *Server) handleMutation(w http.ResponseWriter, r *http.Request) {
 // validate, or default the layout; that belongs to whoever writes it.
 
 func (s *Server) handleTabNew(w http.ResponseWriter, r *http.Request) {
-	var req struct{}
-	if !decode(w, r, &req) {
-		return
-	}
-	tab, err := s.store.NewTab()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"tabId": tab.TabID})
-}
-
-func (s *Server) handleTabMutation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TabID  string      `yaml:"tabId"`
-		Layout interface{} `yaml:"layout"`
+		Title      string      `yaml:"title"`
+		Layout     interface{} `yaml:"layout"`
+		SessionIDs []string    `yaml:"sessionIds"`
+		Open       *bool       `yaml:"open"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -195,12 +191,93 @@ func (s *Server) handleTabMutation(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "layout missing")
 		return
 	}
-	tab, err := s.store.PutTab(strings.TrimSpace(req.TabID), req.Layout)
+	open := req.Open == nil || *req.Open
+	tab, err := s.store.NewTab(strings.TrimSpace(req.Title), req.Layout, open)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if err := s.store.BindSessions(tab.TabID, req.SessionIDs); err != nil {
+		// The tab exists but no conversation may belong to it: undo the write so a
+		// refused binding does not leave an empty tab behind.
+		_ = s.store.DeleteTab(tab.TabID)
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, tab.Body())
+}
+
+func (s *Server) handleTabMutation(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TabID      string      `yaml:"tabId"`
+		Title      string      `yaml:"title"`
+		Layout     interface{} `yaml:"layout"`
+		SessionIDs []string    `yaml:"sessionIds"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Layout == nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "layout missing")
+		return
+	}
+	if strings.TrimSpace(req.TabID) == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "tabId missing")
+		return
+	}
+	if _, err := s.store.GetTab(req.TabID); errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "not_found", "tab does not exist")
+		return
+	}
+	if err := s.store.BindSessions(req.TabID, req.SessionIDs); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	tab, err := s.store.PutTab(req.TabID, strings.TrimSpace(req.Title), req.Layout)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 	writeYAMLResp(w, http.StatusOK, tab.Body())
+}
+
+// handleTabOn puts existing tabs back in the open list. Opening a tab never
+// creates a record: a tab that was closed is the one that comes back.
+func (s *Server) handleTabOn(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TabIDs []string    `yaml:"tabIds"`
+		Index  interface{} `yaml:"index"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if len(req.TabIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "tabIds missing")
+		return
+	}
+	for _, id := range req.TabIDs {
+		if _, err := s.store.GetTab(id); errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusBadRequest, "bad_request", "no tab "+id)
+			return
+		} else if err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+	}
+	index := -1
+	if v, ok := req.Index.(int); ok {
+		index = v
+	}
+	if err := s.store.AddOpenTabs(req.TabIDs, index); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	cur, err := s.store.Current()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"openTabs": cur.Body()["openTabs"]})
 }
 
 func (s *Server) handleTabDetail(w http.ResponseWriter, r *http.Request) {
@@ -252,22 +329,32 @@ func (s *Server) handleTabList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTabOff(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TabID string `yaml:"tabId"`
+		TabIDs []string `yaml:"tabIds"`
+		TabID  string   `yaml:"tabId"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	if strings.TrimSpace(req.TabID) == "" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "tabId missing")
+	ids := req.TabIDs
+	if len(ids) == 0 && strings.TrimSpace(req.TabID) != "" {
+		ids = []string{req.TabID}
+	}
+	if len(ids) == 0 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "tabIds missing")
 		return
 	}
 	// Closing a tab keeps its record (it can be reopened); only the open list
 	// changes.
-	if err := s.store.RemoveOpenTab(req.TabID); err != nil {
+	if err := s.store.RemoveOpenTabs(ids); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"tabId": req.TabID})
+	cur, err := s.store.Current()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"openTabs": cur.Body()["openTabs"]})
 }
 
 func (s *Server) handleTabDelete(w http.ResponseWriter, r *http.Request) {

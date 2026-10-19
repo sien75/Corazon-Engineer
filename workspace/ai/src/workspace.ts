@@ -1,35 +1,49 @@
 // The main agent's workspace tools. main is the one conversation the shell
-// itself hosts; everything it can do to the workspace — see the sessions, open
-// and close tabs, rewrite a tab's panes, delete a tab and its agents — is a tool
-// here. A blueprint agent (sub) gets none of these: its page is a view, not a
-// workspace.
+// itself hosts; everything it can do to the workspace — see what is open, open and
+// close tabs, add and remove panes, delete a tab and the conversations it holds —
+// is a tool here. A blueprint agent (sub) gets none of these: its page is a view,
+// not a workspace.
 //
-// The tools never talk to the frontend. They write log (sessions, tabs, current)
+// The tools never talk to the frontend. They write log (tabs, sessions, current)
 // and return; the shell runs main's stream itself, so the tool frame is what makes
 // it redraw. One source of truth, one direction.
+//
+// There is no session-level tool on purpose. A conversation is only reachable
+// through the tab that holds it: opening the tab resumes it, deleting the tab
+// deletes it. A conversation nothing shows is a record, not a thing on screen.
 
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import YAML from "yaml";
-import { describeLayout, normalizeLayout, type PaneNode } from "./layout.ts";
+import {
+  addPane,
+  contentIds,
+  deletePane,
+  describeLayout,
+  MAX_PANES,
+  paneCount,
+  paneIds,
+  type PaneLeaf,
+  type PaneNode,
+  type Side,
+} from "./layout.ts";
 
 export interface WorkspaceDeps {
   root: string;
   logBase: string;
-  // The session these tools run inside — main itself. session-delete refuses it:
-  // the conversation you are talking in is not yours to delete.
+  // The session these tools run inside — main itself.
   selfId: string;
   // Open a new conversation from a blueprint slug (the session row is written by
-  // the registry); returns its id.
-  newSession: (blueprint?: string) => Promise<string>;
-  // Rebuild a session server-side so it can be asked again.
-  resumeSession: (id: string) => Promise<{ id: string; kind: string } | undefined>;
+  // the registry, and so is its blueprint); returns its id.
+  newSession: (blueprint: string) => Promise<string>;
+  // The blueprint a conversation was made from; "" when it has none.
+  sessionBlueprint: (id: string) => Promise<string>;
   // Hard delete: dispose the live session and delete its records. The page is the
   // blueprint's, shared with every other agent of it, so it stays.
   deleteSession: (id: string) => Promise<void>;
-  // Whether a session id is real (live, or has recorded history).
-  hasSession: (id: string) => Promise<boolean>;
 }
 
 async function logCall<T = any>(
@@ -71,256 +85,206 @@ function newPaneId(): string {
   return `p_${randomBytes(4).toString("hex")}`;
 }
 
-// One line per pane, for describing a stored tree back to the model.
-function paneIdsOf(node: any, out: string[] = []): string[] {
-  if (!node || typeof node !== "object") return out;
-  if (node.pane) {
-    if (node.pane.paneId) out.push(String(node.pane.paneId));
-    return out;
-  }
-  for (const child of node.split?.children ?? []) paneIdsOf(child, out);
-  return out;
+// ---------- titles ----------
+//
+// A tab is named after the pages it shows: each pane's blueprint index.html
+// <title>, deduplicated and joined. The name is stored on the tab so the shell can
+// draw a tab bar before anything is loaded, and recomputed on every layout change —
+// a tab whose panes changed and whose name did not would be a lie.
+
+const titleCache = new Map<string, string>();
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
 }
 
-function contentIdsOf(node: any, out: string[] = []): string[] {
-  if (!node || typeof node !== "object") return out;
-  if (node.pane) {
-    const id = node.pane.contentId ?? node.pane.id ?? node.pane.content;
-    if (id) out.push(String(id));
-    return out;
+export function blueprintTitle(root: string, slug: string): string {
+  const cached = titleCache.get(slug);
+  if (cached !== undefined) return cached;
+  let title = "";
+  try {
+    const html = readFileSync(path.join(root, ".agents", "blueprints", slug, "index.html"), "utf8");
+    const bare = html.replace(/<!--[\s\S]*?-->/g, "");
+    const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(bare);
+    title = m ? decodeEntities(m[1]).replace(/\s+/g, " ").trim() : "";
+  } catch {
+    title = "";
   }
-  for (const child of node.split?.children ?? []) contentIdsOf(child, out);
-  return out;
+  titleCache.set(slug, title);
+  return title;
 }
 
+// tabTitle names a tab from the pages it shows, in pane order.
+async function tabTitle(
+  deps: WorkspaceDeps,
+  layout: PaneNode,
+): Promise<string> {
+  const names: string[] = [];
+  for (const contentId of contentIds(layout)) {
+    let slug = "";
+    try {
+      slug = await deps.sessionBlueprint(contentId);
+    } catch {
+      slug = "";
+    }
+    const name = slug ? blueprintTitle(deps.root, slug) || slug : "";
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names.join(" · ");
+}
+
+// oneLine shortens a text for a tool result.
 function oneLine(s: unknown, max = 100): string {
   const t = String(s ?? "").replace(/\s+/g, " ").trim();
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
 export function makeWorkspaceTools(deps: WorkspaceDeps) {
-  const sessionList = defineTool({
-    name: "session-list",
-    label: "List sessions",
+  const currentTabList = defineTool({
+    name: "current-tab-list",
+    label: "List open tabs",
     description:
-      "List this project's conversation sessions, most recent first: sessionId, kind " +
-      "(main / sub), message count, last activity and a preview. Use it to find a " +
-      "session before tab-on with an existing sessionId, or before session-resume.",
-    promptSnippet: "session-list: list conversations in this project",
-    parameters: Type.Object({}),
-    execute: async () => {
-      const data = await logCall(deps.logBase, "/log/list", { pageNum: 1 });
-      const sessions = data.sessions ?? [];
-      if (!sessions.length) return ok("No sessions in this project yet.");
-      const lines = sessions.map(
-        (s: any) =>
-          `${s.sessionId}  ${s.kind ?? "sub"}  ${s.count} msgs  ${s.lastAt}  ${oneLine(s.preview)}`,
-      );
-      return ok(lines.join("\n"), { sessions });
-    },
-  });
-
-  const sessionResume = defineTool({
-    name: "session-resume",
-    label: "Resume session",
-    description:
-      "Rebuild a conversation server-side from its records so it can be asked " +
-      "again (a process restart, or a tab whose agent is no longer live). The " +
-      "agent's own page resumes itself when it loads, so this is for sessions " +
-      "nothing is currently showing.",
-    promptSnippet: "session-resume: rebuild a conversation so it can be asked again",
-    parameters: Type.Object({
-      sessionId: Type.String({ description: "the conversation to resume" }),
-    }),
-    execute: async (_id, params) => {
-      const sess = await deps.resumeSession(params.sessionId);
-      if (!sess) {
-        return fail(
-          `No session ${params.sessionId}: it is neither live nor recorded in log.`,
-        );
-      }
-      return ok(`Resumed ${sess.id} (${sess.kind}).`, { sessionId: sess.id, kind: sess.kind });
-    },
-  });
-
-  const tabList = defineTool({
-    name: "tab-list",
-    label: "List tabs",
-    description:
-      "The workspace as it is right now: which session the shell's own chat is " +
-      "(main), every open tab with its pane tree (paneId, the agent each pane " +
-      "shows, flex), and the closed tabs whose records still exist. Read this " +
-      "before tab-mutation — a write replaces the whole tree, so anything not in " +
-      "it closes. A closed tab can be deleted with tab-delete (or shown again " +
-      "with tab-on { sessionId }).",
-    promptSnippet: "tab-list: the open tabs and their pane trees",
+      "What is on screen right now: the sessions of the shell's own chat (main) and " +
+      "every open tab in display order, each with its tabId, its title, how many " +
+      "panes it has and when it was last active. Tabs that are closed keep their " +
+      "records and appear in the launcher, not here — reopen one with " +
+      "current-tab-mutation { op: on }.",
+    promptSnippet: "current-tab-list: the tabs currently open",
     parameters: Type.Object({}),
     execute: async () => {
       const current = await logCall(deps.logBase, "/log/current/get", {});
-      const tabs = [];
+      const list = await logCall(deps.logBase, "/log/tab/list", { pageNum: 1 });
+      const byId = new Map<string, any>();
+      for (const rec of list.tabs ?? []) byId.set(rec.tabId, rec);
+      const rows = [];
+      const lines = [];
       for (const tabId of current.openTabs ?? []) {
-        try {
-          const tab = await logCall(deps.logBase, "/log/tab/detail", { tabId });
-          const layout = tab.layout ?? {};
-          const empty = !layout.pane && !layout.split;
-          tabs.push({
-            tabId,
-            panes: empty ? [] : contentIdsOf(layout),
-            tree: empty ? "(no pane tree yet)" : describeLayout(layout as PaneNode),
-          });
-        } catch {
-          // A tab id in current with no record: report it so it can be deleted.
-          tabs.push({ tabId, panes: [], tree: "(record missing)" });
+        const rec = byId.get(tabId);
+        if (!rec) {
+          rows.push({ tabId, title: "", panes: 0, lastAt: "" });
+          lines.push(`tab ${tabId}  (record missing)`);
+          continue;
         }
+        const panes = contentIds(rec.layout ?? {}).length;
+        rows.push({ tabId, title: rec.title ?? "", panes, lastAt: rec.lastAt ?? "" });
+        lines.push(
+          `tab ${tabId}  ${oneLine(rec.title || "(untitled)", 40)}  ${panes} pane(s)  ${rec.lastAt ?? ""}`,
+        );
       }
-      // Closed tabs: their records still exist, so they can be reopened or
-      // deleted. Without this they would be unreachable once tab-off hid them.
-      const closed = [];
-      try {
-        const list = await logCall(deps.logBase, "/log/tab/list", { pageNum: 1 });
-        const open = new Set((current.openTabs ?? []) as string[]);
-        for (const rec of list.tabs ?? []) {
-          if (open.has(rec.tabId)) continue;
-          closed.push({
-            tabId: rec.tabId,
-            agents: contentIdsOf(rec.layout ?? {}),
-          });
-        }
-      } catch {
-        // The list is best-effort: the open tabs above are the important part.
-      }
-      const lines = [
-        `main session: ${current.mainSession || "(none)"}`,
-        ...tabs.map(
-          (t) => `tab ${t.tabId}  agents: ${t.panes.join(", ") || "(none)"}\n${t.tree}`,
-        ),
-        ...(closed.length
-          ? [
-              "closed tabs (record kept):\n" +
-                closed
-                  .map((t) => `tab ${t.tabId}  agents: ${t.agents.join(", ") || "(none)"}`)
-                  .join("\n"),
-            ]
-          : []),
-      ];
-      return ok(lines.join("\n\n"), { mainSession: current.mainSession, tabs, closed });
+      const body = [
+        `main: ${current.mainSession || "(none)"}`,
+        rows.length ? lines.join("\n") : "no tabs open",
+      ].join("\n");
+      return ok(body, { mainSession: current.mainSession, tabs: rows });
     },
   });
 
-  const tabMutation = defineTool({
-    name: "tab-mutation",
-    label: "Rewrite a tab's layout",
+  const currentTabMutation = defineTool({
+    name: "current-tab-mutation",
+    label: "Open / close tabs",
     description:
-      "Replace one tab's pane tree. The tree is the whole layout — a write drops " +
-      "every pane not in it — so read tab-list first and pass back the paneIds you " +
-      "mean to keep. A leaf is { pane: { paneId, contentId, flex? } } (contentId is " +
-      "a sessionId), or { pane: { blueprint: \"<slug>\" } } to instantiate a new " +
-      "agent into that pane; a split is { split: { flexDirection: \"row\" | " +
-      "\"column\", flex?, children: [ … ] } }. At most 6 panes.",
-    promptSnippet: "tab-mutation: replace a tab's pane tree",
+      "Change which tabs are open, in order. Each op takes tabIds, so one call can " +
+      "open or close several. `on` puts a tab back in the workspace — the same " +
+      "record, not a new one; opening a tab never creates anything, use tab-new for " +
+      "that. `off` closes it and keeps its record. Both are idempotent: opening an " +
+      "open tab keeps its place, closing a closed one does nothing.",
+    promptSnippet: "current-tab-mutation: open or close tabs",
     parameters: Type.Object({
-      tabId: Type.String({ description: "the tab to rewrite" }),
-      layout: Type.Any({ description: "the whole pane tree" }),
+      ops: Type.Array(
+        Type.Object({
+          op: Type.String({ description: "on | off" }),
+          tabIds: Type.Array(Type.String(), { description: "the tabs to open or close" }),
+          index: Type.Optional(
+            Type.Number({
+              description: "where the first newly opened tab goes; omitted appends to the end",
+            }),
+          ),
+        }),
+        { description: "applied in order" },
+      ),
     }),
     execute: async (_id, params) => {
-      let stored;
-      try {
-        stored = await logCall(deps.logBase, "/log/tab/detail", { tabId: params.tabId });
-      } catch (err) {
-        return fail(`No tab ${params.tabId}: ${String((err as Error).message)}`);
+      let openTabs: string[] = [];
+      for (const raw of params.ops ?? []) {
+        const op = String(raw.op ?? "").trim();
+        const tabIds = (raw.tabIds ?? []).map((t: string) => String(t ?? "").trim()).filter(Boolean);
+        if (!tabIds.length) return fail(`${op || "each op"} needs tabIds.`);
+        try {
+          if (op === "on") {
+            const body = await logCall(deps.logBase, "/log/tab/on", {
+              tabIds,
+              ...(typeof raw.index === "number" ? { index: raw.index } : {}),
+            });
+            openTabs = body.openTabs ?? openTabs;
+          } else if (op === "off") {
+            const body = await logCall(deps.logBase, "/log/tab/off", { tabIds });
+            openTabs = body.openTabs ?? openTabs;
+          } else {
+            return fail(`unknown op ${JSON.stringify(op)}: use "on" or "off".`);
+          }
+        } catch (err) {
+          return fail(`Could not apply ${op}: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
-      const currentLayout = stored.layout ?? {};
+      return ok(
+        openTabs.length ? `open tabs: ${openTabs.join(", ")}` : "no tabs open",
+        { openTabs },
+      );
+    },
+  });
+
+  const tabNew = defineTool({
+    name: "tab-new",
+    label: "New tab",
+    description:
+      "Make a new agent from a blueprint and put it on screen in a tab of its own. " +
+      "The session id is assigned here — you never pass one, and a conversation " +
+      "cannot be moved into a new tab (it belongs to the tab that made it; reopen " +
+      "that tab instead). The tab starts with one pane; use tab-layout-mutation to " +
+      "split it.",
+    promptSnippet: "tab-new: a new agent in a new tab",
+    parameters: Type.Object({
+      blueprint: Type.String({ description: "blueprint slug to instantiate" }),
+      open: Type.Optional(
+        Type.Boolean({ description: "put it in the open list too; default true" }),
+      ),
+    }),
+    execute: async (_id, params) => {
+      const slug = String(params.blueprint ?? "").trim();
+      if (!slug) return fail("tab-new needs `blueprint`.");
+      let sessionId = "";
       try {
-        const layout = await normalizeLayout(params.layout, {
-          newSession: deps.newSession,
-          hasSession: deps.hasSession,
-          currentIds: contentIdsOf(currentLayout),
-          currentPaneIds: paneIdsOf(currentLayout),
-        });
-        const saved = await logCall(deps.logBase, "/log/tab/mutation", {
-          tabId: params.tabId,
-          layout,
-        });
-        return ok(
-          `Layout applied to tab ${params.tabId}:\n${describeLayout(saved.layout ?? layout)}`,
-          { tabId: params.tabId, layout: saved.layout ?? layout },
-        );
+        sessionId = await deps.newSession(slug);
       } catch (err) {
         return fail(
-          `Layout rejected: ${err instanceof Error ? err.message : String(err)}`,
+          `Could not instantiate ${slug}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-    },
-  });
-
-  const tabOn = defineTool({
-    name: "tab-on",
-    label: "Open a tab",
-    description:
-      "Open a new tab showing one agent. Pass `blueprint` to instantiate a fresh " +
-      "agent from that blueprint (the normal way to put something new on screen), " +
-      "or `sessionId` to show an existing conversation. The tab opens with a " +
-      "single pane; use tab-mutation to split it.",
-    promptSnippet: "tab-on: open a tab for a new or existing agent",
-    parameters: Type.Object({
-      blueprint: Type.Optional(
-        Type.String({ description: "blueprint slug to instantiate a new agent from" }),
-      ),
-      sessionId: Type.Optional(
-        Type.String({ description: "an existing conversation to show instead" }),
-      ),
-    }),
-    execute: async (_id, params) => {
-      let sessionId = params.sessionId?.trim() ?? "";
-      if (sessionId) {
-        if (!(await deps.hasSession(sessionId))) {
-          return fail(`No session ${sessionId}: neither live nor recorded in log.`);
-        }
-      } else if (params.blueprint?.trim()) {
+      const layout: PaneNode = { pane: { paneId: newPaneId(), contentId: sessionId } };
+      try {
+        const saved = await logCall(deps.logBase, "/log/tab/new", {
+          title: await tabTitle(deps, layout),
+          layout,
+          sessionIds: [sessionId],
+          open: params.open === undefined ? true : params.open,
+        });
+        return ok(
+          `Tab ${saved.tabId} — ${saved.title || slug}, agent ${sessionId}.`,
+          { tabId: saved.tabId, sessionId, title: saved.title ?? "", layout },
+        );
+      } catch (err) {
+        // A tab that could not be written leaves the agent orphaned: drop it.
         try {
-          sessionId = await deps.newSession(params.blueprint.trim());
-        } catch (err) {
-          return fail(
-            `Could not instantiate ${params.blueprint}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
+          await deps.deleteSession(sessionId);
+        } catch {
+          // the original error is what matters
         }
-      } else {
-        return fail("tab-on needs `blueprint` (a new agent) or `sessionId` (an existing one).");
-      }
-      try {
-        const tab = await logCall(deps.logBase, "/log/tab/new", {});
-        const layout = { pane: { paneId: newPaneId(), contentId: sessionId } };
-        const saved = await logCall(deps.logBase, "/log/tab/mutation", {
-          tabId: tab.tabId,
-          layout,
-        });
-        return ok(`Opened tab ${saved.tabId} with agent ${sessionId}.`, {
-          tabId: saved.tabId,
-          sessionId,
-          layout,
-        });
-      } catch (err) {
-        return fail(`Could not open the tab: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    },
-  });
-
-  const tabOff = defineTool({
-    name: "tab-off",
-    label: "Close a tab",
-    description:
-      "Close a tab: it leaves the workspace, but its record and its agent stay — " +
-      "use tab-delete to remove them for good.",
-    promptSnippet: "tab-off: close a tab, keeping its record",
-    parameters: Type.Object({ tabId: Type.String({ description: "the tab to close" }) }),
-    execute: async (_id, params) => {
-      try {
-        await logCall(deps.logBase, "/log/tab/off", { tabId: params.tabId });
-        return ok(`Closed tab ${params.tabId}.`);
-      } catch (err) {
-        return fail(`Could not close the tab: ${err instanceof Error ? err.message : String(err)}`);
+        return fail(`Could not create the tab: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   });
@@ -329,10 +293,11 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
     name: "tab-delete",
     label: "Delete a tab",
     description:
-      "Delete a tab and every agent it showed: the tab record and each " +
-      "conversation's records. This cannot be undone. The pages stay (they belong to " +
-      "their blueprints).",
-    promptSnippet: "tab-delete: delete a tab and its agents",
+      "Delete a tab and everything it holds: the tab record, and each conversation " +
+      "it showed (its agent and its records). This cannot be undone — the pages stay, " +
+      "they belong to their blueprints. To take a tab off screen without deleting " +
+      "it, use current-tab-mutation { op: off }.",
+    promptSnippet: "tab-delete: delete a tab and its conversations",
     parameters: Type.Object({ tabId: Type.String({ description: "the tab to delete" }) }),
     execute: async (_id, params) => {
       let stored;
@@ -342,71 +307,180 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
         return fail(`No tab ${params.tabId}.`);
       }
       const deleted: string[] = [];
-      for (const sessionId of new Set(contentIdsOf(stored.layout ?? {}))) {
+      for (const sessionId of new Set(contentIds(stored.layout ?? {}))) {
         await deps.deleteSession(sessionId);
         deleted.push(sessionId);
       }
       try {
         await logCall(deps.logBase, "/log/tab/delete", { tabId: params.tabId });
       } catch (err) {
-        return fail(`Deleted its agents, but not the tab: ${
+        return fail(`Deleted its conversations, but not the tab: ${
           err instanceof Error ? err.message : String(err)
         }`);
       }
       return ok(
-        `Deleted tab ${params.tabId}${deleted.length ? ` and agent(s) ${deleted.join(", ")}` : ""}.`,
+        `Deleted tab ${params.tabId}` +
+          (deleted.length ? ` and conversation(s) ${deleted.join(", ")}.` : "."),
         { tabId: params.tabId, sessions: deleted },
       );
     },
   });
 
-  const sessionDelete = defineTool({
-    name: "session-delete",
-    label: "Delete a conversation",
+  const tabLayoutMutation = defineTool({
+    name: "tab-layout-mutation",
+    label: "Add or remove panes",
     description:
-      "Delete one conversation for good: the live agent and its records in log. " +
-      "The page belongs to its blueprint and stays. This cannot be undone. It refuses only one id — " +
-      "the conversation you are talking in (main). It does not touch tabs: a tab " +
-      "still showing the deleted agent keeps a dead pane and its page is gone, so " +
-      "when the tab should go too, use tab-delete instead. To make an agent leave " +
-      "the screen without deleting it, use tab-off.",
-    promptSnippet: "session-delete: delete one conversation for good (never yourself)",
+      "Change which panes a tab has, one op at a time — the layout is derived from " +
+      "where you put a pane, so you never write the tree itself.\n" +
+      "  add:    { op: \"add\", nextTo: <paneId>, side: \"left\"|\"right\"|\"top\"|\"bottom\", " +
+      "blueprint: <slug> } — the new agent goes on that side of that pane. A side that " +
+      "crosses the panes around it (bottom, inside a row) wraps the anchor and the new " +
+      "pane in a split of their own, so the anchor keeps its share.\n" +
+      "  delete: { op: \"delete\", paneId: <paneId> } — the pane goes; a split left with " +
+      "one child collapses into it.\n" +
+      `A tab keeps 1 to ${MAX_PANES} panes. Every op is applied in order and the whole ` +
+      "call is refused if any of them does not fit, so a half-applied layout is not a " +
+      "state you can end up in. The tab's title is recomputed from its pages.",
+    promptSnippet: "tab-layout-mutation: add or remove the panes of a tab",
     parameters: Type.Object({
-      sessionId: Type.String({ description: "the conversation to delete" }),
+      tabId: Type.String({ description: "the tab to change" }),
+      ops: Type.Array(
+        Type.Object({
+          op: Type.String({ description: "add | delete" }),
+          nextTo: Type.Optional(
+            Type.String({ description: "add: the paneId to put the new pane beside" }),
+          ),
+          side: Type.Optional(
+            Type.String({ description: "add: left | right | top | bottom" }),
+          ),
+          blueprint: Type.Optional(
+            Type.String({ description: "add: blueprint slug for the new pane's agent" }),
+          ),
+          flex: Type.Optional(
+            Type.String({ description: 'add: share, e.g. "2 1 0"; default even' }),
+          ),
+          paneId: Type.Optional(Type.String({ description: "delete: the paneId to remove" })),
+        }),
+        { description: "applied in order" },
+      ),
     }),
     execute: async (_id, params) => {
-      const id = String(params.sessionId ?? "").trim();
-      if (!id) return fail("session-delete needs a sessionId.");
-      if (id === deps.selfId) {
+      let stored;
+      try {
+        stored = await logCall(deps.logBase, "/log/tab/detail", { tabId: params.tabId });
+      } catch (err) {
+        return fail(`No tab ${params.tabId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      let tree = stored.layout as PaneNode;
+      if (!tree || (!("pane" in tree) && !("split" in tree))) {
+        return fail(`Tab ${params.tabId} has no pane tree.`);
+      }
+      const created: string[] = [];
+      const cleanup = async () => {
+        for (const id of created) {
+          try {
+            await deps.deleteSession(id);
+          } catch {
+            // best effort: the refusal is what gets reported
+          }
+        }
+      };
+
+      for (const raw of params.ops ?? []) {
+        const op = String(raw.op ?? "").trim();
+        if (op === "add") {
+          const nextTo = String(raw.nextTo ?? "").trim();
+          const side = String(raw.side ?? "").trim() as Side;
+          const slug = String(raw.blueprint ?? "").trim();
+          if (!nextTo) {
+            await cleanup();
+            return fail(`add needs nextTo — one of this tab's panes: ${paneIds(tree).join(", ")}.`);
+          }
+          if (!["left", "right", "top", "bottom"].includes(side)) {
+            await cleanup();
+            return fail('add needs side: "left", "right", "top" or "bottom".');
+          }
+          if (!slug) {
+            await cleanup();
+            return fail("add needs blueprint: the slug of a page to instantiate.");
+          }
+          if (paneCount(tree) >= MAX_PANES) {
+            await cleanup();
+            return fail(`a tab holds at most ${MAX_PANES} panes — this one already has ${paneCount(tree)}.`);
+          }
+          let sessionId = "";
+          try {
+            sessionId = await deps.newSession(slug);
+          } catch (err) {
+            await cleanup();
+            return fail(
+              `Could not instantiate ${slug}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          created.push(sessionId);
+          const leaf: PaneLeaf = { pane: { paneId: newPaneId(), contentId: sessionId } };
+          if (typeof raw.flex === "string" && raw.flex.trim()) leaf.pane.flex = raw.flex.trim();
+          const res = addPane(tree, nextTo, side, leaf);
+          if (!res.added) {
+            await cleanup();
+            return fail(
+              `No pane ${nextTo} in this tab. Its panes: ${paneIds(tree).join(", ") || "(none)"}.`,
+            );
+          }
+          tree = res.tree;
+        } else if (op === "delete") {
+          const paneId = String(raw.paneId ?? "").trim();
+          if (!paneId) {
+            await cleanup();
+            return fail(`delete needs paneId — one of this tab's panes: ${paneIds(tree).join(", ")}.`);
+          }
+          if (paneCount(tree) <= 1) {
+            await cleanup();
+            return fail("a tab keeps at least one pane — delete the tab instead.");
+          }
+          const res = deletePane(tree, paneId);
+          if (!res.deleted) {
+            await cleanup();
+            return fail(
+              `No pane ${paneId} in this tab. Its panes: ${paneIds(tree).join(", ") || "(none)"}.`,
+            );
+          }
+          tree = res.tree;
+        } else {
+          await cleanup();
+          return fail(`unknown op ${JSON.stringify(op)}: use "add" or "delete".`);
+        }
+        if (paneCount(tree) < 1) {
+          await cleanup();
+          return fail("a tab keeps at least one pane — delete the tab instead.");
+        }
+      }
+      if (paneCount(tree) < 1) {
+        await cleanup();
+        return fail("a tab keeps at least one pane — delete the tab instead.");
+      }
+      // Deleting a pane does not delete its conversation: the conversation belongs
+      // to this tab, and a tab that has stopped showing it is a tab that can show it
+      // again. Only tab-delete removes conversations.
+      try {
+        const saved = await logCall(deps.logBase, "/log/tab/mutation", {
+          tabId: params.tabId,
+          title: await tabTitle(deps, tree),
+          layout: tree,
+        });
+        return ok(
+          `Tab ${saved.tabId} — ${saved.title || "(untitled)"}:\n` +
+            describeLayout((saved.layout ?? tree) as PaneNode),
+          { tabId: saved.tabId, title: saved.title ?? "", layout: saved.layout ?? tree },
+        );
+      } catch (err) {
+        await cleanup();
         return fail(
-          `That is this conversation (${id}, main): it cannot delete itself. ` +
-            "Delete another agent's session, or tab-delete a whole tab.",
+          `Layout rejected: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-      // log/delete answers 200 with deleted: 0 for an id that never existed, so
-      // a typo would otherwise read as success. Look first.
-      if (!(await deps.hasSession(id))) {
-        return fail(`No session ${id}: it is neither live, recorded in log, nor an instantiated agent.`);
-      }
-      try {
-        await deps.deleteSession(id);
-      } catch (err) {
-        return fail(`Could not delete ${id}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      return ok(`Deleted ${id} for good: agent and records.`, {
-        sessionId: id,
-      });
     },
   });
 
-  return [
-    sessionList,
-    sessionResume,
-    sessionDelete,
-    tabList,
-    tabMutation,
-    tabOn,
-    tabOff,
-    tabDelete,
-  ];
+  return [currentTabList, currentTabMutation, tabNew, tabDelete, tabLayoutMutation];
 }

@@ -36,10 +36,23 @@ export function slugFrom(raw: unknown): string {
   return slug;
 }
 
+// countChatSlots counts the static <engineer-chat> tags in a page. Comments are
+// stripped first: the rule is about the page's markup, not about prose that
+// mentions it. A component built at runtime is invisible to this check, which is
+// why the rule is "write it statically in index.html".
+function countChatSlots(html: string): number {
+  const bare = html.replace(/<!--[\s\S]*?-->/g, "");
+  return (bare.match(/<engineer-chat[\s/>]/gi) ?? []).length;
+}
+
 // readBlueprint reads a prototype's README and checks that both required files
-// are there. Everything else in the directory is the page's own business: the
-// web server serves the whole directory, so an asset the page links with a
-// relative URL resolves.
+// are there — and that the page carries exactly one <engineer-chat>. That single
+// slot is what makes a page an agent's UI: the session that views it is the
+// conversation it shows. Zero is a page with nothing to talk to; two is a page
+// that would have to decide which conversation is "the" one.
+// Everything else in the directory is the page's own business: the web server
+// serves the whole directory, so an asset the page links with a relative URL
+// resolves.
 function readBlueprint(root: string, slug: string): { readme: string; dir: string } {
   const dir = path.join(root, BLUEPRINT_DIR, slug);
   let entries: string[];
@@ -53,6 +66,15 @@ function readBlueprint(root: string, slug: string): { readme: string; dir: strin
   }
   if (!entries.includes(HTML)) {
     throw new BlueprintError(`blueprint ${slug}: ${HTML} missing`);
+  }
+  const html = readFileSync(path.join(dir, HTML), "utf8");
+  const chats = countChatSlots(html);
+  if (chats !== 1) {
+    throw new BlueprintError(
+      `blueprint ${slug}: ${HTML} must contain exactly one <engineer-chat>, found ${chats}. ` +
+        "A page is an agent's UI: it has one place for the conversation, written statically in the " +
+        "entry file (not zero, not two).",
+    );
   }
   return { readme: readFileSync(path.join(dir, README), "utf8"), dir };
 }

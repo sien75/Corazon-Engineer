@@ -18,8 +18,17 @@
   <link rel="stylesheet" href="/theme.css">
   <style>
     html, body { height: 100%; }
-    body { margin: 0; font-size: 13px; line-height: 1.6;
-           display: grid; grid-template-columns: 132px minmax(0, 1fr); }
+    /* nav · the page · the conversation. Every blueprint page carries exactly one
+       chat element; this one lives in its own column so the views stay readable
+       while you talk about them. */
+    body { margin: 0; font-size: 13px; line-height: 1.6; height: 100vh; overflow: hidden;
+           display: grid; grid-template-columns: 132px minmax(0, 1fr) minmax(340px, 30vw);
+           grid-template-rows: minmax(0, 1fr); }
+    /* min-height:0 on every grid child: without it the tallest column sets the row
+       height and the composer is pushed below the fold. */
+    nav, main, #chat { min-height: 0; }
+    #chat { border-left: 1px solid var(--border); }
+    engineer-chat { display: block; height: 100%; }
     nav { border-right: 1px solid var(--border); padding: 14px 8px; overflow: auto; }
     nav .brand { font-size: 12px; color: var(--fg-muted); text-transform: uppercase;
                  letter-spacing: .07em; padding: 0 8px 10px; }
@@ -72,6 +81,7 @@
 <body>
   <nav id="nav"><div class="brand">Project</div></nav>
   <main id="main"></main>
+  <section id="chat"><engineer-chat autofocus></engineer-chat></section>
   <div id="err" style="display:none"></div>
 
   <script type="module">
@@ -283,23 +293,46 @@
           label: shorten("how-to/") }], "Pick a book…");
       },
 
-      /* Iterations: what Phase 1 produces, plus plans and testing. */
+      /* Iterations: the design record per requirement, plus the test cases. */
       async iterations(root) {
         root.append(el("h1", null, "Iterations"),
-          el("p", "hint", "iterations/ holds the design record per requirement, plans/ the human discussion, testing/ the cases."));
+          el("p", "hint", "iterations/ holds the design record per requirement, testing/ the cases; the human discussion behind them is under Plans."));
         const files = scalarList(await schema(), "development").sort().reverse();
         const pick = (p) => files.filter((f) => f.startsWith(p));
         masterDetail(root, [
           { title: "iterations", files: pick("development/iterations/"), type: "development",
             label: shorten("development/iterations/", /\.md$/) },
-          { title: "plans", files: pick("development/plans/"), type: "development",
-            label: shorten("development/plans/", /\.md$/) },
           { title: "testing", files: files.filter((f) => f.startsWith("development/testing/")),
             type: "development", label: shorten("development/testing/", /\.md$/) },
           { title: "development/", files: pick("development/").filter((f) =>
               !/^development\/(iterations|plans|testing)\//.test(f)),
             type: "development", label: shorten("development/") },
         ], "Pick an iteration record…");
+      },
+
+      /* Plans: the human discussion and raw notes, one directory per iteration number. */
+      async plans(root) {
+        root.append(el("h1", null, "Plans"),
+          el("p", "hint", "plans/<iteration number>/ is the human discussion and raw notes behind an iteration; the design record itself is in Iterations."));
+        const files = scalarList(await schema(), "development")
+          .filter((f) => f.startsWith("development/plans/"));
+        // One group per iteration-number directory, newest number first; loose files
+        // at the top of plans/ land in an `ungrouped` group rather than disappearing.
+        const dirs = new Map();
+        for (const f of files) {
+          const rel = f.slice("development/plans/".length);
+          const dir = rel.includes("/") ? rel.split("/")[0] : "";
+          if (!dirs.has(dir)) dirs.set(dir, []);
+          dirs.get(dir).push(f);
+        }
+        const groups = [...dirs.keys()].sort().reverse().map((dir) => ({
+          title: dir ? "plans/" + dir : "ungrouped",
+          files: dirs.get(dir).sort(),
+          type: "development",
+          label: (f) => f.split("/").pop().replace(/\.md$/, ""),
+        }));
+        if (!groups.length) groups.push({ title: "plans", files: [], type: "development" });
+        masterDetail(root, groups, "Pick a plan note…");
       },
 
       /* Records: test / telemetry / conversation from log. */
@@ -438,8 +471,8 @@
 
     const NAV = [
       ["overview", "Overview"], ["contracts", "Contracts"], ["howto", "How-to"],
-      ["iterations", "Iterations"], ["records", "Records"], ["resources", "Resources"],
-      ["endpoints", "Endpoints"],
+      ["iterations", "Iterations"], ["plans", "Plans"], ["records", "Records"],
+      ["resources", "Resources"], ["endpoints", "Endpoints"],
     ];
 
     async function render() {
@@ -462,5 +495,6 @@
     window.addEventListener("hashchange", render);
     render();
   </script>
+  <script type="module" src="/components/chat.js"></script>
 </body>
 </html>

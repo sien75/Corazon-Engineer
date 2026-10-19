@@ -20,6 +20,13 @@ Other files — css, js, images, subdirectories — are reachable by relative UR
 `pure-chat` is the reference: it is one `<engineer-chat>` and nothing else. Read it first, then add
 only what the project's page actually needs.
 
+### One chat per page
+
+Every blueprint page carries exactly one `<engineer-chat>`, written statically in `index.html` — not
+zero (a page with nothing to talk to), not two (which one would be the conversation?). Instantiation
+counts them and refuses a blueprint that breaks the rule; a chat built at runtime is invisible to that
+check, so write the tag in the entry file.
+
 ### What you may build on
 
 The page is served by the shell, same origin. This is the complete list of what it offers — each one

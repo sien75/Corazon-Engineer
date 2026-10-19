@@ -1,3 +1,3 @@
 id: core-log-tab
-description: log-tab-mutation / log-tab-detail / log-tab-list contract conformance — tab records are keyed by tabId, an upsert overwrites in place, and the pane tree round-trips as stored
+description: log-tab-new / log-tab-mutation / log-tab-detail / log-tab-list / log-tab-on / log-tab-off contract conformance — a tab is a named, non-empty record that owns its conversations (one tab per session); lastAt follows messages as well as layout writes
 atoms: [log]

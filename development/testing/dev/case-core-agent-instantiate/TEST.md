@@ -39,14 +39,21 @@ cat > "$ROOT/.agents/blueprints/demo/index.html" <<'HTML'
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Demo Agent</title>
 <link rel="stylesheet" href="./style.css"></head>
-<body><h1>demo</h1></body></html>
+<body><h1>demo</h1><engineer-chat></engineer-chat></body></html>
 HTML
 # the page's own files: served from the same directory, by relative URL
 printf 'h1 { color: rebeccapurple; }\n' > "$ROOT/.agents/blueprints/demo/style.css"
 printf '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"/>\n' \
   > "$ROOT/.agents/blueprints/demo/assets/logo.svg"
-# missing index.html: the one thing instantiation still refuses
+# missing index.html: instantiation still refuses it
 cp "$ROOT/.agents/blueprints/demo/README.md" "$ROOT/.agents/blueprints/broken/README.md"
+# exactly one <engineer-chat>: zero and two are both refused
+mkdir -p "$ROOT/.agents/blueprints/nochat" "$ROOT/.agents/blueprints/twochats"
+cp "$ROOT/.agents/blueprints/demo/README.md" "$ROOT/.agents/blueprints/nochat/README.md"
+cp "$ROOT/.agents/blueprints/demo/README.md" "$ROOT/.agents/blueprints/twochats/README.md"
+printf '<!doctype html><h1>no chat</h1>\n' > "$ROOT/.agents/blueprints/nochat/index.html"
+printf '<!doctype html><h1>two</h1><engineer-chat></engineer-chat><engineer-chat></engineer-chat>\n' \
+  > "$ROOT/.agents/blueprints/twochats/index.html"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8970 &
@@ -125,17 +132,22 @@ ls "$ROOT/.engineer/agents" 2>/dev/null || echo "still no copies"
 
 Expected: `1` and `still no copies` — two sessions, one page, two URLs.
 
-## 5. the two required files are enforced (400, not a page)
+## 5. the two required files and the one chat are enforced (400, not a page)
 
 ```bash
 curl -s -o /tmp/broken.out -w '%{http_code}\n' -X POST http://localhost:8971/ai/new \
   -H 'Content-Type: application/yaml' --data-binary $'blueprint: broken'
 cat /tmp/broken.out
+curl -s -o /tmp/nochat.out -w '%{http_code}\n' -X POST http://localhost:8971/ai/new \
+  -H 'Content-Type: application/yaml' --data-binary $'blueprint: nochat'
+grep -o 'exactly one <engineer-chat>, found 0' /tmp/nochat.out
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8971/ai/new \
+  -H 'Content-Type: application/yaml' --data-binary $'blueprint: twochats'
 ```
 
-Expected: `400`, `error.code: bad_request`, a message naming `index.html`.
-Nothing is created: the blueprint is still missing its entry, and no session row
-was written.
+Expected: `400`, `error.code: bad_request`, a message naming `index.html`; then
+`400` + `exactly one <engineer-chat>, found 0`; then `400` for the two-chat page.
+Nothing is created in any case: no session row, no page.
 
 ## 6. unknown / malformed / missing blueprint
 

@@ -49,7 +49,7 @@ printf 'project: session-delete\n' > "$ROOT/engineer.yaml"
 # One blueprint to instantiate: the tool deletes a real session, so the case needs one.
 mkdir -p "$ROOT/.agents/blueprints/demo"
 printf '# Demo\n\na page\n' > "$ROOT/.agents/blueprints/demo/README.md"
-printf '<!doctype html><title>Demo</title>demo\n' > "$ROOT/.agents/blueprints/demo/index.html"
+printf '<!doctype html><title>Demo</title>demo<engineer-chat></engineer-chat>\n' > "$ROOT/.agents/blueprints/demo/index.html"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-log    --root "$ROOT" --bind 127.0.0.1 --port 8840 >/tmp/sd-log.log 2>&1 &
