@@ -1,15 +1,15 @@
 id: ai-new
-description: Instantiate an agent from a blueprint; where it is shown is the tab's business
+description: Instantiate an agent from a blueprint; whether its tab is open is the caller's business (session-open is what puts it on screen)
 
 request:
   body:
-    blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required for kind=sub, absent for kind=main. The whole directory is copied to .engineer/agents/<sessionId>/: README.md and index.html are required, and any other file (css / js / images / subdirectories) travels with it and is served from the copy by relative URL. The copy's README is appended to this session's system prompt
+    blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required for kind=sub, absent for kind=main. README.md and index.html are required; every other file (css / js / images / subdirectories) is served from the same directory by relative URL. The directory is not copied — /agent/<sessionId>/ serves it directly — and its README plus its path are appended to this session's system prompt; the slug and the page's <title> are recorded on the session row in log
     kind?: main | sub  # the role: "main" is the shell's own conversation (no blueprint, workspace tools), "sub" is a blueprint agent (default)
 
 response:
   status: 200
   body:
-    sessionId: string  # the new agent. It belongs to no tab: a tab references agents, and several tabs may reference the same one. Its UI is served at /agent/<sessionId>/ from the copy
+    sessionId: string  # the new agent. It is not on screen yet: a tab is this session, and session-open puts it up. Its UI is served at /agent/<sessionId>/
     kind: main | sub  # echoed role; the session row in log stores it
 
 errors:

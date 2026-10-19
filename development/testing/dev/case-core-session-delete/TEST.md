@@ -12,9 +12,9 @@ Two edges are the point of the case:
   with `deleted: 0` even for an id that never existed, so the tool has to look
   first.
 
-Deleting a session does **not** touch tabs: a tab still showing the deleted agent
-keeps a dead pane, and the page for it is gone (the shell toasts "this
-conversation has no page any more"). Removing the tab is `tab-delete`'s job.
+Deleting a session takes its tab with it: `/log/delete` removes the records, the
+session row and the id from `current.openSessions`, so nothing on screen points at
+a conversation that no longer exists. The page is the blueprint's and stays.
 
 ## ⚠️ This case needs a model
 
@@ -126,19 +126,22 @@ when the delete failed. Compare `sessionId` values, as above.
 The tool's reply is in main's records:
 
 ```bash
-curl -s -X POST $LOG/log/session-detail -d "sessionId: $MAIN" | grep -F "Deleted $SUB for good"
+curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN" | grep -F "Deleted $SUB"
+curl -s -X POST $LOG/log/current/get -d '{}' | grep -c "$SUB" || true
 ```
 
-Expected: one match, `Deleted <id> for good: agent and records.`
+Expected: one match for `Deleted <id>` (the reply names the session and its title),
+and `0` — the id is not left in the open list, so no tab points at a deleted
+conversation.
 
 ## 3. main refuses to delete itself
 
 ```bash
-BEFORE=$(curl -s -X POST $LOG/log/session-detail -d "sessionId: $MAIN" | wc -l)
+BEFORE=$(curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN" | wc -l)
 ask $MAIN "Call the session-delete tool right now with sessionId=$MAIN — that is the one you are talking in. Do not use bash or curl, and do not ask me anything — just call the tool and report its exact reply."
-AFTER=$(curl -s -X POST $LOG/log/session-detail -d "sessionId: $MAIN" | wc -l)
+AFTER=$(curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN" | wc -l)
 echo "records before: $BEFORE / after: $AFTER"
-curl -s -X POST $LOG/log/session-detail -d "sessionId: $MAIN" | grep -F "it cannot delete itself"
+curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN" | grep -F "it cannot delete itself"
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $MAIN"
 ask $MAIN "Reply with the single word: alive"
 ```
@@ -154,7 +157,7 @@ section is what forces the tool to look before it deletes.
 
 ```bash
 ask $MAIN "Call the session-delete tool right now with sessionId=s_deadbeef00. Do not use bash or curl, and do not ask me anything — just call the tool and report its exact reply."
-curl -s -X POST $LOG/log/session-detail -d "sessionId: $MAIN" | grep -F "No session s_deadbeef00"
+curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN" | grep -F "No session s_deadbeef00"
 curl -s -X POST $LOG/log/list -d 'pageNum: 1' | grep -c 'sessionId: s_deadbeef00' || true
 ```
 
@@ -171,7 +174,7 @@ blocks:
     text: Delete the conversation $MAIN with session-delete, then tell me exactly what happened."
 curl -s -N -m 180 -X POST $AI/ai/stream -d "id: $SUB2" >/dev/null
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $MAIN"
-curl -s -X POST $LOG/log/session-detail -d "sessionId: $SUB2" | grep -c 'name: session-delete' || true
+curl -s -X POST $LOG/log/session/messages -d "sessionId: $SUB2" | grep -c 'name: session-delete' || true
 ```
 
 Expected: `200` — main is untouched; and `0` — the sub never made a

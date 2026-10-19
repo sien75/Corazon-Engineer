@@ -1,11 +1,12 @@
 id: log-session-upsert
-description: Store a conversation's role (main / sub); an existing row keeps its createdAt and takes the new kind
+description: Store a conversation's role (main / sub), the blueprint it was made from and its display name; an existing row keeps its createdAt and takes the new values (an empty one keeps the stored value)
 
 request:
   body:
     sessionId: string  # conversation session id
     kind?: main | sub  # the role; omitted or unknown reads as "sub"
-    blueprint?: string  # slug of the page this session drives; "" for main. An existing row keeps its value when this is empty
+    blueprint?: string  # slug of the page this session drives; "" for main
+    title?: string  # display name shown in the tab bar; "" for main, the blueprint page's <title> otherwise
 
 response:
   status: 200
@@ -13,6 +14,7 @@ response:
     sessionId: string
     kind: main | sub
     blueprint: string  # blueprint slug, "" when this session has no page
+    title: string  # display name, "" when none was ever written
     createdAt: string  # first write time, RFC3339
 
 errors:

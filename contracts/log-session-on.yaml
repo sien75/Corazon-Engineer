@@ -1,0 +1,20 @@
+id: log-session-on
+description: Put existing sessions back on screen — add them to the open list (the shell's tab bar) without creating anything; idempotent
+
+request:
+  body:
+    sessionIds: [string]  # conversations to open; already-open ids keep their place
+    index?: number  # where the first newly opened session goes in the open list; omitted appends
+
+response:
+  status: 200
+  body:
+    openSessions: [string]  # the whole open list after the write, in display order
+
+errors:
+  - status: 400
+    code: bad_request
+    description: sessionIds missing, or one of them has no session row (the message names it)
+  - status: 500
+    code: internal
+    description: server internal error

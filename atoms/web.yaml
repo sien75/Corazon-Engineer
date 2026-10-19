@@ -1,6 +1,6 @@
 atoms:
   - name: web
-    description: Corazon Engineer web shell — one conversation (main) plus the tabs main opens (or the launcher opens, via the + button). every conversation — main and each tab — is the <engineer-chat> custom element under components/ (one implementation, shadow DOM, /components/chat.css); every page tab is an iframe onto an agent's own page. The workspace (which tabs are open, each tab's pane tree, which session is main) is read from log, and the shell resumes the conversations a tab shows before drawing it; main's workspace tools open, split, close and delete tabs, and their tool frames make the shell re-read the workspace. The launcher lists blueprints (static) and recent sessions (log). The file server (workspace/web/server) is multi-root — /config.js (an ES module whose ENGINEER export holds the static / ai / log addresses) and the app assets come from --assets, while /agent/<sessionId>/ serves a blueprint directory from --blueprints (the session is resolved to its slug through log, so one page is shared by every agent made from it; --agents, optional, holds the per-agent copies older sessions still have). It owns the page theme — /theme.css is the palette both the shell and blueprints link, and the shell writes the current data-theme into a page's document
+    description: Corazon Engineer web shell — one conversation (main) plus the open sessions main puts on screen (or the launcher does, via the + button). every session is one view — main and a blueprint agent whose page is an iframe onto its own /agent/<sessionId>/, and the shell draws them with the <engineer-chat> custom element under components/ (one implementation, shadow DOM, /components/chat.css) or that iframe. There is no tab record — a tab is one open session, so the workspace (which sessions are open, in display order, and which one is main) is read from log's current row, and the shell resumes each open session before drawing it; main's workspace tools open, close, create and delete sessions, and their tool frames make the shell re-read the workspace. The launcher lists blueprints (static) and recent sessions (log's session list). The file server (workspace/web/server) is multi-root — /config.js (an ES module whose ENGINEER export holds the static / ai / log addresses) and the app assets come from --assets, while /agent/<sessionId>/ serves a blueprint directory from --blueprints (the session is resolved to its slug through log, so one page is shared by every agent made from it; --agents, optional, holds the per-agent copies older sessions still have). It owns the page theme — /theme.css is the palette both the shell and blueprints link, and the shell writes the current data-theme into a page's document
     path: ./workspace/web
     runtime_type: browser
     role: service
@@ -71,33 +71,19 @@ atoms:
           extend:
             path: /log/list
             method: POST
-        - id: log-tab-new
+        - id: log-session-on
           channel: network
           protocol: http
-          contract: ./contracts/log-tab-new.yaml
+          contract: ./contracts/log-session-on.yaml
           extend:
-            path: /log/tab/new
+            path: /log/session/on
             method: POST
-        - id: log-tab-mutation
+        - id: log-session-off
           channel: network
           protocol: http
-          contract: ./contracts/log-tab-mutation.yaml
+          contract: ./contracts/log-session-off.yaml
           extend:
-            path: /log/tab/mutation
-            method: POST
-        - id: log-tab-detail
-          channel: network
-          protocol: http
-          contract: ./contracts/log-tab-detail.yaml
-          extend:
-            path: /log/tab/detail
-            method: POST
-        - id: log-tab-off
-          channel: network
-          protocol: http
-          contract: ./contracts/log-tab-off.yaml
-          extend:
-            path: /log/tab/off
+            path: /log/session/off
             method: POST
         - id: log-current-get
           channel: network
@@ -120,10 +106,10 @@ atoms:
           extend:
             path: /log/session/detail
             method: POST
-        - id: log-session-detail
+        - id: log-session-messages
           channel: network
           protocol: http
-          contract: ./contracts/log-session-detail.yaml
+          contract: ./contracts/log-session-messages.yaml
           extend:
-            path: /log/session-detail
+            path: /log/session/messages
             method: POST

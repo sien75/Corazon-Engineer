@@ -20,6 +20,39 @@ const BLUEPRINT_DIR = path.join(".agents", "blueprints");
 const README = "README.md";
 const HTML = "index.html";
 
+// The page's <title>, cached per slug: a tab is named after the page it shows, and
+// the name is written once when the session is made so the shell can draw the tab
+// bar before anything is loaded. Relative to what the file says, not what the
+// browser renders — a title changed by script is not the tab's name.
+const titleCache = new Map<string, string>();
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+// blueprintTitle is the display name a session made from this blueprint gets:
+// the page's <title>, "" when the page has none or cannot be read.
+export function blueprintTitle(root: string, slug: string): string {
+  const cached = titleCache.get(slug);
+  if (cached !== undefined) return cached;
+  let title = "";
+  try {
+    const html = readFileSync(path.join(root, BLUEPRINT_DIR, slug, HTML), "utf8");
+    const bare = html.replace(/<!--[\s\S]*?-->/g, "");
+    const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(bare);
+    title = m ? decodeEntities(m[1]).replace(/\s+/g, " ").trim() : "";
+  } catch {
+    title = "";
+  }
+  titleCache.set(slug, title);
+  return title;
+}
+
 // BlueprintError is a bad request: the slug is wrong or the prototype is missing
 // one of its two required files. The service turns it into a 400, never a 500.
 export class BlueprintError extends Error {}

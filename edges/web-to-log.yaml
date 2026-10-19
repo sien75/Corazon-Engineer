@@ -6,39 +6,23 @@ edges:
     to_interface: log-list
     channel: network
     protocol: http
-    description: the launcher lists recent conversations
-  - id: web-to-log-tab-new
+    description: the launcher lists recent sessions (title, blueprint, last activity)
+  - id: web-to-log-session-on
     from: web
-    from_interface: log-tab-new
+    from_interface: log-session-on
     to: log
-    to_interface: log-tab-new
+    to_interface: log-session-on
     channel: network
     protocol: http
-    description: the launcher's pick creates the tab record for the agent it opens
-  - id: web-to-log-tab-mutation
+    description: the launcher's pick puts the new — or an earlier — session on screen as a tab
+  - id: web-to-log-session-off
     from: web
-    from_interface: log-tab-mutation
+    from_interface: log-session-off
     to: log
-    to_interface: log-tab-mutation
+    to_interface: log-session-off
     channel: network
     protocol: http
-    description: the launcher writes the new tab's single-pane layout
-  - id: web-to-log-tab-detail
-    from: web
-    from_interface: log-tab-detail
-    to: log
-    to_interface: log-tab-detail
-    channel: network
-    protocol: http
-    description: the shell reads a tab's pane tree when it restores the workspace
-  - id: web-to-log-tab-off
-    from: web
-    from_interface: log-tab-off
-    to: log
-    to_interface: log-tab-off
-    channel: network
-    protocol: http
-    description: the shell closes a tab the user clicked away (the record is kept)
+    description: the shell closes a tab the user clicked away (the session keeps its records)
   - id: web-to-log-current-get
     from: web
     from_interface: log-current-get
@@ -46,7 +30,7 @@ edges:
     to_interface: log-current-get
     channel: network
     protocol: http
-    description: the shell reads which tabs are open and the main session on load
+    description: the shell reads which sessions are open and the main session on load
   - id: web-to-log-current-put
     from: web
     from_interface: log-current-put
@@ -54,7 +38,7 @@ edges:
     to_interface: log-current-put
     channel: network
     protocol: http
-    description: the shell repairs the open list (drops tab ids whose record is gone) and records a new main session
+    description: the shell repairs the open list (drops session ids that no longer exist) and records a new main session
   - id: web-to-log-session-kind
     from: web
     from_interface: log-session-kind
@@ -63,11 +47,11 @@ edges:
     channel: network
     protocol: http
     description: the shell checks that the main session still exists before starting main on it
-  - id: web-to-log-session-detail
+  - id: web-to-log-session-messages
     from: web
-    from_interface: log-session-detail
+    from_interface: log-session-messages
     to: log
-    to_interface: log-session-detail
+    to_interface: log-session-messages
     channel: network
     protocol: http
-    description: the shell replays main's conversation into its chat pane on load
+    description: the shell replays a conversation into its chat view on load

@@ -49,31 +49,10 @@ type Store struct {
 	db *sql.DB
 }
 
-// Tab is one tab's layout state: a pane tree stored as text. Unlike Record it is
-// state, not a stream — one row per tab, overwritten in place. The tree is
-// opaque here: log stores and returns it without interpreting its structure.
-type Tab struct {
-	TabID  string      `yaml:"tabId"`
-	Title  string      `yaml:"title"`
-	Layout interface{} `yaml:"layout"`
-	// CreatedAt is the first write; UpdatedAt is the layout's last write; LastAt is
-	// the last activity of any kind — a layout write, or a message in one of the
-	// conversations this tab shows. The launcher's recents order by LastAt.
-	CreatedAt string `yaml:"createdAt"`
-	UpdatedAt string `yaml:"updatedAt"`
-	LastAt    string `yaml:"lastAt"`
-}
-
-func (t Tab) Body() map[string]interface{} {
-	return map[string]interface{}{
-		"tabId":     t.TabID,
-		"title":     t.Title,
-		"layout":    t.Layout,
-		"createdAt": t.CreatedAt,
-		"updatedAt": t.UpdatedAt,
-		"lastAt":    t.LastAt,
-	}
-}
+// Tab is gone: a tab is one open session, so there is no per-tab state to keep.
+// What used to be a tab row (a pane tree, a name, a last-activity time) is now
+// either the session's own row (kind / blueprint / title) or the open list in
+// current (see workspace.go).
 
 func Open(root string) (*Store, error) {
 	dir := filepath.Join(root, ".engineer")
@@ -109,34 +88,6 @@ func Open(root string) (*Store, error) {
 		if _, err := db.Exec(idx); err != nil {
 			return nil, err
 		}
-	}
-	// tabs is separate from records on purpose: a tab's layout is keyed state
-	// (one row, overwritten in place), while records is an append-only stream
-	// whose listing and search would otherwise be polluted by layout rows.
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS tabs (
-		tab_id TEXT PRIMARY KEY,
-		title TEXT NOT NULL DEFAULT '',
-		layout TEXT NOT NULL,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL,
-		last_at TEXT NOT NULL DEFAULT ''
-	)`); err != nil {
-		return nil, err
-	}
-	// A database that predates title / last_at gets them in place, the same way
-	// sessions got blueprint: state a running project must not fall over on.
-	for _, stmt := range []string{
-		`ALTER TABLE tabs ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE tabs ADD COLUMN last_at TEXT NOT NULL DEFAULT ''`,
-	} {
-		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			return nil, err
-		}
-	}
-	// A tab written before last_at existed has only its layout write to go on, and
-	// an empty string would sort it behind everything ever touched.
-	if _, err := db.Exec(`UPDATE tabs SET last_at = updated_at WHERE last_at = ''`); err != nil {
-		return nil, err
 	}
 	st := &Store{db: db}
 	// sessions + current are the workspace side of the same database (see
@@ -295,25 +246,26 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 		pageNum = 1
 	}
 	rows, err := s.db.Query(`SELECT
-		r.session_id,
-		COUNT(*) AS msg_count,
-		MIN(r.created_at) AS first_at,
-		MAX(r.created_at) AS last_at,
-		COALESCE(s.kind, 'sub') AS kind,
+		s.session_id,
+		COUNT(r.id) AS msg_count,
+		COALESCE(MIN(r.created_at), s.created_at) AS first_at,
+		COALESCE(MAX(r.created_at), s.created_at) AS last_at,
+		s.kind,
+		s.blueprint,
+		s.title,
 		COALESCE(
 			(SELECT r2.payload FROM records r2
-				WHERE r2.kind = 'conversation' AND r2.session_id = r.session_id
+				WHERE r2.kind = 'conversation' AND r2.session_id = s.session_id
 					AND (r2.payload LIKE '%msgKind: user%' OR r2.payload LIKE '%role: user%')
 				ORDER BY r2.rowid ASC LIMIT 1),
 			(SELECT r3.payload FROM records r3
-				WHERE r3.kind = 'conversation' AND r3.session_id = r.session_id
+				WHERE r3.kind = 'conversation' AND r3.session_id = s.session_id
 				ORDER BY r3.rowid ASC LIMIT 1)
 		) AS preview_payload
-		FROM records r
-		LEFT JOIN sessions s ON s.session_id = r.session_id
-		WHERE r.kind = 'conversation' AND r.session_id IS NOT NULL AND r.session_id <> ''
-		GROUP BY r.session_id
-		ORDER BY last_at DESC, r.session_id DESC
+		FROM sessions s
+		LEFT JOIN records r ON r.kind = 'conversation' AND r.session_id = s.session_id
+		GROUP BY s.session_id
+		ORDER BY last_at DESC, s.session_id DESC
 		LIMIT ? OFFSET ?`,
 		PageSize+1, (pageNum-1)*PageSize)
 	if err != nil {
@@ -322,10 +274,10 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 	defer rows.Close()
 	sessions := []map[string]interface{}{}
 	for rows.Next() {
-		var sessionID, firstAt, lastAt, kind string
+		var sessionID, firstAt, lastAt, kind, blueprint, title string
 		var count int
 		var previewPayload sql.NullString
-		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &kind, &previewPayload); err != nil {
+		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &kind, &blueprint, &title, &previewPayload); err != nil {
 			return nil, false, err
 		}
 		preview := ""
@@ -340,6 +292,8 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 		sessions = append(sessions, map[string]interface{}{
 			"sessionId": sessionID,
 			"kind":      kind,
+			"blueprint": blueprint,
+			"title":     title,
 			"createdAt": firstAt,
 			"lastAt":    lastAt,
 			"count":     count,
@@ -356,97 +310,9 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 	return sessions, hasMore, nil
 }
 
-// PutTab creates a tab or overwrites an existing one's layout and name, and
-// returns the stored row. An empty tabID allocates one (t_<hex>); createdAt is
-// kept from the first write while updatedAt and lastAt move.
-func (s *Store) PutTab(tabID, title string, layout interface{}) (Tab, error) {
-	if tabID == "" {
-		tabID = "t_" + newID()
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	layoutText, err := marshalYAML(layout)
-	if err != nil {
-		return Tab{}, err
-	}
-	_, err = s.db.Exec(`INSERT INTO tabs (tab_id, title, layout, created_at, updated_at, last_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(tab_id) DO UPDATE SET
-			title = excluded.title,
-			layout = excluded.layout,
-			updated_at = excluded.updated_at,
-			last_at = excluded.last_at`,
-		tabID, title, string(layoutText), now, now, now)
-	if err != nil {
-		return Tab{}, err
-	}
-	return s.GetTab(tabID)
-}
-
-// NewTab creates a tab with its first layout and puts it in the open list. A tab
-// always holds something: there is no empty tab to hand out and fill later.
-func (s *Store) NewTab(title string, layout interface{}, open bool) (Tab, error) {
-	tab, err := s.PutTab("", title, layout)
-	if err != nil {
-		return Tab{}, err
-	}
-	if !open {
-		return tab, nil
-	}
-	if err := s.AddOpenTab(tab.TabID); err != nil {
-		return Tab{}, err
-	}
-	return tab, nil
-}
-
-// GetTab returns one tab; sql.ErrNoRows when it does not exist.
-func (s *Store) GetTab(tabID string) (Tab, error) {
-	var t Tab
-	var layoutText string
-	err := s.db.QueryRow(`SELECT tab_id, title, layout, created_at, updated_at, last_at
-		FROM tabs WHERE tab_id = ?`, tabID).
-		Scan(&t.TabID, &t.Title, &layoutText, &t.CreatedAt, &t.UpdatedAt, &t.LastAt)
-	if err != nil {
-		return Tab{}, err
-	}
-	if err := yaml.Unmarshal([]byte(layoutText), &t.Layout); err != nil {
-		return Tab{}, err
-	}
-	return t, nil
-}
-
-// ListTabs returns one page (pageSize=100) of tabs, most recently active first.
-func (s *Store) ListTabs(pageNum int) ([]Tab, bool, error) {
-	if pageNum < 1 {
-		pageNum = 1
-	}
-	rows, err := s.db.Query(`SELECT tab_id, title, layout, created_at, updated_at, last_at FROM tabs
-		ORDER BY last_at DESC, created_at DESC, tab_id DESC LIMIT ? OFFSET ?`,
-		PageSize+1, (pageNum-1)*PageSize)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	tabs := []Tab{}
-	for rows.Next() {
-		var t Tab
-		var layoutText string
-		if err := rows.Scan(&t.TabID, &t.Title, &layoutText, &t.CreatedAt, &t.UpdatedAt, &t.LastAt); err != nil {
-			return nil, false, err
-		}
-		if err := yaml.Unmarshal([]byte(layoutText), &t.Layout); err != nil {
-			continue // an unreadable tree is one bad row, not a failed page
-		}
-		tabs = append(tabs, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, err
-	}
-	hasMore := len(tabs) > PageSize
-	if hasMore {
-		tabs = tabs[:PageSize]
-	}
-	return tabs, hasMore, nil
-}
+// PutTab / NewTab / GetTab / ListTabs are gone with the tab table: a tab is one
+// open session, so "create a tab" is "create a session" (ai's session-new) and
+// "list tabs" is log/list over sessions.
 
 func snippet(s string, max int) string {
 	s = strings.TrimSpace(s)
@@ -506,8 +372,10 @@ func (s *Store) SessionMessages(sessionID string) ([]map[string]interface{}, err
 }
 
 // DeleteSession removes every conversation record belonging to a session, its
-// session row, and (when it is the main one) the main-session pointer, and
-// returns the number of deleted records.
+// session row, (when it is the main one) the main-session pointer, and its entry
+// in the open list, and returns the number of deleted records. Doing all of it
+// here is what keeps the workspace consistent whoever asks for the delete: an id
+// left in the open list would draw a tab with nothing behind it.
 func (s *Store) DeleteSession(sessionID string) (int64, error) {
 	res, err := s.db.Exec(`DELETE FROM records
 		WHERE kind = 'conversation' AND session_id = ?`, sessionID)
@@ -519,6 +387,9 @@ func (s *Store) DeleteSession(sessionID string) (int64, error) {
 	}
 	if _, err := s.db.Exec(`UPDATE current SET main_session = '', updated_at = ?
 		WHERE id = 1 AND main_session = ?`, time.Now().UTC().Format(time.RFC3339), sessionID); err != nil {
+		return 0, err
+	}
+	if err := s.RemoveOpenSessions([]string{sessionID}); err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()

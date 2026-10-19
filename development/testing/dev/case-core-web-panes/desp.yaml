@@ -1,3 +1,0 @@
-id: core-web-panes
-description: web panes — a tab renders its stored pane tree (paneId + contentType/contentId + flex), each chat pane owns its composer and draft, and one conversation shown in two panes updates both from one stream
-atoms: [web, log, ai]

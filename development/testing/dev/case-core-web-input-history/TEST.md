@@ -6,7 +6,7 @@ the unsent draft back at the end. The list belongs to the *conversation*, not to
 the tab or to the page: closing a tab and reopening it, switching away and back,
 reloading, or arriving by deep link all find it again — because the conversation's
 own stored turns are read back on every replay (`aiLoadSession` walks
-`/log/session-detail` anyway, so the recall list costs no extra request).
+`/log/session/messages` anyway, so the recall list costs no extra request).
 
 Source of truth: `workspace/web/app.js` (`aiPromptHistory` / `aiHistorySeed` /
 `aiHistoryUp` / `aiHistoryDown` / `aiHistoryRecord` / `aiCaretVisualLine` plus the

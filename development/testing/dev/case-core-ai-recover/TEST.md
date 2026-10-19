@@ -255,7 +255,7 @@ payload:
     timestamp: 1759200000007'
 done
 
-curl -s -X POST http://localhost:8810/log/session-detail -d 'sessionId: s_recover_bad' \
+curl -s -X POST http://localhost:8810/log/session/messages -d 'sessionId: s_recover_bad' \
   | grep -c '^    seq:'
 ```
 

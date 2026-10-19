@@ -1,3 +1,0 @@
-id: core-web-tab-records
-description: web tab records — every tab gets a tabId from log, the launcher's recent section lists tabs (not sessions), and reopening one restores the same tab
-atoms: [web, log, ai]

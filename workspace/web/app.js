@@ -15,7 +15,7 @@ if (!RUNTIME?.ai || !RUNTIME?.log) {
 }
 const STATIC_BASE = RUNTIME.static; // static: the project tree (blueprints)
 const AI_BASE = RUNTIME.ai;         // ai: conversation
-const LOG_BASE = RUNTIME.log;       // log: records, tabs, sessions, current
+const LOG_BASE = RUNTIME.log;       // log: records, sessions, current
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -52,31 +52,25 @@ function applyTheme(name) {
 function pushPageTheme() {
   const theme = currentTheme();
   for (const tab of openTabs) {
-    for (const pane of tab.panes?.values() ?? []) {
-      const doc = pane.frameEl?.contentDocument;
-      if (!doc) continue;
-      doc.documentElement.setAttribute("data-theme", theme);
-      // Native widgets and the scrollbar follow color-scheme, not our variables.
-      doc.documentElement.style.colorScheme = theme === "dark" ? "dark" : "light";
-    }
+    const doc = tab.frameEl?.contentDocument;
+    if (!doc) continue;
+    doc.documentElement.setAttribute("data-theme", theme);
+    // Native widgets and the scrollbar follow color-scheme, not our variables.
+    doc.documentElement.style.colorScheme = theme === "dark" ? "dark" : "light";
   }
 }
-
-
 
 // ---------- the workspace ----------
 //
 // The shell is main's conversation plus the tabs main opens. Both are state in
-// log, not in this browser: `current` says which tabs are open and which session
-// is main, `tabs` holds each tab's pane tree, `sessions` says what each
-// conversation is. This file only mirrors that — a reload reads it back and
-// nothing is restored from local storage.
+// log, not in this browser: `current` says which sessions are open and which
+// session is main, `sessions` names them. There is no tab table — a tab is one
+// open session, so an id in the open list is the whole of a tab.
 //
-// There is no way for the user to open or close a tab here: main's tools do that,
-// and the tool frame is what makes the shell redraw (see aiHandleEvent).
-
-const openTabs = []; // main first, then the open tabs in display order
-let activeTabId = null; // "main" or a tabId
+// There is no way for the user to open or close a tab here either: main's tools
+// do that, and a tool frame makes the shell re-read the workspace below.
+const openTabs = []; // main first, then the open sessions in display order
+let activeTabId = null; // "main" or a session id
 let mainTab = null;
 
 async function logCall(path, body = {}) {
@@ -96,15 +90,13 @@ async function logCall(path, body = {}) {
 }
 
 const logCurrent = () => logCall("/log/current/get");
-const logCurrentPut = (openTabs, mainSession) =>
-  logCall("/log/current/put", { openTabs, mainSession });
-const logTabDetail = (tabId) => logCall("/log/tab/detail", { tabId });
-const logTabOn = (tabIds, index) =>
-  logCall("/log/tab/on", typeof index === "number" ? { tabIds, index } : { tabIds });
-const logTabOff = (tabId) => logCall("/log/tab/off", { tabIds: [tabId] });
-const logTabNew = (body) => logCall("/log/tab/new", body);
-const logTabList = (pageNum = 1) => logCall("/log/tab/list", { pageNum });
-const logSessionKind = (sessionId) => logCall("/log/session/detail", { sessionId });
+const logCurrentPut = (openSessions, mainSession) =>
+  logCall("/log/current/put", { openSessions, mainSession });
+const logSessionOn = (sessionIds, index) =>
+  logCall("/log/session/on", typeof index === "number" ? { sessionIds, index } : { sessionIds });
+const logSessionOff = (sessionId) => logCall("/log/session/off", { sessionIds: [sessionId] });
+const logSessionList = (pageNum = 1) => logCall("/log/list", { pageNum });
+const logSessionMeta = (sessionId) => logCall("/log/session/detail", { sessionId });
 
 async function aiResume(id) {
   const res = await fetch(`${AI_BASE}/ai/resume`, {
@@ -117,70 +109,45 @@ async function aiResume(id) {
 
 async function sessionExists(id) {
   try {
-    await logSessionKind(id);
+    await logSessionMeta(id);
     return true;
   } catch {
     return false;
   }
 }
 
-// primaryPane returns the first pane leaf of a tree, or null.
-function primaryPane(layout) {
-  let node = normalizeTree(layout);
-  while (node && node.split) node = node.split.children[0];
-  return node && node.pane ? node.pane : null;
-}
-
 function agentFrameSrc(sessionId) {
   return `/agent/${encodeURIComponent(sessionId)}/`;
 }
 
-// tabFromRecord rebuilds one tab's shell object from its log record. Its panes are
-// built lazily (showPanes → renderPanes), so a tab that is never shown costs
-// nothing.
-function tabFromRecord(rec) {
+// tabFromSession rebuilds a tab's shell object from the session list. The view is
+// built lazily (showTab → viewOf), so a tab that is never shown costs nothing.
+function tabFromSession(rec) {
   return {
-    id: rec.tabId,
-    tabId: rec.tabId,
-    // The tab's name is stored with its record, so a reload draws the tab bar
-    // without loading a single page. hydrateTabNames fills in the records that
-    // predate the field.
+    id: rec.sessionId,
+    sessionId: rec.sessionId,
+    kind: rec.kind || "sub",
+    // The name is stored with the session, so a reload draws the tab bar without
+    // loading a single page. hydrateNames fills in rows that predate the field.
     name: rec.title || "",
-    sessionId: "",
-    panes: new Map(),
-    layout: normalizeTree(rec.layout) || null,
-    paneEl: null,
+    blueprint: rec.blueprint || "",
+    el: null,
+    frameEl: null,
+    main: false,
   };
 }
 
-function sessionsOf(tabs) {
-  const ids = new Set();
-  for (const tab of tabs) {
-    const walk = (node) => {
-      if (!node) return;
-      if (node.pane) {
-        const id = node.pane.contentId ?? node.pane.id ?? node.pane.content;
-        if (id) ids.add(String(id));
-        return;
-      }
-      for (const child of node.split?.children ?? []) walk(child);
-    };
-    walk(tab.layout);
-  }
-  return [...ids];
-}
-
-// makeMainTab builds main: one chat pane, hosted by the shell itself. main has no
-// tab record — it is always there — so its pane element is what showPanes shows.
+// makeMainTab builds main: the shell's own conversation, always there and never
+// in the open list.
 function makeMainTab(sessionId) {
   const tab = {
     id: "main",
-    tabId: "",
-    name: "main",
     sessionId,
-    panes: new Map(),
-    layout: null,
-    paneEl: null,
+    kind: "main",
+    name: "main",
+    blueprint: "",
+    el: null,
+    frameEl: null,
     main: true,
   };
   // main is the shell's own conversation: one <engineer-chat>, the same element
@@ -188,24 +155,43 @@ function makeMainTab(sessionId) {
   const chat = document.createElement("engineer-chat");
   chat.setAttribute("session", sessionId);
   chat.setAttribute("history", "");
-  chat.className = "pane pane-main";
+  chat.className = "view view-main";
   // main's tools change the workspace; the element only reports them.
   chat.addEventListener("engineer-tool", (event) => {
     const d = event.detail || {};
     // main-new replaces this very conversation: the refresh below is what makes
     // the shell follow log's pointer to the new session.
-    if (!d.isError && /^(tab-|session-|main-)/.test(String(d.name ?? ""))) {
+    if (!d.isError && /^(session-|main-)/.test(String(d.name ?? ""))) {
       void refreshWorkspace();
     }
   });
-  tab.paneEl = chat;
+  tab.el = chat;
   return tab;
 }
 
-function dropMainTab() {
-  if (!mainTab) return;
-  mainTab.paneEl?.remove();
-  mainTab.paneEl = null;
+// viewOf builds the one element a tab shows: main's chat, or the agent's own page
+// in an iframe (its blueprint's index.html, served at /agent/<sessionId>/).
+function viewOf(tab) {
+  if (tab.el) return tab.el;
+  if (tab.main) return null; // built by makeMainTab
+  const frame = document.createElement("iframe");
+  frame.className = "view view-page";
+  frame.title = tab.sessionId;
+  // Listen before pointing it anywhere: a blueprint served from cache can load
+  // before a listener attached afterwards would ever see it, and the theme is
+  // only pushed on load.
+  frame.addEventListener("load", () => {
+    pushPageTheme();
+    const title = frame.contentDocument?.title;
+    if (title && !tab.name) {
+      tab.name = title;
+      renderTabs();
+    }
+  });
+  frame.src = agentFrameSrc(tab.sessionId);
+  tab.frameEl = frame;
+  tab.el = frame;
+  return frame;
 }
 
 // ---------- the tab bar ----------
@@ -225,7 +211,7 @@ function renderTabs() {
       const close = document.createElement("button");
       close.type = "button";
       close.className = "tab-close";
-      close.title = "close this tab (its record is kept)";
+      close.title = "close this tab (the conversation is kept)";
       close.textContent = "×";
       close.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -247,10 +233,10 @@ function syncTabActive() {
 
 // syncTabUrl keeps the address bar naming the tab. A reload always lands on main
 // (the workspace is read from log, not from the URL), so this is a within-session
-// address, not a restore point.
+// address, not a restore point. A tab's address is its session's.
 function syncTabUrl(tab, mode) {
   if (!mode) return;
-  const path = tab.main ? "/" : `/tab/${tab.tabId}`;
+  const path = tab.main ? "/" : `/s/${encodeURIComponent(tab.sessionId)}`;
   if (location.pathname === path) return;
   if (mode === "push") history.pushState({ tab: tab.id }, "", path);
   else history.replaceState({ tab: tab.id }, "", path);
@@ -261,19 +247,19 @@ async function activateTab(id, mode = "push") {
   if (!tab) return;
   launcherClose();
   activeTabId = tab.id;
-  showPanes(tab);
-  if (tab.main) tab.paneEl?.focus?.();
+  showTab(tab);
+  if (tab.main) tab.el?.focus?.();
   syncTabActive();
   syncTabUrl(tab, mode);
-  installTitleWatchers();
 }
 
-// closeWorkspaceTab closes a tab: log takes it out of the open list, the record
-// stays (main's tab-delete is what removes things for good).
+// closeWorkspaceTab closes a tab: log takes the session out of the open list and
+// everything the conversation holds stays (main's session-delete is what removes
+// things for good).
 async function closeWorkspaceTab(tab) {
   if (tab.main) return;
   try {
-    await logTabOff(tab.tabId);
+    await logSessionOff(tab.sessionId);
   } catch {
     // Even if log says no, take it off screen; the next refresh will reconcile.
   }
@@ -285,21 +271,32 @@ async function closeWorkspaceTab(tab) {
 function removeTab(tab) {
   const i = openTabs.indexOf(tab);
   if (i >= 0) openTabs.splice(i, 1);
-  dropTabPanes(tab);
+  tab.el?.parentNode?.removeChild(tab.el);
+  tab.el = null;
+  tab.frameEl = null;
   renderTabs();
 }
 
 // ---------- the workspace, re-read after main's tools change it ----------
 
-// One refresh at a time: a run can finish several tab-* tools in a row, and each
-// frame asks for the same picture. Two overlapping passes would both see a tab as
-// missing and both add it — the tab bar then shows the workspace N times.
+// One refresh at a time: a run can finish several session-* tools in a row, and
+// each frame asks for the same picture. Two overlapping passes would both see a
+// tab as missing and both add it — the tab bar then shows the workspace N times.
 let refreshChain = Promise.resolve();
 
 function refreshWorkspace() {
   const run = refreshChain.then(doRefreshWorkspace, doRefreshWorkspace);
   refreshChain = run.catch(() => {});
   return run;
+}
+
+// sessionsById reads the session list once: it is where a tab's name and page
+// come from, and the open list itself only carries ids.
+async function sessionsById() {
+  const data = await logSessionList(1);
+  const byId = new Map();
+  for (const rec of data.sessions || []) byId.set(String(rec.sessionId), rec);
+  return byId;
 }
 
 async function doRefreshWorkspace() {
@@ -310,48 +307,53 @@ async function doRefreshWorkspace() {
     toast(`could not read the workspace: ${err.message}`);
     return;
   }
-  const want = cur.openTabs ?? [];
-  // A tab the workspace no longer holds goes off screen (a tab-delete closes it
-  // too, but a tab-off or another window can drop it as well).
+  let byId;
+  try {
+    byId = await sessionsById();
+  } catch {
+    // A list that cannot be read says nothing about which ids exist: keep every
+    // tab as it is rather than "repairing" the worker space into an empty one.
+    byId = null;
+  }
+  const want = cur.openSessions ?? [];
+  // A tab the workspace no longer holds goes off screen (a session-delete closes
+  // it too, but session-off or another window can drop it as well).
   for (const tab of [...openTabs]) {
     if (tab.main) continue;
-    if (!want.includes(tab.tabId)) removeTab(tab);
+    if (!want.includes(tab.sessionId)) removeTab(tab);
   }
-  // A tab the workspace gained: build it, resume its conversations, put it up.
-  // `opened` is what tab-on means — the new tab is the thing to look at.
+  // A tab the workspace gained: build it, resume it, put it up. `opened` is what
+  // session-open means — the new tab is the thing to look at.
   let opened = null;
-  for (const tabId of want) {
-    if (openTabs.some((t) => t.tabId === tabId)) continue;
-    let rec;
-    try {
-      rec = await logTabDetail(tabId);
-    } catch {
-      continue; // a stale id in the list: the next write will drop it
+  const repaired = [];
+  for (const sessionId of want) {
+    if (openTabs.some((t) => t.sessionId === sessionId)) continue;
+    if (!byId) continue; // no list, no new tabs: they are drawn once it reads
+    const rec = byId.get(sessionId);
+    if (!rec) {
+      repaired.push(sessionId); // a stale id in the list: drop it below
+      continue;
     }
     // Re-check after the await: a refresh that ran while this one was waiting may
     // have added it already.
-    if (openTabs.some((t) => t.tabId === tabId)) continue;
-    const tab = tabFromRecord(rec);
+    if (openTabs.some((t) => t.sessionId === sessionId)) continue;
+    const tab = tabFromSession(rec);
     openTabs.push(tab);
     opened = tab;
-    for (const sessionId of sessionsOf([tab])) await aiResume(sessionId);
+    await aiResume(sessionId);
   }
-  // A tab whose tree main rewrote is rebuilt from the record.
+  // A name that arrived after the tab was drawn (a row with no title, or a page
+  // that names itself late).
   for (const tab of openTabs) {
     if (tab.main) continue;
-    try {
-      const rec = await logTabDetail(tab.tabId);
-      const next = normalizeTree(rec.layout) || null;
-      if (rec.title && rec.title !== tab.name) {
-        tab.name = rec.title;
-      }
-      if (JSON.stringify(next) !== JSON.stringify(tab.layout)) {
-        tab.layout = next;
-        dropTabPanes(tab);
-      }
-    } catch {
-      // gone; the next refresh removes it
+    const rec = byId?.get(tab.sessionId);
+    if (rec?.title && rec.title !== tab.name) {
+      tab.name = rec.title;
     }
+  }
+  if (byId && (repaired.length || want.some((id) => !byId.has(id)))) {
+    const kept = want.filter((id) => byId.has(id));
+    await logCurrentPut(kept, cur.mainSession).catch(() => {});
   }
   // main got a new session (clear from another window): follow it.
   if (cur.mainSession && mainTab && cur.mainSession !== mainTab.sessionId) {
@@ -362,17 +364,28 @@ async function doRefreshWorkspace() {
     if (wasActive) await activateTab("main", "replace");
   }
   renderTabs();
-  installTitleWatchers();
-  void hydrateTabNames();
   if (opened) await activateTab(opened.id);
   const active = openTabs.find((t) => t.id === activeTabId);
-  if (active) showPanes(active);
+  if (active) showTab(active);
   else await activateTab("main", "replace");
 }
 
-// A tab is named after the page it shows — its first pane's <title>. The pane is
-// only built when the tab is activated, so a tab that was never opened has no
-// iframe to read: fetch its page once and take the title from there.
+// A tab's name is stored with its session, so this only runs for a row written
+// before titles existed. The open list is small; one fetch per unnamed tab is
+// cheaper than making every reload guess.
+async function hydrateNames() {
+  let changed = false;
+  for (const tab of openTabs) {
+    if (tab.main || tab.name) continue;
+    const title = await fetchTabName(tab.sessionId);
+    if (title) {
+      tab.name = title;
+      changed = true;
+    }
+  }
+  if (changed) renderTabs();
+}
+
 const tabNames = new Map(); // sessionId -> title, so a restored tab costs one fetch
 
 async function fetchTabName(sessionId) {
@@ -393,56 +406,17 @@ async function fetchTabName(sessionId) {
   return title;
 }
 
-async function hydrateTabNames() {
-  let changed = false;
-  for (const tab of openTabs) {
-    if (tab.main || tab.name) continue;
-    const first = primaryPane(tab.layout);
-    if (!first) continue;
-    const title = await fetchTabName(first.contentId);
-    if (title) {
-      tab.name = title;
-      changed = true;
-    }
-  }
-  if (changed) renderTabs();
-}
-
-// The pane, once it exists, is the authority (its document is loaded): keep the
-// title in step with what the iframe actually shows.
-function installTitleWatchers() {
-  for (const tab of openTabs) {
-    if (tab.main) continue;
-    for (const pane of tab.panes.values()) {
-      if (!pane.frameEl || pane.frameEl.dataset.watch) continue;
-      pane.frameEl.dataset.watch = "1";
-      const read = () => {
-        // The stored title is the tab's name; the page is only consulted for a
-        // record that has none (one written before titles existed).
-        if (tab.name) return;
-        const title = pane.frameEl.contentDocument?.title;
-        if (title && tab.name !== title) {
-          tab.name = title;
-          renderTabs();
-        }
-      };
-      pane.frameEl.addEventListener("load", read);
-      read();
-    }
-  }
-}
-
 // ---------- the launcher (the +) ----------
 //
-// A popover, not a view: blueprints (static) and recent conversations (log).
-// Picking one opens a tab; picking a recent session reopens it in a new tab.
-// main itself is not a tab, so "new main conversation" lives here too.
+// A popover, not a view: blueprints (static) and recent sessions (log). Picking a
+// blueprint makes a new agent in a new tab; picking a recent session puts that
+// session back on screen. main is not a tab, so it is not listed.
 
 const tabAddEl = document.getElementById("tab-add");
 const launcherEl = document.getElementById("launcher");
 
-// Opening a row takes several round trips (make the agent, write the tab, resume
-// the session, load its page), and until the last one the workspace under the
+// Opening a row takes several round trips (make the agent, open the session,
+// resume it, load its page), and until the last one the workspace under the
 // launcher still shows the tab that was active — main. So the launcher is not the
 // thing that reveals what a row opened: `launcherHold` keeps it up (and takes no
 // clicks, so one click cannot start two agents) until the new page has painted,
@@ -517,18 +491,19 @@ async function blueprintEntries() {
   return out;
 }
 
-// recentEntries is the tabs that exist, most recently active first — a tab with
-// none of its panes on screen is still a thing you can bring back, and bringing it
-// back is the same tab, not a copy of it. A conversation reaches the screen only
-// through the tab that holds it, so there is nothing else to list here.
+// recentEntries is every session there is, most recently active first — a session
+// whose tab is closed is still a thing you can bring back, and bringing it back is
+// the same conversation, not a copy of it.
 async function recentEntries() {
-  const data = await logTabList(1);
-  return (data.tabs || []).map((t) => ({
-    tabId: t.tabId,
-    title: t.title || "",
-    panes: sessionsOf([{ layout: normalizeTree(t.layout) }]).length,
-    lastAt: t.lastAt || t.updatedAt || "",
-  }));
+  const data = await logSessionList(1);
+  return (data.sessions || [])
+    .filter((s) => s.kind !== "main")
+    .map((s) => ({
+      sessionId: String(s.sessionId ?? ""),
+      title: String(s.title || ""),
+      desc: [s.blueprint || "", s.lastAt || ""].filter(Boolean).join(" · "),
+      lastAt: String(s.lastAt || ""),
+    }));
 }
 
 // A row opens on a single click — the list is a list of things to open, not one
@@ -597,17 +572,18 @@ async function openLauncher() {
   for (const r of recents) {
     recent.appendChild(
       launcherRow({
-        name: r.title || "(untitled)",
-        desc: `${r.panes} pane(s) · ${r.lastAt}`,
-        onOpen: () => void openRecentTab(r.tabId),
+        name: r.title || r.sessionId,
+        desc: r.desc,
+        onOpen: () => void openSessionFromLauncher(r.sessionId),
       }),
     );
   }
   launcherEl.appendChild(recent);
 }
 
-// openBlueprintFromLauncher makes a new agent from a blueprint and puts it in a
-// tab of its own — the same two writes main's tab-new does, from the UI.
+// openBlueprintFromLauncher makes a new agent from a blueprint and puts it on
+// screen as a tab of its own — the same two writes main's session-new does, from
+// the UI. `ai/new` has already written the session row (kind, blueprint, title).
 async function openBlueprintFromLauncher(b) {
   if (launcherHold) return;
   launcherHoldOn();
@@ -619,19 +595,11 @@ async function openBlueprintFromLauncher(b) {
     });
     const data = yaml.load(await res.text()) || {};
     if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-    const id = data.sessionId;
-    const layout = { pane: { paneId: mintPaneId(), contentId: id } };
-    await logTabNew({
-      title: b.name || b.slug,
-      layout,
-      sessionIds: [id],
-      open: true,
-    });
+    const sessionId = data.sessionId;
+    await logSessionOn([sessionId]);
     // refreshWorkspace puts the tab up; the page inside it loads a moment later.
     await refreshWorkspace();
-    await waitForTabPaint(
-      openTabs.find((t) => !t.main && primaryPane(t.layout)?.contentId === id),
-    );
+    await waitForTabPaint(openTabs.find((t) => t.sessionId === sessionId));
     launcherRelease();
     launcherClose();
   } catch (err) {
@@ -640,18 +608,18 @@ async function openBlueprintFromLauncher(b) {
   }
 }
 
-// openRecentTab brings an existing tab back. A closed tab is reopened, never
-// re-created: a conversation belongs to the tab that made it, so a second copy of
-// it is not something the workspace can represent.
-async function openRecentTab(tabId) {
+// openSessionFromLauncher brings an existing session back. A closed tab is
+// reopened, never re-created: a tab is the session, so a second copy of it is not
+// something the workspace can represent.
+async function openSessionFromLauncher(sessionId) {
   if (launcherHold) return;
   launcherHoldOn();
   try {
-    if (!openTabs.some((t) => t.tabId === tabId)) {
-      await logTabOn([tabId]);
+    if (!openTabs.some((t) => t.sessionId === sessionId)) {
+      await logSessionOn([sessionId]);
       await refreshWorkspace();
     }
-    const tab = openTabs.find((t) => t.tabId === tabId);
+    const tab = openTabs.find((t) => t.sessionId === sessionId);
     if (tab) {
       // refreshWorkspace already activated a tab it just added; one that was
       // open but in the background is brought up here.
@@ -702,7 +670,7 @@ async function boot() {
       const data = yaml.load(await res.text()) || {};
       if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
       mainSession = data.sessionId;
-      await logCurrentPut(cur.openTabs ?? [], mainSession);
+      await logCurrentPut(cur.openSessions ?? [], mainSession);
     } catch (err) {
       panesEl.innerHTML = `<div class="empty-hint">cannot start main: ${err.message}</div>`;
       return;
@@ -711,16 +679,20 @@ async function boot() {
   mainTab = makeMainTab(mainSession);
   openTabs.push(mainTab);
 
-  const kept = [];
-  for (const tabId of cur.openTabs ?? []) {
-    try {
-      kept.push(tabFromRecord(await logTabDetail(tabId)));
-    } catch {
-      // A tab id whose record is gone: repair the list rather than show a ghost.
-    }
+  let byId = null;
+  try {
+    byId = await sessionsById();
+  } catch {
+    // a list that cannot be read still leaves main usable, and must not make the
+    // open list look empty
   }
-  if (kept.length !== (cur.openTabs ?? []).length) {
-    await logCurrentPut(kept.map((t) => t.tabId), mainSession).catch(() => {});
+  const kept = [];
+  for (const sessionId of cur.openSessions ?? []) {
+    if (byId && !byId.has(sessionId)) continue; // row gone: repair, don't show a ghost
+    kept.push(tabFromSession(byId?.get(sessionId) ?? { sessionId }));
+  }
+  if (byId && kept.length !== (cur.openSessions ?? []).length) {
+    await logCurrentPut(kept.map((t) => t.sessionId), mainSession).catch(() => {});
   }
   openTabs.push(...kept);
 
@@ -728,201 +700,50 @@ async function boot() {
   // a page must be able to be asked the moment it appears, and main's history is
   // read from the same live session.
   await Promise.all(
-    [mainSession, ...sessionsOf(kept)].map((id) => aiResume(id).catch(() => false)),
+    [mainSession, ...kept.map((t) => t.sessionId)].map((id) => aiResume(id).catch(() => false)),
   );
 
   renderTabs();
   await activateTab("main", null);
-  installTitleWatchers();
-  void hydrateTabNames();
+  void hydrateNames();
 }
 
 window.addEventListener("popstate", () => {
-  const m = location.pathname.match(/^\/tab\/([^/]+)$/);
-  const tab = m ? openTabs.find((t) => t.tabId === decodeURIComponent(m[1])) : mainTab;
+  const m = location.pathname.match(/^\/s\/([^/]+)$/);
+  const tab = m
+    ? openTabs.find((t) => t.sessionId === decodeURIComponent(m[1]))
+    : mainTab;
   if (tab) void activateTab(tab.id, null);
 });
 
-// ---------- theme (palette, see theme.css) ----------
+// ---------- the stage: what a tab shows ----------
 
-// ---------- panes: what a tab shows ----------
-
-let paneIdSeq = 0;
-
-function mintPaneId() {
-  const b = new Uint8Array(4);
-  crypto.getRandomValues(b);
-  paneIdSeq += 1;
-  const hex = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
-  return `p_${hex}${paneIdSeq.toString(16)}`;
-}
-
-// normalizeTree reads a stored tree into the shape the renderer wants, filling in
-// what an older record does not have. A leaf written before paneId existed gets
-// one here — identity only has to hold for as long as the pane lives, and a reload
-// rebuilds every pane from the record anyway — and the names an older record used
-// (content / id / split: "col" / weight / size: brief) are read as their current
-// equivalents.
-function normalizeTree(node) {
-  if (!node || typeof node !== "object") return null;
-  if (node.pane && typeof node.pane === "object") {
-    const p = node.pane;
-    // A leaf names one agent. Older records carry contentType ("chat" / "page")
-    // and its content in `content` / `id`: read for what they meant, written
-    // without them — there is only one kind of pane now.
-    const leaf = {
-      paneId: typeof p.paneId === "string" && p.paneId ? p.paneId : mintPaneId(),
-      contentId: p.contentId ?? p.id ?? p.content ?? "",
-    };
-    if (p.flex) leaf.flex = String(p.flex);
-    else if (p.size === "brief") leaf.flex = "0 0 132px";
-    return { pane: leaf };
+// showTab puts one tab's view on stage and hides the others. Every open tab keeps
+// its element (a chat, or a page that has already loaded), so switching back is
+// instant and nothing reloads.
+function showTab(tab) {
+  const el = viewOf(tab);
+  if (!el) return;
+  if (el.parentNode !== panesEl) panesEl.appendChild(el);
+  for (const t of openTabs) {
+    if (!t.el) continue;
+    t.el.hidden = t.id !== tab.id;
   }
-  const raw = node.split;
-  const dir = typeof raw === "string" ? raw : (raw && raw.flexDirection) || "row";
-  const children = (node.children || (raw && raw.children) || [])
-    .map(normalizeTree)
-    .filter(Boolean);
-  if (!children.length) return null;
-  const split = {
-    flexDirection: dir === "col" || dir === "column" ? "column" : "row",
-    children,
-  };
-  const flex = (raw && raw.flex) || node.flex || (node.weight ? `${node.weight} 1 0` : "");
-  if (flex) split.flex = String(flex);
-  return { split };
 }
 
-// tabLayoutOf is the single-pane layout a tab gets when it is created: the agent
-// it was opened for.
-function tabLayoutOf(tab) {
-  return { pane: { paneId: mintPaneId(), contentId: tab.sessionId } };
-}
-
-// tabLayout returns the tab's tree, minting the fallback for a tab whose record
-// could not be read. Memoized: a fresh paneId on every call would look like a new
-// pane on every render.
-function tabLayout(tab) {
-  if (tab.layout) return tab.layout;
-  return (tab.localLayout ||= tabLayoutOf(tab));
-}
-
-function makePagePane(key, contentId) {
-  const el = document.createElement("div");
-  el.className = "pane pane-page";
-  const frameEl = document.createElement("iframe");
-  frameEl.className = "pane-frame";
-  frameEl.title = contentId;
-  // Listen before pointing it anywhere: a blueprint served from cache can load
-  // before a listener attached afterwards would ever see it, and the theme is
-  // only pushed on load (see pushPageTheme).
-  frameEl.addEventListener("load", pushPageTheme);
-  frameEl.src = agentFrameSrc(contentId);
-  el.appendChild(frameEl);
-  return { key, kind: "page", contentId, el, frameEl };
-}
-
-// ensurePane returns the pane for one leaf, reusing the live one when its place
-// and its content are unchanged. The key is the pane's paneId, so a pane that
-// moved is found again; the same key with different content is the same pane
-// showing something else, and the old one is taken down first.
-function ensurePane(tab, key, contentId) {
-  const existing = tab.panes.get(key);
-  if (existing && existing.contentId === contentId) return existing;
-  if (existing) dropPane(tab, existing);
-  // Every pane shows one agent, and an agent's UI is its blueprint: the pane is
-  // an iframe onto that agent's own copy. Two panes on the same agent are two
-  // iframes on one session — the agent keeps one context either way.
-  const pane = makePagePane(key, contentId);
-  tab.panes.set(key, pane);
-  return pane;
-}
-
-// splitEl builds a split container. Its geometry is the flex value the tree gives
-// it, in the same CSS shorthand a pane uses (see the layout tool).
-function splitEl(dir, flex) {
-  const el = document.createElement("div");
-  el.className = `pane-split ${dir === "column" ? "column" : "row"}`;
-  if (flex) el.style.flex = flex;
-  return el;
-}
-
-// buildPaneNode builds one node, registering every leaf it keeps in `seen` — which
-// is how renderPanes learns what the tree still holds.
-function buildPaneNode(tab, node, seen) {
-  if (node.pane) {
-    const pane = ensurePane(tab, node.pane.paneId, node.pane.contentId);
-    seen.add(pane.key);
-    if (node.pane.flex) pane.el.style.flex = node.pane.flex;
-    else pane.el.style.removeProperty("flex");
-    return pane.el;
-  }
-  const el = splitEl(node.split.flexDirection, node.split.flex);
-  for (const child of node.split.children) {
-    const built = buildPaneNode(tab, child, seen);
-    if (built) el.appendChild(built);
-  }
-  return el;
-}
-
-// renderPanes builds (or rebuilds) a tab's content area from its tree, and loads
-// every chat pane that has nothing on screen yet. A chat pane without a session of
-// its own was just created by a layout change, so it starts a fresh one.
-//
-// The tree is the only authority on what exists: a pane it no longer holds is
-// taken down here, which is what keeps a pane the model dropped from carrying on
-// in the background.
-function renderPanes(tab) {
-  const layout = normalizeTree(tabLayout(tab)) || tabLayoutOf(tab);
-  tab.layout = layout;
-  const seen = new Set();
-  const tree = document.createElement("div");
-  tree.className = "pane-tree";
-  tree.appendChild(buildPaneNode(tab, layout, seen));
-  for (const [key, pane] of [...tab.panes]) {
-    if (!seen.has(key)) dropPane(tab, pane);
-  }
-  // The tree this one replaces goes whole: a tab keeps exactly one of them.
-  tab.paneEl?.remove();
-  tab.paneEl = tree;
-  // A rebuild of a background tab must not become visible by accident.
-  tree.hidden = tab.id !== activeTabId;
-}
-
-// dropPane takes one pane down. It leaves its conversation first: a pane that kept
-// drawing into a detached element would look like the run had stalled, and would
-// hold the subscription open for a view nobody has.
-function dropPane(tab, pane) {
-  if (tab.panes.get(pane.key) === pane) tab.panes.delete(pane.key);
-  pane.el.remove();
-}
-
-// dropTabPanes takes every pane of a tab down. Called when the tab itself goes —
-// closing it, or replacing its instance with a fresh one — so its panes are not
-// left behind holding subscriptions to conversations nothing shows any more.
-function dropTabPanes(tab) {
-  for (const pane of [...(tab.panes?.values() ?? [])]) dropPane(tab, pane);
-  // The tree itself goes with them: it sits in the document (hidden or not), and
-  // a tab that is gone must not leave one behind.
-  tab.paneEl?.remove();
-  tab.paneEl = null;
-}
-
-// A pane has something on screen once its iframe has a page of its own loaded;
+// A page has something on screen once its iframe has a page of its own loaded;
 // before that it is a blank surface (its background, not a page).
-function paneFramePainted(frameEl) {
-  const doc = frameEl.contentDocument;
+function framePainted(frameEl) {
+  const doc = frameEl?.contentDocument;
   if (!doc) return false;
   return doc.readyState === "complete" && !/^about:/.test(doc.URL);
 }
 
-// waitForTabPaint resolves when the tab's first pane shows its page, or after
-// `ms` — a page that never loads must not keep the launcher up for good.
+// waitForTabPaint resolves when the tab's page shows, or after `ms` — a page that
+// never loads must not keep the launcher up for good.
 function waitForTabPaint(tab, ms = 4000) {
-  const first = tab && primaryPane(tab.layout);
-  const pane = first && [...tab.panes.values()].find((p) => p.contentId === first.contentId);
-  const frameEl = pane?.frameEl;
-  if (!frameEl || paneFramePainted(frameEl)) return Promise.resolve();
+  const frameEl = tab?.frameEl;
+  if (!frameEl || framePainted(frameEl)) return Promise.resolve();
   return new Promise((resolve) => {
     const done = () => {
       clearTimeout(timer);
@@ -934,20 +755,10 @@ function waitForTabPaint(tab, ms = 4000) {
   });
 }
 
-function showPanes(tab) {
-  if (!tab.paneEl) renderPanes(tab);
-  if (tab.paneEl.parentNode !== panesEl) panesEl.appendChild(tab.paneEl);
-  for (const t of openTabs) {
-    if (!t.paneEl) continue;
-    t.paneEl.hidden = t.id !== tab.id;
-  }
-}
-
-function paneKeyOf(tab, contentId) {
-  for (const [key, p] of tab.panes) {
-    if (p.contentId === contentId) return key;
-  }
-  return "";
+function dropMainTab() {
+  if (!mainTab) return;
+  mainTab.el?.parentNode?.removeChild(mainTab.el);
+  mainTab.el = null;
 }
 
 // A short, visible message at the bottom of the workspace.

@@ -1,3 +1,0 @@
-id: core-log-tab
-description: log-tab-new / log-tab-mutation / log-tab-detail / log-tab-list / log-tab-on / log-tab-off contract conformance — a tab is a named, non-empty record that owns its conversations (one tab per session); lastAt follows messages as well as layout writes
-atoms: [log]

@@ -15,54 +15,30 @@ edges:
     channel: network
     protocol: http
     description: ai queries log records to review history / context
-  - id: ai-to-log-session-detail
+  - id: ai-to-log-session-messages
     from: ai
-    from_interface: log-session-detail
+    from_interface: log-session-messages
     to: log
-    to_interface: log-session-detail
+    to_interface: log-session-messages
     channel: network
     protocol: http
     description: ai reads a session's conversation messages to rebuild context on resume
-  - id: ai-to-log-tab-detail
+  - id: ai-to-log-session-on
     from: ai
-    from_interface: log-tab-detail
+    from_interface: log-session-on
     to: log
-    to_interface: log-tab-detail
+    to_interface: log-session-on
     channel: network
     protocol: http
-    description: tab-mutation (main's tool) reads the tab's pane tree before it rewrites it
-  - id: ai-to-log-tab-mutation
+    description: session-open (main's tool) puts a session back on screen
+  - id: ai-to-log-session-off
     from: ai
-    from_interface: log-tab-mutation
+    from_interface: log-session-off
     to: log
-    to_interface: log-tab-mutation
+    to_interface: log-session-off
     channel: network
     protocol: http
-    description: tab-mutation (main's tool) replaces a tab's pane tree
-  - id: ai-to-log-tab-new
-    from: ai
-    from_interface: log-tab-new
-    to: log
-    to_interface: log-tab-new
-    channel: network
-    protocol: http
-    description: tab-on (main's tool) creates the tab record for a new agent
-  - id: ai-to-log-tab-off
-    from: ai
-    from_interface: log-tab-off
-    to: log
-    to_interface: log-tab-off
-    channel: network
-    protocol: http
-    description: tab-off (main's tool) closes a tab, keeping its record
-  - id: ai-to-log-tab-delete
-    from: ai
-    from_interface: log-tab-delete
-    to: log
-    to_interface: log-tab-delete
-    channel: network
-    protocol: http
-    description: tab-delete (main's tool) removes the tab record after its agents are deleted
+    description: session-close (main's tool) takes a session off screen, keeping its records
   - id: ai-to-log-list
     from: ai
     from_interface: log-list
@@ -70,7 +46,7 @@ edges:
     to_interface: log-list
     channel: network
     protocol: http
-    description: session-list (main's tool) reads the project's conversations
+    description: session-list / main-list (main's tools) read the project's sessions
   - id: ai-to-log-delete
     from: ai
     from_interface: log-delete
@@ -78,7 +54,7 @@ edges:
     to_interface: log-delete
     channel: network
     protocol: http
-    description: tab-delete / session deletion removes a conversation's records and its session row
+    description: session-delete (main's tool) removes a conversation's records and its session row
   - id: ai-to-log-session-upsert
     from: ai
     from_interface: log-session-upsert
@@ -86,7 +62,7 @@ edges:
     to_interface: log-session-upsert
     channel: network
     protocol: http
-    description: ai records a new conversation's kind (main / sub)
+    description: ai records a new conversation's kind, blueprint and display name
   - id: ai-to-log-session-kind
     from: ai
     from_interface: log-session-kind
@@ -94,7 +70,7 @@ edges:
     to_interface: log-session-kind
     channel: network
     protocol: http
-    description: resume reads a conversation's kind to pick the role spec and tools
+    description: resume / session-new read a conversation's kind and blueprint to pick the role spec and the page
   - id: ai-to-log-current-get
     from: ai
     from_interface: log-current-get
@@ -102,7 +78,7 @@ edges:
     to_interface: log-current-get
     channel: network
     protocol: http
-    description: tab-list (main's tool) reads which tabs are open and the main session
+    description: session-list / main-new / main-resume (main's tools) read which sessions are open and which is main
   - id: ai-to-log-current-put
     from: ai
     from_interface: log-current-put
@@ -110,4 +86,4 @@ edges:
     to_interface: log-current-put
     channel: network
     protocol: http
-    description: main-new (main's tool) moves log's main-session pointer to a fresh conversation, writing the open list back untouched
+    description: main-new / main-resume (main's tools) move log's main-session pointer, writing the open list back untouched

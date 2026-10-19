@@ -99,7 +99,7 @@ Expected on startup: `serve-web` logs its address on `:9020`, and the ai service
 
 ```bash
 MAIN1=$(curl -s -X POST $AI/ai/new -d 'kind: main' | sid)
-curl -s -o /dev/null -X POST $LOG/log/current/put -d "openTabs: []
+curl -s -o /dev/null -X POST $LOG/log/current/put -d "openSessions: []
 mainSession: $MAIN1"
 echo "before: $MAIN1"
 
@@ -110,13 +110,13 @@ echo "after:  $MAIN2"
 curl -s -X POST $LOG/log/current/get -d '{}'
 curl -s -X POST $LOG/log/session/detail -d "sessionId: $MAIN2"
 curl -s -o /dev/null -w 'old main: %{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $MAIN1"
-curl -s -X POST $LOG/log/session-detail -d "sessionId: $MAIN1" | grep -c 'name: main-new' || true
+curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN1" | grep -c 'name: main-new' || true
 ```
 
 Expected:
 
 - `after:` is a different, non-empty `s_…` id — the pointer moved;
-- `log/current/get` still shows `openTabs: []` — the tool writes the open list back untouched,
+- `log/current/get` still shows `openSessions: []` — the tool writes the open list back untouched,
   it does not close tabs;
 - the new id's `session/detail` says `kind: main` (it is main, not a blueprint agent);
 - `old main: 200` — the previous conversation is still on record (replace, not delete);
@@ -126,7 +126,7 @@ Expected:
 
 ```bash
 ask $MAIN2 "Reply with the single word: alive"
-curl -s -X POST $LOG/log/session-detail -d "sessionId: $MAIN2" | grep -c 'alive' || true
+curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN2" | grep -c 'alive' || true
 echo "still: $(mainid)"
 ```
 
@@ -139,7 +139,7 @@ still `$MAIN2` — the new main did not quietly switch again.
 SUB=$(curl -s -X POST $AI/ai/new -d 'blueprint: demo' | sid)
 ask $SUB "Call the main-new tool right now. Do not use bash or curl, and do not ask me anything — just call the tool and report its exact reply."
 echo "current: $(mainid)  expected: $MAIN2"
-curl -s -X POST $LOG/log/session-detail -d "sessionId: $SUB" | grep -c 'name: main-new' || true
+curl -s -X POST $LOG/log/session/messages -d "sessionId: $SUB" | grep -c 'name: main-new' || true
 ```
 
 Expected: `current:` is still `$MAIN2`, and `grep` prints `0` — the name is not in a sub's

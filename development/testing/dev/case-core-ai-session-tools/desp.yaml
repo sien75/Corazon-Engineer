@@ -1,0 +1,3 @@
+id: core-ai-session-tools
+description: main's workspace tools end to end — session-new makes an agent and opens its tab, session-close/session-open round-trip the same session, session-delete removes it everywhere, main cannot delete itself, and a sub agent has none of these tools
+atoms: [ai, log]

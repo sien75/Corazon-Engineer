@@ -102,7 +102,7 @@ PY
 }
 sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])'; }
 mainid() { curl -s -X POST $LOG/log/current/get -d '{}' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin).get("mainSession") or "")'; }
-records() { curl -s -X POST $LOG/log/session-detail -d "sessionId: $1"; }
+records() { curl -s -X POST $LOG/log/session/messages -d "sessionId: $1"; }
 # last_answer prints the text of the session's final assistant message
 last_answer() {
   records "$1" | python3 -c '
@@ -128,7 +128,7 @@ MAIN2=$(curl -s -X POST $AI/ai/new -d 'kind: main' | sid)
 ask $MAIN2 "Remember the word beta. Reply with the single word: ok"
 SUB=$(curl -s -X POST $AI/ai/new -d 'blueprint: demo' | sid)
 # the pointer starts on MAIN1, so section 2's resume of MAIN2 is a real move
-curl -s -o /dev/null -X POST $LOG/log/current/put -d "openTabs: []
+curl -s -o /dev/null -X POST $LOG/log/current/put -d "openSessions: []
 mainSession: $MAIN1"
 echo "$MAIN1 $MAIN2 $SUB"
 curl -s -X POST $LOG/log/session/detail -d "sessionId: $MAIN1"
@@ -137,7 +137,7 @@ curl -s -X POST $LOG/log/current/get -d '{}'
 ```
 
 Expected: both main ids report `kind: main`, the third `kind: sub` with `blueprint: demo`, and
-`current` says `mainSession: <MAIN1>`, `openTabs: []`.
+`current` says `mainSession: <MAIN1>`, `openSessions: []`.
 
 ## 2. after an ai restart, main-resume brings MAIN2 back from its records
 
@@ -198,7 +198,7 @@ curl -s -X POST $LOG/log/current/get -d '{}'
 ```
 
 Expected: `current:` is `$MAIN1`; one `main-resume` call; the result line `main is now <MAIN1>`;
-`openTabs` still `[]` (a conversation swap is not a tab change).
+`openSessions` still `[]` (a conversation swap is not a tab change).
 
 ## 5. the refusals: a blueprint agent, an unknown id, the one already on screen
 

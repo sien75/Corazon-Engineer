@@ -27,18 +27,13 @@ func New(st *store.Store) *Server {
 	s := &Server{store: st, mux: http.NewServeMux(), broker: NewBroker()}
 	s.mux.HandleFunc("POST /log/list", s.handleList)
 	s.mux.HandleFunc("POST /log/delete", s.handleDelete)
-	s.mux.HandleFunc("POST /log/session-detail", s.handleSessionDetail)
+	s.mux.HandleFunc("POST /log/session/messages", s.handleSessionDetail)
 	s.mux.HandleFunc("POST /log/query", s.handleQuery)
 	s.mux.HandleFunc("POST /log/query-detail", s.handleQueryDetail)
 	s.mux.HandleFunc("POST /log/search", s.handleSearch)
 	s.mux.HandleFunc("POST /log/mutation", s.handleMutation)
-	s.mux.HandleFunc("POST /log/tab/new", s.handleTabNew)
-	s.mux.HandleFunc("POST /log/tab/mutation", s.handleTabMutation)
-	s.mux.HandleFunc("POST /log/tab/detail", s.handleTabDetail)
-	s.mux.HandleFunc("POST /log/tab/list", s.handleTabList)
-	s.mux.HandleFunc("POST /log/tab/on", s.handleTabOn)
-	s.mux.HandleFunc("POST /log/tab/off", s.handleTabOff)
-	s.mux.HandleFunc("POST /log/tab/delete", s.handleTabDelete)
+	s.mux.HandleFunc("POST /log/session/on", s.handleSessionOn)
+	s.mux.HandleFunc("POST /log/session/off", s.handleSessionOff)
 	s.mux.HandleFunc("POST /log/session/upsert", s.handleSessionUpsert)
 	s.mux.HandleFunc("POST /log/session/detail", s.handleSessionGet)
 	s.mux.HandleFunc("POST /log/current/get", s.handleCurrentGet)
@@ -161,103 +156,39 @@ func (s *Server) handleMutation(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	// A message is activity on the tab that holds its conversation: the launcher
-	// orders tabs by that, so a tab you just talked in comes first even though its
-	// layout has not changed.
-	if req.Kind == "conversation" {
-		_ = s.store.TouchSessionTab(req.SessionID, rec.CreatedAt)
-	}
 	s.broker.Publish(rec)
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"id": rec.ID, "createdAt": rec.CreatedAt})
 }
 
-// ---------- log/tab/* ----------
+// ---------- log/session/on | log/session/off ----------
 //
-// A tab's pane tree is keyed state, not a record: one row per tabId, overwritten
-// in place. Log stores the tree as text and hands it back — it does not read,
-// validate, or default the layout; that belongs to whoever writes it.
+// The open list (the shell's tab bar) is workspace state, not a record. A tab is
+// one open session, so opening and closing are operations on session ids — there
+// is no tab row to create, and opening an id never invents anything.
 
-func (s *Server) handleTabNew(w http.ResponseWriter, r *http.Request) {
+// handleSessionOn puts existing sessions back on screen. An id with no session
+// row is refused: the shell and main both take ids from a list, so an unknown one
+// is a mistake, not a request to create.
+func (s *Server) handleSessionOn(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Title      string      `yaml:"title"`
-		Layout     interface{} `yaml:"layout"`
-		SessionIDs []string    `yaml:"sessionIds"`
-		Open       *bool       `yaml:"open"`
+		SessionIDs []string `yaml:"sessionIds"`
+		Index      *int     `yaml:"index"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	if req.Layout == nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "layout missing")
+	if len(req.SessionIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "sessionIds missing")
 		return
 	}
-	open := req.Open == nil || *req.Open
-	tab, err := s.store.NewTab(strings.TrimSpace(req.Title), req.Layout, open)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	if err := s.store.BindSessions(tab.TabID, req.SessionIDs); err != nil {
-		// The tab exists but no conversation may belong to it: undo the write so a
-		// refused binding does not leave an empty tab behind.
-		_ = s.store.DeleteTab(tab.TabID)
-		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	writeYAMLResp(w, http.StatusOK, tab.Body())
-}
-
-func (s *Server) handleTabMutation(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TabID      string      `yaml:"tabId"`
-		Title      string      `yaml:"title"`
-		Layout     interface{} `yaml:"layout"`
-		SessionIDs []string    `yaml:"sessionIds"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	if req.Layout == nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "layout missing")
-		return
-	}
-	if strings.TrimSpace(req.TabID) == "" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "tabId missing")
-		return
-	}
-	if _, err := s.store.GetTab(req.TabID); errors.Is(err, sql.ErrNoRows) {
-		writeErr(w, http.StatusNotFound, "not_found", "tab does not exist")
-		return
-	}
-	if err := s.store.BindSessions(req.TabID, req.SessionIDs); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	tab, err := s.store.PutTab(req.TabID, strings.TrimSpace(req.Title), req.Layout)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	writeYAMLResp(w, http.StatusOK, tab.Body())
-}
-
-// handleTabOn puts existing tabs back in the open list. Opening a tab never
-// creates a record: a tab that was closed is the one that comes back.
-func (s *Server) handleTabOn(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TabIDs []string    `yaml:"tabIds"`
-		Index  interface{} `yaml:"index"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	if len(req.TabIDs) == 0 {
-		writeErr(w, http.StatusBadRequest, "bad_request", "tabIds missing")
-		return
-	}
-	for _, id := range req.TabIDs {
-		if _, err := s.store.GetTab(id); errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusBadRequest, "bad_request", "no tab "+id)
+	for _, id := range req.SessionIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			writeErr(w, http.StatusBadRequest, "bad_request", "sessionIds missing")
+			return
+		}
+		if _, err := s.store.GetSession(id); errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusBadRequest, "bad_request", "no session "+id)
 			return
 		} else if err != nil {
 			writeErr(w, http.StatusInternalServerError, "internal", err.Error())
@@ -265,10 +196,10 @@ func (s *Server) handleTabOn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	index := -1
-	if v, ok := req.Index.(int); ok {
-		index = v
+	if req.Index != nil {
+		index = *req.Index
 	}
-	if err := s.store.AddOpenTabs(req.TabIDs, index); err != nil {
+	if err := s.store.AddOpenSessions(req.SessionIDs, index); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
@@ -277,75 +208,23 @@ func (s *Server) handleTabOn(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"openTabs": cur.Body()["openTabs"]})
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"openSessions": cur.Body()["openSessions"]})
 }
 
-func (s *Server) handleTabDetail(w http.ResponseWriter, r *http.Request) {
+// handleSessionOff takes sessions off the open list. The records stay: a closed
+// tab is a conversation you can put back with session/on.
+func (s *Server) handleSessionOff(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TabID string `yaml:"tabId"`
+		SessionIDs []string `yaml:"sessionIds"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	if strings.TrimSpace(req.TabID) == "" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "tabId missing")
+	if len(req.SessionIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "sessionIds missing")
 		return
 	}
-	tab, err := s.store.GetTab(req.TabID)
-	if errors.Is(err, sql.ErrNoRows) {
-		writeErr(w, http.StatusNotFound, "not_found", "tab does not exist")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	writeYAMLResp(w, http.StatusOK, tab.Body())
-}
-
-func (s *Server) handleTabList(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		PageNum interface{} `yaml:"pageNum"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	tabs, hasMore, err := s.store.ListTabs(pageNum(req.PageNum))
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	items := make([]map[string]interface{}, 0, len(tabs))
-	for _, t := range tabs {
-		items = append(items, t.Body())
-	}
-	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
-		"tabs":     items,
-		"pageNum":  pageNum(req.PageNum),
-		"hasMore":  hasMore,
-		"pageSize": store.PageSize,
-	})
-}
-
-func (s *Server) handleTabOff(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TabIDs []string `yaml:"tabIds"`
-		TabID  string   `yaml:"tabId"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	ids := req.TabIDs
-	if len(ids) == 0 && strings.TrimSpace(req.TabID) != "" {
-		ids = []string{req.TabID}
-	}
-	if len(ids) == 0 {
-		writeErr(w, http.StatusBadRequest, "bad_request", "tabIds missing")
-		return
-	}
-	// Closing a tab keeps its record (it can be reopened); only the open list
-	// changes.
-	if err := s.store.RemoveOpenTabs(ids); err != nil {
+	if err := s.store.RemoveOpenSessions(req.SessionIDs); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
@@ -354,29 +233,7 @@ func (s *Server) handleTabOff(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"openTabs": cur.Body()["openTabs"]})
-}
-
-func (s *Server) handleTabDelete(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TabID string `yaml:"tabId"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	if strings.TrimSpace(req.TabID) == "" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "tabId missing")
-		return
-	}
-	if _, err := s.store.GetTab(req.TabID); errors.Is(err, sql.ErrNoRows) {
-		writeErr(w, http.StatusNotFound, "not_found", "tab does not exist")
-		return
-	}
-	if err := s.store.DeleteTab(req.TabID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"tabId": req.TabID})
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"openSessions": cur.Body()["openSessions"]})
 }
 
 // ---------- sessions ----------
@@ -390,6 +247,7 @@ func (s *Server) handleSessionUpsert(w http.ResponseWriter, r *http.Request) {
 		SessionID string `yaml:"sessionId"`
 		Kind      string `yaml:"kind"`
 		Blueprint string `yaml:"blueprint"`
+		Title     string `yaml:"title"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -398,7 +256,7 @@ func (s *Server) handleSessionUpsert(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "sessionId missing")
 		return
 	}
-	sess, err := s.store.UpsertSession(req.SessionID, req.Kind, req.Blueprint)
+	sess, err := s.store.UpsertSession(req.SessionID, req.Kind, req.Blueprint, req.Title)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -431,9 +289,9 @@ func (s *Server) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 
 // ---------- current ----------
 //
-// The workspace row: which tabs are open (in display order) and which session the
-// shell's own chat is. The shell reads it on load instead of restoring anything
-// from local storage.
+// The workspace row: which sessions are open (in display order) and which session
+// the shell's own chat is. The shell reads it on load instead of restoring
+// anything from local storage.
 
 func (s *Server) handleCurrentGet(w http.ResponseWriter, r *http.Request) {
 	var req struct{}
@@ -450,13 +308,13 @@ func (s *Server) handleCurrentGet(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCurrentPut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OpenTabs    []string `yaml:"openTabs"`
-		MainSession string   `yaml:"mainSession"`
+		OpenSessions []string `yaml:"openSessions"`
+		MainSession  string   `yaml:"mainSession"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	cur, err := s.store.PutCurrent(req.OpenTabs, req.MainSession)
+	cur, err := s.store.PutCurrent(req.OpenSessions, req.MainSession)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -542,7 +400,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---------- log/session-detail ----------
+// ---------- log/session/messages ----------
 
 func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
 	var req struct {

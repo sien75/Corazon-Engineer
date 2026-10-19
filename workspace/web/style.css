@@ -178,11 +178,11 @@ body {
   text-align: center;
 }
 
-/* ---------- panes ---------- */
+/* ---------- the stage: one view per tab ---------- */
 
-/* A tab's content area is a tree of panes. A split's `flexDirection` is the CSS
-   one — `row` splits left/right, `column` splits top/bottom — and every child
-   carries its own `flex`, so a pane states the share it takes. */
+/* A tab's content area is one view — main's chat, or an agent's page. A tab is
+   one open session, so there is no tree to lay out: every open tab's view lives
+   in #panes and only the active tab's is shown. */
 #panes {
   flex: 1;
   min-width: 0;
@@ -194,99 +194,29 @@ body {
   display: none;
 }
 
-.pane-tree,
-.pane-split {
-  display: flex;
+.view {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-}
-
-/* Every open tab's tree lives in #panes; only the active tab's is shown. This
-   has to be spelled out: the author rule above beats the UA's `[hidden]`. */
-.pane-tree[hidden] {
-  display: none;
-}
-
-/* main's chat is a bare pane in #panes (it has no tab tree of its own), so it
-   needs the same fill-it and hide rules its tree-wrapped siblings get. */
-#panes > .pane {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
-}
-
-.pane[hidden] {
-  display: none;
-}
-
-.pane-split.row {
-  flex-direction: row;
-}
-
-.pane-split.column {
-  flex-direction: column;
-}
-
-/* The share is the `flex` the tree gives each node (see the layout tool). A child
-   that says nothing divides the space evenly — the project's default, not CSS's
-   `0 1 auto`, which would collapse a chat pane to its content width. */
-.pane-split > * {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
-}
-
-.pane-split.row > * + *,
-.pane-split.column > * + * {
-  border-left: 1px solid var(--border);
-}
-
-.pane-split.column > * + * {
-  border-left: 0;
-  border-top: 1px solid var(--border);
-}
-
-.pane {
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-/* A single-pane tree is the common case: the pane fills it, like a split child
-   would. Without this the pane would size to its content. */
-.pane-tree > .pane {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
+/* The author rule above beats the UA's `[hidden]`, so the hide has to be spelled
+   out for a view that is off stage. */
+.view[hidden] {
+  display: none;
 }
 
-.pane-chat {
-  position: relative;
-}
-
-/* The conversation scrolls over the whole pane, not just over the centred
-   column: `.pane-scroll` spans the full width, so the wheel works wherever the
-   pointer is, while the messages inside stay a capped column. */
-.pane-scroll {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  overflow-y: auto;
-  /* Reserve the track on both sides, so the centred column keeps the same
-     centre as the composer below it — with classic scrollbars a one-sided
-     gutter sits the column half a scrollbar to the left. */
-  scrollbar-gutter: stable both-edges;
-}
-
-.pane-page .pane-frame {
-  flex: 1 1 0;
-  /* An iframe's intrinsic height (150px) is its min-height, and a flex item
-     does not shrink below it without this. */
-  min-height: 0;
+/* A page view is the blueprint's own document. */
+.view-page {
   border: 0;
+  /* An iframe's intrinsic height (150px) is its min-height, and a flex item does
+     not shrink below it without this. */
+  min-height: 0;
   /* The page's own background wins once it paints; before that (and when it has
-     none) the pane shows the current theme's surface, not a white flash. */
+     none) the view shows the current theme's surface, not a white flash. */
   background: var(--surface);
 }
 

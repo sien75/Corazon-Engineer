@@ -13,7 +13,7 @@
 // anything for the conversation to work.
 //
 // Events (bubbling, for the shell): "engineer-tool" with { name, isError } after
-// every tool call — main's tab-* tools are what make the shell re-read the
+// every tool call — main's session-* tools are what make the shell re-read the
 // workspace.
 
 import yaml from "/vendor/js-yaml.js";
@@ -635,7 +635,7 @@ function wire(host, root, id, RT) {
         const block = tools.get(ev.toolCallId);
         if (block) settle(block, ev.isError ? "error" : "done");
         tools.delete(ev.toolCallId);
-        // The shell listens for this: main's tab-* tools change the workspace,
+        // The shell listens for this: main's session-* tools change the workspace,
         // and the element only reports what ran.
         host.dispatchEvent(
           new CustomEvent("engineer-tool", {
@@ -673,7 +673,7 @@ function wire(host, root, id, RT) {
   //
   // 组件就是一个会话（id 在 URL 里），所以列表就是一份，不需要按会话存。两个来源：
   // 本页面发的（ask 里随手记），和会话记录里的（replayHistory 那趟遍历顺手收，
-  // 本来就要拉 session-detail，不加请求）。带图片的轮次两边都跳过：文本回填不回图片。
+  // 本来就要拉 session/messages，不加请求）。带图片的轮次两边都跳过：文本回填不回图片。
   const HISTORY_MAX = 100;
   const history = { items: [], cursor: null, draft: "" };
 
@@ -895,7 +895,7 @@ function wire(host, root, id, RT) {
         headers: { "Content-Type": "application/yaml" },
         body: yaml.dump({ id }),
       });
-      const res = await fetch(`${LOG}/log/session-detail`, {
+      const res = await fetch(`${LOG}/log/session/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/yaml" },
         body: yaml.dump({ sessionId: id }),

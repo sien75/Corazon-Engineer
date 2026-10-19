@@ -167,7 +167,7 @@ session replays tool calls and thinking, not just text. Images are stored as
 sha256 refs, never base64.
 
 ```bash
-curl -s -X POST http://localhost:8800/log/session-detail -d "sessionId: $SID"
+curl -s -X POST http://localhost:8800/log/session/messages -d "sessionId: $SID"
 ```
 
 Expected: each message carries `seq`, `role` (`user` | `assistant` | `toolResult`

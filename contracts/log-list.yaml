@@ -1,5 +1,5 @@
 id: log-list
-description: List ai conversation sessions; one entry per sessionId, most recently active first
+description: List conversation sessions, most recently active first — one entry per session, including one that has not been asked anything yet (count 0)
 
 request:
   body:
@@ -11,8 +11,10 @@ response:
     sessions:
       - sessionId: string  # conversation session id
         kind: main | sub  # the session's role; "sub" when it has no row in sessions
-        createdAt: string  # first message time, RFC3339
-        lastAt: string  # latest message time, RFC3339
+        blueprint: string  # slug of the page it drives, "" when it has none
+        title: string  # display name (the blueprint page's <title>); "" when none was written
+        createdAt: string  # first message time, or the session row's creation time when nothing was said yet, RFC3339
+        lastAt: string  # latest message time, or createdAt when nothing was said yet, RFC3339
         count: number  # number of messages in the session
         preview: string  # first user message content snippet
     pageNum: number  # echoed page number

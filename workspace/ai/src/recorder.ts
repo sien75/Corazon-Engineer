@@ -119,7 +119,7 @@ export async function fetchRecords(
 ): Promise<StoredRecord[]> {
   if (!logBase) return [];
   try {
-    const res = await fetch(`${logBase}/log/session-detail`, {
+    const res = await fetch(`${logBase}/log/session/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body: YAML.stringify({ sessionId }),

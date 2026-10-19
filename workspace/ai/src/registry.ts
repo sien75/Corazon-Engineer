@@ -22,7 +22,7 @@ import {
   projectText,
   type StoredRecord,
 } from "./recorder.ts";
-import { blueprintReadme, legacyAgentDir } from "./blueprint.ts";
+import { blueprintTitle, blueprintReadme, legacyAgentDir } from "./blueprint.ts";
 import { makeWorkspaceTools } from "./workspace.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
@@ -30,14 +30,14 @@ import { dbg } from "./debug.ts";
 // The workspace tools main alone may call. Names are listed here because pi's
 // allowlist is by name, not by tool object.
 const WORKSPACE_TOOLS = [
-  "current-tab-list",
-  "current-tab-mutation",
+  "session-list",
+  "session-open",
+  "session-close",
   "main-list",
   "main-new",
   "main-resume",
-  "tab-new",
-  "tab-delete",
-  "tab-layout-mutation",
+  "session-new",
+  "session-delete",
 ];
 
 // legacyReadme reads a session's old per-agent copy, if the project still has
@@ -247,13 +247,17 @@ export class Registry {
     return this.build(id, [], kind, tail);
   }
 
-  // writeSession records what a conversation is — its role and the blueprint its
-  // page comes from; log owns the row, and it is the only place the mapping lives.
+  // writeSession records what a conversation is — its role, the blueprint its page
+  // comes from, and the name the tab bar shows. The name is the page's <title>
+  // (resolved here, not by the page at runtime), so the shell can draw a tab
+  // before it loads anything; log owns the row, and it is the only place the
+  // mapping lives.
   private async writeSession(id: string, kind: "main" | "sub", blueprint: string): Promise<void> {
+    const title = blueprint ? blueprintTitle(this.opts.root, blueprint) : "main";
     const res = await fetch(`${this.opts.logBase}/log/session/upsert`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
-      body: YAML.stringify({ sessionId: id, kind, blueprint }),
+      body: YAML.stringify({ sessionId: id, kind, blueprint, title }),
     });
     if (!res.ok) {
       throw new Error(`log/session/upsert: HTTP ${res.status}`);
@@ -408,9 +412,7 @@ export class Registry {
           askUserTool,
           ...(kind === "main"
             ? makeWorkspaceTools({
-                root: this.opts.root,
                 logBase: this.opts.logBase,
-                selfId: sess.id,
                 newSession: async (blueprint?: string) =>
                   (await this.new(blueprint, "sub")).id,
                 newMainSession: async () => (await this.new(undefined, "main")).id,
@@ -419,8 +421,6 @@ export class Registry {
                     throw new Error("nothing on record to resume");
                   }
                 },
-                sessionBlueprint: async (id: string) =>
-                  (await this.sessionMeta(id))?.blueprint ?? "",
                 deleteSession: (id: string) => this.deleteSession(id),
               })
             : []),

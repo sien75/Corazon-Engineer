@@ -1,0 +1,3 @@
+id: core-log-session
+description: a database written before tabs stopped existing is migrated on start — open_tabs becomes open_sessions (one session per old tab), the tabs table and sessions.tab_id are dropped, and the sessions themselves survive
+atoms: [log]

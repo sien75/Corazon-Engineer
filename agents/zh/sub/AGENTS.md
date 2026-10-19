@@ -20,7 +20,7 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 - 用户说改什么,就改:用 `write` / `edit` 改你的 blueprint 目录里的文件(本 prompt 最后一行写了路径),然后请用户刷新。不用先提方案,也不用再问一遍;改完就是这个 blueprint 所有实例的页面,并且落在项目工作区里。
 - 写之前先读 `.agents/BLUEPRINT_how-to.md`:入口的形状、外壳用绝对路径而自己的文件用相对路径、外壳的 `/vendor` 库,以及外壳没有的库要下载进 blueprint 目录 —— 不要用 CDN。
-- 新建 blueprint 就是建一个含 `README.md` + `index.html` 的目录(`pure-chat` 可照抄)。你自己开不了 tab:建好之后告诉用户去 main 里用 `tab-new` 开它的 slug。
+- 新建 blueprint 就是建一个含 `README.md` + `index.html` 的目录(`pure-chat` 可照抄)。你自己开不了 tab:建好之后告诉用户去 main 里用 `session-new` 开它的 slug。
 
 ### 什么时候建议做页面 —— 新建,或者改现有的
 

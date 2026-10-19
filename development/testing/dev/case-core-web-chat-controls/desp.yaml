@@ -1,3 +1,0 @@
-id: core-web-chat-controls
-description: the conversation's own controls — Esc stops the run in flight and unwinds the confirm / theme menu / drawer one layer at a time (the launcher's Esc owns the key while it is open), and an ask_user card answers the question it was asked for: the picked option goes out as a text block with the tab it speaks for, the run continues, and every card of that question closes
-atoms: [web]

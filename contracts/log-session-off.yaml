@@ -1,0 +1,19 @@
+id: log-session-off
+description: Close sessions — take them off the open list, keeping their records so they can be opened again
+
+request:
+  body:
+    sessionIds: [string]  # sessions to close; ids that are not open are ignored
+
+response:
+  status: 200
+  body:
+    openSessions: [string]  # the whole open list after the write, in display order
+
+errors:
+  - status: 400
+    code: bad_request
+    description: sessionIds missing
+  - status: 500
+    code: internal
+    description: server internal error

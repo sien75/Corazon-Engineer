@@ -1,6 +1,6 @@
 atoms:
   - name: log
-    description: Corazon Engineer log service — owns the project's sqlite state — records (call / observe / conversation), tabs (each tab's pane tree, name and last activity), sessions (each conversation's kind, main or sub, and the tab it belongs to) and current (which tabs are open, and the main session); exposes log query/detail/search/mutation/stream APIs plus the tab, session and current ones
+    description: Corazon Engineer log service — owns the project's sqlite state — records (call / observe / conversation), sessions (each conversation's kind, main or sub, the blueprint it drives and its display name) and current (which sessions are open — the shell's tab bar — and which one is main); a tab is not stored — it is one open session, so the open list is all the workspace needs; exposes log query/detail/search/mutation/stream/list/delete APIs plus the session and current ones
     path: ./workspace/log
     runtime_type: go
     runtime_version: "1.22"
@@ -15,12 +15,12 @@ atoms:
           extend:
             path: /log/query
             method: POST
-        - id: log-session-detail
+        - id: log-session-messages
           channel: network
           protocol: http
-          contract: ./contracts/log-session-detail.yaml
+          contract: ./contracts/log-session-messages.yaml
           extend:
-            path: /log/session-detail
+            path: /log/session/messages
             method: POST
         - id: log-delete
           channel: network
@@ -64,54 +64,19 @@ atoms:
           extend:
             path: /log/stream
             method: POST
-        - id: log-tab-new
+        - id: log-session-on
           channel: network
           protocol: http
-          contract: ./contracts/log-tab-new.yaml
+          contract: ./contracts/log-session-on.yaml
           extend:
-            path: /log/tab/new
+            path: /log/session/on
             method: POST
-        - id: log-tab-mutation
+        - id: log-session-off
           channel: network
           protocol: http
-          contract: ./contracts/log-tab-mutation.yaml
+          contract: ./contracts/log-session-off.yaml
           extend:
-            path: /log/tab/mutation
-            method: POST
-        - id: log-tab-detail
-          channel: network
-          protocol: http
-          contract: ./contracts/log-tab-detail.yaml
-          extend:
-            path: /log/tab/detail
-            method: POST
-        - id: log-tab-list
-          channel: network
-          protocol: http
-          contract: ./contracts/log-tab-list.yaml
-          extend:
-            path: /log/tab/list
-            method: POST
-        - id: log-tab-on
-          channel: network
-          protocol: http
-          contract: ./contracts/log-tab-on.yaml
-          extend:
-            path: /log/tab/on
-            method: POST
-        - id: log-tab-off
-          channel: network
-          protocol: http
-          contract: ./contracts/log-tab-off.yaml
-          extend:
-            path: /log/tab/off
-            method: POST
-        - id: log-tab-delete
-          channel: network
-          protocol: http
-          contract: ./contracts/log-tab-delete.yaml
-          extend:
-            path: /log/tab/delete
+            path: /log/session/off
             method: POST
         - id: log-session-upsert
           channel: network
