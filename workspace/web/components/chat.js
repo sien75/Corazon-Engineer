@@ -145,17 +145,21 @@ function wire(host, root, id, RT) {
   // 另起一行。芯片的宽度是 120px，靠的正是行容器是横向 flex。
   let rowEl = null;
 
-  function addMessage(cls) {
+  // `fill` 在元素挂进去之后、决定滚不滚之前调用：高度要等内容长齐才量得准。
+  // 先挂空壳再塞内容、塞完不补一次滚动的话，新内容会比视口低一截（第一张
+  // thinking 芯片的头和状态是后加的，所以它老是差一截、滚不到底）。
+  function addMessage(cls, fill) {
     rowEl = null; // 不是芯片：结束当前芯片行
     const el = document.createElement("div");
     el.className = cls;
     const stick = atBottom();
     messagesEl.appendChild(el);
+    if (fill) fill(el);
     if (stick) toBottom();
     return el;
   }
 
-  function addChip(cls) {
+  function addChip(cls, fill) {
     const stick = atBottom();
     if (!rowEl) {
       rowEl = document.createElement("div");
@@ -165,6 +169,7 @@ function wire(host, root, id, RT) {
     const el = document.createElement("div");
     el.className = cls;
     rowEl.appendChild(el);
+    if (fill) fill(el);
     if (stick) toBottom();
     return el;
   }
@@ -330,31 +335,36 @@ function wire(host, root, id, RT) {
   // 行里（aiLayoutPanels），这里也一样：详情进芯片行，`flex: 0 0 100%` 让它
   // 换行占满整行。
   function chip(kind, label, name) {
-    const wrap = addChip(`ai-msg ai-collapse ai-${kind}`);
-    const head = document.createElement("button");
-    head.type = "button";
-    head.className = "ai-collapse-head";
-    const title = document.createElement("span");
-    title.className = "ai-collapse-title";
-    title.textContent = label;
-    const status = document.createElement("span");
-    status.className = "ai-collapse-status ai-loading";
-    head.append(title, status);
-    wrap.appendChild(head);
+    let status, body;
+    const wrap = addChip(`ai-msg ai-collapse ai-${kind}`, (el) => {
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "ai-collapse-head";
+      const title = document.createElement("span");
+      title.className = "ai-collapse-title";
+      title.textContent = label;
+      const st = document.createElement("span");
+      st.className = "ai-collapse-status ai-loading";
+      head.append(title, st);
+      el.appendChild(head);
 
-    const body = document.createElement("div");
-    body.className = "ai-collapse-body";
-    body.hidden = true;
-    const bodyName = document.createElement("div");
-    bodyName.className = "ai-collapse-body-name";
-    bodyName.textContent = name;
-    body.appendChild(bodyName);
+      const bd = document.createElement("div");
+      bd.className = "ai-collapse-body";
+      bd.hidden = true;
+      const bodyName = document.createElement("div");
+      bodyName.className = "ai-collapse-body-name";
+      bodyName.textContent = name;
+      bd.appendChild(bodyName);
 
-    head.addEventListener("click", () => {
-      body.hidden = !body.hidden;
-      wrap.classList.toggle("open", !body.hidden);
-      if (body.hidden) body.remove();
-      else (rowEl || wrap.parentElement).appendChild(body);
+      head.addEventListener("click", () => {
+        bd.hidden = !bd.hidden;
+        el.classList.toggle("open", !bd.hidden);
+        if (bd.hidden) bd.remove();
+        else (rowEl || el.parentElement).appendChild(bd);
+      });
+
+      status = st;
+      body = bd;
     });
     return { wrap, status, body };
   }
@@ -394,41 +404,42 @@ function wire(host, root, id, RT) {
   // 外壳的 aiAskUser：问题是一张卡，有 options 就画按钮，没有就输入框；
   // 回答就是一条普通的 /ai/ask 文本。
   function questionCard(args) {
-    const div = addMessage("ai-msg ai-question");
-    const q = document.createElement("div");
-    q.textContent = args?.text || "";
-    div.appendChild(q);
-    const row = document.createElement("div");
-    row.className = "ai-question-options";
-    const close = () => row.querySelectorAll("button, input").forEach((el) => (el.disabled = true));
-    const options = Array.isArray(args?.options) ? args.options : [];
-    if (options.length) {
-      for (const o of options) {
+    addMessage("ai-msg ai-question", (div) => {
+      const q = document.createElement("div");
+      q.textContent = args?.text || "";
+      div.appendChild(q);
+      const row = document.createElement("div");
+      row.className = "ai-question-options";
+      const close = () => row.querySelectorAll("button, input").forEach((el) => (el.disabled = true));
+      const options = Array.isArray(args?.options) ? args.options : [];
+      if (options.length) {
+        for (const o of options) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = o.label;
+          b.addEventListener("click", () => {
+            close();
+            void ask([{ type: "text", text: o.value }]);
+          });
+          row.appendChild(b);
+        }
+      } else {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = "输入回答…";
         const b = document.createElement("button");
         b.type = "button";
-        b.textContent = o.label;
-        b.addEventListener("click", () => {
-          close();
-          void ask([{ type: "text", text: o.value }]);
-        });
-        row.appendChild(b);
+        b.textContent = "回答";
+        const submit = () => {
+          const v = input.value.trim();
+          if (v) { close(); void ask([{ type: "text", text: v }]); }
+        };
+        b.addEventListener("click", submit);
+        input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+        row.append(input, b);
       }
-    } else {
-      const input = document.createElement("input");
-      input.type = "text";
-      input.placeholder = "输入回答…";
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = "回答";
-      const submit = () => {
-        const v = input.value.trim();
-        if (v) { close(); void ask([{ type: "text", text: v }]); }
-      };
-      b.addEventListener("click", submit);
-      input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
-      row.append(input, b);
-    }
-    div.appendChild(row);
+      div.appendChild(row);
+    });
   }
 
   // 芯片标题：把最长的那一个参数亮出来（app.js: aiToolChip 的简化版）。
@@ -462,7 +473,7 @@ function wire(host, root, id, RT) {
   }
 
   function fail(text) {
-    addMessage("ai-msg ai-assistant").textContent = `[error] ${text}`;
+    addMessage("ai-msg ai-assistant", (el) => { el.textContent = `[error] ${text}`; });
     finish();
   }
 
@@ -493,7 +504,9 @@ function wire(host, root, id, RT) {
         await streamOnce(onEvent);
       } catch (err) {
         if (!running) return;
-        addMessage("ai-msg ai-assistant").textContent = `[stream] ${err.message}，从 #${seq} 续上…`;
+        addMessage("ai-msg ai-assistant", (el) => {
+          el.textContent = `[stream] ${err.message}，从 #${seq} 续上…`;
+        });
         await sleep(500);
         continue;
       }
@@ -563,8 +576,9 @@ function wire(host, root, id, RT) {
           if (!thinking) thinking = thinkingChip();
           thinking.text.textContent += ae.delta || "";
         } else if (ae.type === "error") {
-          addMessage("ai-msg ai-assistant").textContent =
-            `[error] ${ae.error?.errorMessage || ""}`;
+          addMessage("ai-msg ai-assistant", (el) => {
+            el.textContent = `[error] ${ae.error?.errorMessage || ""}`;
+          });
           bubble = null;
         }
         return;
