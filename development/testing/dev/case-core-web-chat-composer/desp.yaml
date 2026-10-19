@@ -1,0 +1,3 @@
+id: core-web-chat-composer
+description: the <engineer-chat> composer sends into a run that is still in flight, stops the run on Esc, and recalls this conversation's prompts with ArrowUp / ArrowDown
+atoms: [web]

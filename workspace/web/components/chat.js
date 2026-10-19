@@ -29,7 +29,7 @@ const TEMPLATE = `
   </div>
   <div class="ai-input">
     <textarea class="ai-input-field" rows="2"
-      placeholder="ask… (Enter send, Shift+Enter newline; paste image)" autocomplete="off"></textarea>
+      placeholder="ask… (Enter send, Shift+Enter newline, Esc stop; paste image)" autocomplete="off"></textarea>
     <button type="button" class="ai-stop" hidden>stop</button>
     <button type="button" class="ai-send">send</button>
   </div>
@@ -55,6 +55,7 @@ function sessionFromUrl() {
 
 class EngineerChat extends HTMLElement {
   #mounted = false;
+  #cleanup = null;
 
   connectedCallback() {
     if (this.#mounted) return;
@@ -77,11 +78,18 @@ class EngineerChat extends HTMLElement {
         "engineer-chat: no ai address (is /config.js reachable?)";
       return;
     }
-    wire(this, root, id, rt);
+    this.#cleanup = wire(this, root, id, rt);
   }
 
   focus() {
     this.shadowRoot?.querySelector(".ai-input-field")?.focus();
+  }
+
+  // A pane the shell closes takes its element out of the document; the window
+  // keydown below would otherwise outlive the conversation it stops.
+  disconnectedCallback() {
+    this.#cleanup?.();
+    this.#cleanup = null;
   }
 }
 
@@ -458,16 +466,23 @@ function wire(host, root, id, RT) {
     try { return JSON.stringify(v, null, 2); } catch { return String(v); }
   }
 
+  // 发送键不跟着 run 走：run 在飞时再发一条是**插话**（服务端把它 steer 进这一轮），
+  // 所以只有 stop 是跟着 run 出现的那个控件。
   function setRunning(on) {
     running = on;
-    sendEl.disabled = on;
     stopEl.hidden = !on;
     stopEl.disabled = false;
   }
 
-  function finish() {
+  // closeBlock 结束当前这段 assistant 文字与 thinking 芯片，好让后面的内容从它下面
+  // 另起一段。工具芯片不动：它们的调用还在跑，tool_execution_end 得找得到它们。
+  function closeBlock() {
     if (bubble) { bubble.flush(); bubble = null; }
     if (thinking) { settle(thinking, "done"); thinking = null; }
+  }
+
+  function finish() {
+    closeBlock();
     tools.clear();
     if (running) setRunning(false);
   }
@@ -480,20 +495,34 @@ function wire(host, root, id, RT) {
   // ---------- 发一轮 ----------
 
   async function ask(blocks) {
-    if (!blocks.length || running) return;
+    if (!blocks.length) return;
+    // 已经在跑：这一条是插话。服务端把它 steer 进正在跑的那一轮，流还是原来那条，
+    // 所以这里不重开 pump、不动 running / tools，只把上面那段收尾。
+    const steer = running;
     userMessage(blocks);
-    bubble = null;
-    thinking = null;
-    tools.clear();
-    setRunning(true);
-    await ready; // 加载时那次“只记水位”的读流先读完
+    historyRecord(blocks);
+    if (steer) {
+      closeBlock();
+    } else {
+      bubble = null;
+      thinking = null;
+      tools.clear();
+      setRunning(true);
+      await ready; // 加载时那次“只记水位”的读流先读完
+    }
     const res = await fetch(AI + "/ai/ask", {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body: yaml.dump({ id, blocks }),
     });
-    if (!res.ok) return fail(await errorOf(res));
-    void pump(); // 不 await：流要一直读到这一轮收工
+    if (!res.ok) {
+      const text = await errorOf(res);
+      // 插话失败不能把还在跑的那一轮收掉：只报错，不 finish。
+      if (steer) addMessage("ai-msg ai-assistant", (el) => { el.textContent = `[error] ${text}`; });
+      else fail(text);
+      return;
+    }
+    if (!steer) void pump(); // 不 await：流要一直读到这一轮收工
   }
 
   // 一轮的读法：开一次流，读到服务端关流；如果这一轮还没收工（连接断了），
@@ -640,6 +669,105 @@ function wire(host, root, id, RT) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  // ---------- 历史：↑ / ↓ 翻这个会话发过的提问 ----------
+  //
+  // 组件就是一个会话（id 在 URL 里），所以列表就是一份，不需要按会话存。两个来源：
+  // 本页面发的（ask 里随手记），和会话记录里的（replayHistory 那趟遍历顺手收，
+  // 本来就要拉 session-detail，不加请求）。带图片的轮次两边都跳过：文本回填不回图片。
+  const HISTORY_MAX = 100;
+  const history = { items: [], cursor: null, draft: "" };
+
+  function historyRecord(blocks) {
+    if (blocks.some((b) => b.type === "image")) return;
+    const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("");
+    if (!text.trim()) return;
+    history.items.push(text);
+    if (history.items.length > HISTORY_MAX) history.items.shift();
+    history.cursor = null;
+    history.draft = "";
+  }
+
+  // 本页面已经攒了列表就不动它：发送先记录后写日志，列表不会比记录旧。
+  function historySeed(prompts) {
+    if (!prompts.length || history.items.length) return;
+    history.items = prompts.slice(-HISTORY_MAX);
+  }
+
+  // 编辑即退出浏览：编辑后的文本留着，不再被下一次 ↓ 覆盖。
+  function historyEnd() {
+    history.cursor = null;
+    history.draft = "";
+  }
+
+  function historyShow(text) {
+    inputEl.value = text;
+    inputEl.setSelectionRange(text.length, text.length);
+    resize();
+  }
+
+  // 浏览开始时输入框里的内容就是草稿，最后一次 ↓ 还回来。
+  function historyUp() {
+    if (!history.items.length) return false;
+    if (history.cursor === null) {
+      history.draft = inputEl.value;
+      history.cursor = history.items.length - 1;
+    } else if (history.cursor > 0) {
+      history.cursor--;
+    }
+    historyShow(history.items[history.cursor]);
+    return true;
+  }
+
+  // 没在浏览就不接管 ↓，让光标照常往下走。
+  function historyDown() {
+    if (history.cursor === null) return false;
+    if (history.cursor < history.items.length - 1) {
+      history.cursor++;
+      historyShow(history.items[history.cursor]);
+      return true;
+    }
+    const draft = history.draft;
+    historyEnd();
+    historyShow(draft);
+    return true;
+  }
+
+  // .ai-input-mirror 是输入框的一份屏外副本，用来量光标落在第几个**渲染行**。
+  // textarea 没有光标盒 API，数 "\n" 又会把一条软换行的长句当成一行 —— 那正是 ↑
+  // 必须移动光标、而不是把草稿吞掉换成历史的情况。
+  const mirrorEl = document.createElement("div");
+  mirrorEl.className = "ai-input-mirror";
+  inputEl.parentElement.appendChild(mirrorEl);
+
+  function caretVisualLine() {
+    const v = inputEl.value;
+    const caret = inputEl.selectionStart ?? v.length;
+    const cs = getComputedStyle(inputEl);
+    const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
+    const st = mirrorEl.style;
+    // 内容宽度和输入框一致：clientWidth 是内容 + padding，镜像自己不带 padding。
+    const width = inputEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    st.width = Math.max(0, width) + "px";
+    st.fontFamily = cs.fontFamily;
+    st.fontSize = cs.fontSize;
+    st.fontWeight = cs.fontWeight;
+    st.fontStyle = cs.fontStyle;
+    st.lineHeight = cs.lineHeight === "normal" ? `${parseFloat(cs.fontSize) * 1.4}px` : cs.lineHeight;
+    st.letterSpacing = cs.letterSpacing;
+    st.wordSpacing = cs.wordSpacing;
+    st.whiteSpace = cs.whiteSpace;
+    st.overflowWrap = cs.overflowWrap;
+    st.wordBreak = cs.wordBreak;
+    st.tabSize = cs.tabSize;
+    const lines = (text) => {
+      mirrorEl.textContent = text;
+      return Math.max(1, Math.ceil(mirrorEl.scrollHeight / lineHeight - 0.01));
+    };
+    const before = lines(v.slice(0, caret));
+    const all = lines(v);
+    return { first: before <= 1, last: all <= before };
+  }
+
   // ---------- 输入：外壳的 aiResizeInput / aiInputKeydown 的简化版 ----------
 
   const MAX_LINES = 10;
@@ -659,7 +787,7 @@ function wire(host, root, id, RT) {
   // 然后清空草稿（与外壳 aiSend 的顺序一致）。
   async function submit() {
     const text = inputEl.value;
-    if ((!text.trim() && !images.length) || running) return;
+    if (!text.trim() && !images.length) return;
     inputEl.value = "";
     resize();
     await Promise.all(tasks);
@@ -670,7 +798,7 @@ function wire(host, root, id, RT) {
   }
 
   sendEl.addEventListener("click", submit);
-  inputEl.addEventListener("input", resize);
+  inputEl.addEventListener("input", () => { resize(); historyEnd(); });
   inputEl.addEventListener("click", snapCaretOutOfToken);
   inputEl.addEventListener("keyup", snapCaretOutOfToken);
 
@@ -711,6 +839,19 @@ function wire(host, root, id, RT) {
   });
 
   inputEl.addEventListener("keydown", (event) => {
+    // ↑ / ↓ 翻这个会话发过的提问。有暂存的图片时不翻：回填纯文本会让 [image]
+    // 标记和图片队列对不上。↑ 只在光标位于第一个渲染行时接管，免得吞掉草稿。
+    if (
+      (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      !event.isComposing &&
+      !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey &&
+      !images.length
+    ) {
+      if (event.key === "ArrowUp" && (inputEl.value === "" || caretVisualLine().first)) {
+        if (historyUp()) { event.preventDefault(); return; }
+      }
+      if (event.key === "ArrowDown" && historyDown()) { event.preventDefault(); return; }
+    }
     if (event.key !== "Enter") return;
     if (event.isComposing || event.keyCode === 229) return; // IME 组词确认,不发送
     if (event.shiftKey) return; // Shift+Enter 换行
@@ -718,7 +859,9 @@ function wire(host, root, id, RT) {
     void submit();
   });
 
-  stopEl.addEventListener("click", async () => {
+  // stop 按钮与 Esc 是同一件事：停掉这一轮。
+  async function stopRun() {
+    if (!running) return;
     stopEl.disabled = true;
     try {
       await fetch(AI + "/ai/stop", {
@@ -731,7 +874,17 @@ function wire(host, root, id, RT) {
     } finally {
       finish();
     }
-  });
+  }
+
+  stopEl.addEventListener("click", () => void stopRun());
+
+  // Esc 停掉这一轮，和 stop 按钮一样。空闲时不接管这个键，留给页面和浏览器。
+  const onEscape = (event) => {
+    if (event.key !== "Escape" || !running) return;
+    event.preventDefault();
+    void stopRun();
+  };
+  window.addEventListener("keydown", onEscape);
 
   // ---------- history (main replays its conversation; a page does not) ----------
 
@@ -750,6 +903,7 @@ function wire(host, root, id, RT) {
       if (!res.ok) return;
       const data = yaml.load(await res.text()) || {};
       const toolBlocks = new Map();
+      const prompts = [];
       for (const m of data.messages || []) {
         const raw = m.raw;
         if (raw?.role === "user") {
@@ -764,6 +918,11 @@ function wire(host, root, id, RT) {
             }
           }
           if (parts.length) userMessage(parts);
+          // 这一轮的提问进历史（带图片的轮次跳过：文本回填不回图片）。
+          if (parts.every((p) => p.type === "text")) {
+            const text = parts.map((p) => p.text).join("");
+            if (text.trim()) prompts.push(text);
+          }
           continue;
         }
         if (raw?.role === "assistant") {
@@ -796,6 +955,7 @@ function wire(host, root, id, RT) {
           bubble.flush();
         }
       }
+      historySeed(prompts);
     } catch {
       // no history to draw (a fresh conversation)
     }
@@ -818,6 +978,8 @@ function wire(host, root, id, RT) {
   if (root.host.hasAttribute("autofocus")) inputEl.focus();
   if (root.host.hasAttribute("history")) void replayHistory();
 
+  // 元素被移除时摘掉 window 上的监听（会话已不在屏幕上）。
+  return () => window.removeEventListener("keydown", onEscape);
 }
 
 customElements.define("engineer-chat", EngineerChat);
