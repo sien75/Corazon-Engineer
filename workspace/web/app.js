@@ -3,11 +3,11 @@ import MarkdownIt from "./vendor/markdown-it.js";
 import DOMPurify from "./vendor/dompurify.js";
 import hljs from "./vendor/highlight.js";
 
-// Runtime addresses are injected by serve-web and served as /config.js. There is
-// no fallback: guessing a port would point the page at whatever happens to be
-// listening there. Without the config the page cannot reach any service, so say
-// so rather than pretending to work.
-const RUNTIME = window.ENGINEER;
+// Runtime addresses are injected by serve-web and served as an ES module.
+// There is no fallback: guessing a port would point the page at whatever happens
+// to be listening there. Without the config the page cannot reach any service,
+// so say so rather than pretending to work.
+import { ENGINEER as RUNTIME } from "/config.js";
 if (!RUNTIME?.ai || !RUNTIME?.log) {
   const message = "engineer web: /config.js did not provide ai / log";
   document.body.innerHTML = `<div class="empty-hint">${message}</div>`;
@@ -489,8 +489,8 @@ async function recentEntries() {
   );
 }
 
-// A row selects on a single click and opens on a double click: the list is long,
-// and a stray click should not open an agent.
+// A row opens on a single click — the list is a list of things to open, not one
+// to browse and then confirm.
 function launcherRow({ name, desc, onOpen }) {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -505,13 +505,7 @@ function launcherRow({ name, desc, onOpen }) {
     d.textContent = desc;
     btn.appendChild(d);
   }
-  btn.addEventListener("click", () => {
-    for (const other of launcherEl.querySelectorAll(".launcher-item.selected")) {
-      if (other !== btn) other.classList.remove("selected");
-    }
-    btn.classList.add("selected");
-  });
-  btn.addEventListener("dblclick", onOpen);
+  btn.addEventListener("click", onOpen);
   return btn;
 }
 

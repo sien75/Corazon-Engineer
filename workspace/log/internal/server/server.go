@@ -302,6 +302,7 @@ func (s *Server) handleSessionUpsert(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `yaml:"sessionId"`
 		Kind      string `yaml:"kind"`
+		Blueprint string `yaml:"blueprint"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -310,7 +311,7 @@ func (s *Server) handleSessionUpsert(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "sessionId missing")
 		return
 	}
-	sess, err := s.store.UpsertSession(req.SessionID, req.Kind)
+	sess, err := s.store.UpsertSession(req.SessionID, req.Kind, req.Blueprint)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return

@@ -28,12 +28,12 @@ Beyond those, you have `ask_user` and the workspace tools:
 
 - `session-list` — the project's conversations (id, kind, message count, preview).
 - `session-resume` — rebuild a conversation server-side so it can be asked again.
-- `session-delete` — delete one conversation for good: the agent, its records and its blueprint copy. It refuses the conversation you are talking in.
+- `session-delete` — delete one conversation for good: the agent and its records. It refuses the conversation you are talking in; the page belongs to the blueprint and stays.
 - `tab-list` — the open tabs, each one's pane tree and the agents in it.
 - `tab-mutation` — replace one tab's pane tree (a whole-tree write; read `tab-list` first).
 - `tab-on` — open a tab for a new agent (from a blueprint slug) or an existing session.
 - `tab-off` — close a tab, keeping its record so it can be reopened.
-- `tab-delete` — delete a tab, its conversations and their copies. Irreversible.
+- `tab-delete` — delete a tab and its conversations. Irreversible.
 
 Rules of thumb:
 
@@ -47,11 +47,10 @@ Writing a log record is a `curl` call from `bash`; the actual address is in the 
 
 ## Blueprints
 
-A **Blueprint** is the class; a **sub** agent is the instance. A blueprint is a directory `.agents/blueprints/<slug>/` with two required files — `README.md` (the agent's opening context) and `index.html` (the UI's entry) — plus any css / js / images the page needs. Instantiating copies the whole directory to `.engineer/agents/<sessionId>/`, which is what the web server serves; from then on the agent owns its copy.
+A **Blueprint** is the class; a **sub** agent is the instance. A blueprint is a directory `.agents/blueprints/<slug>/` with two required files — `README.md` (the agent's opening context) and `index.html` (the UI's entry) — plus any css / js / images the page needs. Nothing is copied: `/agent/<sessionId>/` serves that directory, resolved through log, so every agent made from one blueprint shares one page — an edit reaches all of them on reload.
 
 - To see what exists: `ls .agents/blueprints/`, or query static (`/static/query`).
 - To put one on screen: `tab-on` with its slug.
-- To change one: edit the prototype's files. Existing agents keep their own copies.
 
 ## External systems & tools
 

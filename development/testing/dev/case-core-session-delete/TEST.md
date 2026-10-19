@@ -2,8 +2,8 @@
 
 `session-delete` is main's 8th workspace tool: one call hard-deletes a single
 conversation — the live agent, its records in log (`records` rows + the `sessions`
-row, clearing `current.main_session` when it was main), and its copy of its
-blueprint under `.engineer/agents/<sessionId>/`.
+row, clearing `current.main_session` when it was main). The page is the blueprint's
+and is shared with every other agent made from it, so it stays.
 
 Two edges are the point of the case:
 
@@ -46,7 +46,7 @@ sleep 1
 
 rm -rf "$ROOT" && mkdir -p "$ROOT"
 printf 'project: session-delete\n' > "$ROOT/engineer.yaml"
-# One blueprint to instantiate: the tool deletes real copies, so the case needs one.
+# One blueprint to instantiate: the tool deletes a real session, so the case needs one.
 mkdir -p "$ROOT/.agents/blueprints/demo"
 printf '# Demo\n\na page\n' > "$ROOT/.agents/blueprints/demo/README.md"
 printf '<!doctype html><title>Demo</title>demo\n' > "$ROOT/.agents/blueprints/demo/index.html"
@@ -87,10 +87,12 @@ sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"]
 MAIN=$(curl -s -X POST $AI/ai/new -d 'kind: main' | sid)
 SUB=$(curl -s -X POST $AI/ai/new -d 'blueprint: demo' | sid)
 echo $MAIN $SUB
-ls "$ROOT/.engineer/agents/$SUB"
+curl -s -X POST $LOG/log/session/detail -d "sessionId: $SUB"
+ls "$ROOT/.engineer/agents" 2>/dev/null || echo "no per-agent copies"
 ```
 
-Expected: two non-empty ids; the sub's copy exists (`README.md`, `index.html`).
+Expected: two non-empty ids; the sub's session row carries `blueprint: demo`; and
+`no per-agent copies` — instantiation no longer copies the page.
 
 Sanity: the tool is reachable at all — ask main what it did with the last
 instruction and expect a reply, not a dead stream:
@@ -107,7 +109,7 @@ Expected: `kind: main`.
 ```bash
 ask $MAIN "Call the session-delete tool right now with sessionId=$SUB. Do not use bash or curl, and do not ask me anything — just call the tool and report its exact reply."
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $SUB"
-test -e "$ROOT/.engineer/agents/$SUB" && echo "copy still there" || echo "copy gone"
+test -f "$ROOT/.agents/blueprints/demo/index.html" && echo "blueprint untouched" || echo "blueprint gone"
 curl -s -X POST $LOG/log/list -d 'pageNum: 1' | python3 -c "
 import sys,yaml
 d=yaml.safe_load(sys.stdin) or {}
@@ -115,7 +117,7 @@ ids=[s['sessionId'] for s in d.get('sessions') or []]
 print('deleted' if '$SUB' not in ids else 'still listed', '| ids:', ids)"
 ```
 
-Expected: `404` from session-detail; `copy gone`; `deleted`.
+Expected: `404` from session-detail; `blueprint untouched`; `deleted`.
 
 Do **not** assert with `grep $SUB` over the whole listing: main's own messages
 contain the id, so the id shows up in `preview` and the grep would pass even
@@ -127,7 +129,7 @@ The tool's reply is in main's records:
 curl -s -X POST $LOG/log/session-detail -d "sessionId: $MAIN" | grep -F "Deleted $SUB for good"
 ```
 
-Expected: one match, `Deleted <id> for good: agent, records and blueprint copy.`
+Expected: one match, `Deleted <id> for good: agent and records.`
 
 ## 3. main refuses to delete itself
 

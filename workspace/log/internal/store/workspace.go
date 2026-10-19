@@ -15,6 +15,11 @@ import (
 type Session struct {
 	SessionID string `yaml:"sessionId"`
 	Kind      string `yaml:"kind"`
+	// Blueprint is the slug of the page this conversation drives; "" for main and
+	// for conversations that never had one. The web server resolves
+	// /agent/<sessionId>/ through it — the database is the only place the mapping
+	// lives, so a page is never inferred from the URL.
+	Blueprint string `yaml:"blueprint"`
 	CreatedAt string `yaml:"createdAt"`
 }
 
@@ -45,6 +50,7 @@ func (s *Store) createWorkspaceTables() error {
 		`CREATE TABLE IF NOT EXISTS sessions (
 			session_id TEXT PRIMARY KEY,
 			kind TEXT NOT NULL DEFAULT 'sub',
+			blueprint TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS current (
@@ -57,6 +63,13 @@ func (s *Store) createWorkspaceTables() error {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return err
 		}
+	}
+	// A database that predates the blueprint column gets it in place: pages are
+	// resolved through it, so every project started before this change must not
+	// fall over. "duplicate column name" is the already-migrated case.
+	if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN blueprint TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column name") {
+		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := s.db.Exec(`INSERT OR IGNORE INTO current (id, open_tabs, main_session, updated_at)
@@ -73,7 +86,7 @@ func (s *Store) createWorkspaceTables() error {
 
 // UpsertSession stores a session's kind. An existing row keeps its createdAt; a
 // blank kind means "sub".
-func (s *Store) UpsertSession(sessionID, kind string) (Session, error) {
+func (s *Store) UpsertSession(sessionID, kind, blueprint string) (Session, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return Session{}, sql.ErrNoRows
@@ -81,11 +94,16 @@ func (s *Store) UpsertSession(sessionID, kind string) (Session, error) {
 	if kind != "main" {
 		kind = "sub"
 	}
+	// An empty blueprint on an existing row means "caller did not say", not
+	// "forget it" — a resume/replay must not wipe the page a session drives.
+	blueprint = strings.TrimSpace(blueprint)
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.Exec(`INSERT INTO sessions (session_id, kind, created_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(session_id) DO UPDATE SET kind = excluded.kind`,
-		sessionID, kind, now)
+	_, err := s.db.Exec(`INSERT INTO sessions (session_id, kind, blueprint, created_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			kind = excluded.kind,
+			blueprint = CASE WHEN excluded.blueprint = '' THEN sessions.blueprint ELSE excluded.blueprint END`,
+		sessionID, kind, blueprint, now)
 	if err != nil {
 		return Session{}, err
 	}
@@ -95,8 +113,8 @@ func (s *Store) UpsertSession(sessionID, kind string) (Session, error) {
 // GetSession returns one session; sql.ErrNoRows when it does not exist.
 func (s *Store) GetSession(sessionID string) (Session, error) {
 	var out Session
-	err := s.db.QueryRow(`SELECT session_id, kind, created_at FROM sessions WHERE session_id = ?`,
-		sessionID).Scan(&out.SessionID, &out.Kind, &out.CreatedAt)
+	err := s.db.QueryRow(`SELECT session_id, kind, blueprint, created_at FROM sessions WHERE session_id = ?`,
+		sessionID).Scan(&out.SessionID, &out.Kind, &out.Blueprint, &out.CreatedAt)
 	return out, err
 }
 

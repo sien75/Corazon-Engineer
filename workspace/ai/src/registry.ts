@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import { Type } from "typebox";
@@ -22,7 +22,7 @@ import {
   projectText,
   type StoredRecord,
 } from "./recorder.ts";
-import { instantiateBlueprint, removeAgent } from "./blueprint.ts";
+import { blueprintReadme, legacyAgentDir } from "./blueprint.ts";
 import { makeWorkspaceTools } from "./workspace.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
@@ -40,12 +40,23 @@ const WORKSPACE_TOOLS = [
   "tab-delete",
 ];
 
-// agentReadme reads a sub agent's own copy of its blueprint README — the copy,
-// not the prototype, so a resumed agent is exactly the agent it was.
-function agentReadme(root: string, id: string): string | undefined {
-  const file = path.join(root, ".engineer", "agents", id, "README.md");
+// legacyReadme reads a session's old per-agent copy, if the project still has
+// one. Blueprints are no longer copied, but a session created before that keeps
+// its page and its README.
+function legacyReadme(root: string, id: string): string | undefined {
+  const file = path.join(legacyAgentDir(root, id), "README.md");
   if (!existsSync(file)) return undefined;
   return readFileSync(file, "utf8");
+}
+
+// pageLine is the last thing a sub agent is told: which directory its page lives
+// in. The prompt carries the README; the path is what makes "change the page" an
+// action rather than a wish.
+function pageLine(slug?: string, legacyId?: string): string {
+  if (slug) {
+    return `Your page: \`.agents/blueprints/${slug}/\` — that directory is what /agent/<sessionId>/ serves, for every agent made from this blueprint. Edit its files (index.html and anything beside it) and ask the user to reload; the change lands in the project's working tree.`;
+  }
+  return `Your page: \`.engineer/agents/${legacyId}/\` — this agent's own copy of an older blueprint. Edit its files and ask the user to reload.`;
 }
 
 // A user turn as received on /ai/ask: ordered text/image blocks. Images carry
@@ -223,38 +234,39 @@ export class Registry {
   }
 
   // new opens a conversation. kind="main" is the shell's own chat (no blueprint,
-  // no page copy); kind="sub" is instantiated from a blueprint: the prototype
-  // directory is copied into `.engineer/agents/<sessionId>/`, and the copy's
-  // README is appended to this session's system prompt — last, after the role
-  // spec — so the model knows what its UI is without anything having to be sent
-  // first. The copy is what the web server serves, so editing the prototype
-  // afterwards does not touch an agent that already exists.
+  // no page); kind="sub" is made from a blueprint: the prototype's README and the
+  // path of its directory are appended to this session's system prompt — last,
+  // after the role spec — so the model knows what its UI is and where it lives.
+  // Nothing is copied: the web server serves the prototype itself, so the page
+  // this agent edits is the page every agent of the same blueprint sees.
   async new(blueprint?: string, kind: "main" | "sub" = "sub"): Promise<Sess> {
     const id = `s_${randomBytes(8).toString("hex")}`;
-    const readme = blueprint
-      ? instantiateBlueprint(this.opts.root, blueprint, id)
-      : undefined;
-    await this.writeSessionKind(id, kind);
-    return this.build(id, [], kind, readme);
+    const readme = blueprint ? blueprintReadme(this.opts.root, blueprint) : undefined;
+    const tail = blueprint ? `${readme ?? ""}\n\n${pageLine(blueprint)}` : undefined;
+    await this.writeSession(id, kind, blueprint ?? "");
+    return this.build(id, [], kind, tail);
   }
 
-  // writeSessionKind records what a conversation is; log owns the row.
-  private async writeSessionKind(id: string, kind: "main" | "sub"): Promise<void> {
+  // writeSession records what a conversation is — its role and the blueprint its
+  // page comes from; log owns the row, and it is the only place the mapping lives.
+  private async writeSession(id: string, kind: "main" | "sub", blueprint: string): Promise<void> {
     const res = await fetch(`${this.opts.logBase}/log/session/upsert`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
-      body: YAML.stringify({ sessionId: id, kind }),
+      body: YAML.stringify({ sessionId: id, kind, blueprint }),
     });
     if (!res.ok) {
       throw new Error(`log/session/upsert: HTTP ${res.status}`);
     }
   }
 
-  // sessionKind reads a conversation's kind. undefined means "log has no row":
-  // the id is not one this workspace knows. A row with kind "sub" (or no kind at
-  // all) is a blueprint agent — which, unlike a conversation with no messages,
-  // can still be rebuilt from its own copy.
-  private async sessionKind(id: string): Promise<"main" | "sub" | undefined> {
+  // sessionMeta reads a conversation's role and the blueprint its page comes
+  // from. undefined means "log has no row": the id is not one this workspace
+  // knows. A row with kind "sub" (or no kind at all) is a blueprint agent —
+  // which, unlike a conversation with no messages, can still be rebuilt.
+  private async sessionMeta(
+    id: string,
+  ): Promise<{ kind: "main" | "sub"; blueprint: string } | undefined> {
     try {
       const res = await fetch(`${this.opts.logBase}/log/session/detail`, {
         method: "POST",
@@ -263,17 +275,21 @@ export class Registry {
       });
       if (!res.ok) return undefined;
       const data: any = YAML.parse(await res.text());
-      return data?.kind === "main" ? "main" : "sub";
+      return {
+        kind: data?.kind === "main" ? "main" : "sub",
+        blueprint: String(data?.blueprint ?? ""),
+      };
     } catch {
       return undefined;
     }
   }
 
-  // deleteSession is the hard delete: the live session, its records, and the
-  // agent's copy of its blueprint.
+  // deleteSession is the hard delete: the live session and its records. The page
+  // is the blueprint's, shared with every other agent of it, so it stays.
   async deleteSession(id: string): Promise<void> {
     this.delete(id);
-    removeAgent(this.opts.root, id);
+    // Older agents still have a copy of their own; delete it with the agent.
+    rmSync(legacyAgentDir(this.opts.root, id), { recursive: true, force: true });
     const res = await fetch(`${this.opts.logBase}/log/delete`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
@@ -290,7 +306,7 @@ export class Registry {
   // uses it as its guard (log/delete is silent about unknown ids).
   private async sessionExists(id: string): Promise<boolean> {
     if (this.sessions.has(id)) return true;
-    if (await this.sessionKind(id)) return true;
+    if (await this.sessionMeta(id)) return true;
     const history = await fetchRecords(this.opts.logBase, id);
     return history.length > 0;
   }
@@ -300,19 +316,33 @@ export class Registry {
   async resume(id: string): Promise<Sess | undefined> {
     const existing = this.sessions.get(id);
     if (existing) return existing;
-    const [history, rowKind] = await Promise.all([
+    const [history, meta] = await Promise.all([
       fetchRecords(this.opts.logBase, id),
-      this.sessionKind(id),
+      this.sessionMeta(id),
     ]);
-    // An instantiated agent has a session row (and a copy) before it has a single
-    // message; that is still a session worth resuming — otherwise a page that
-    // has never been asked would 404 for the rest of the process's life.
-    if (!rowKind && !history.length) return undefined;
-    const kind = rowKind ?? "sub";
-    // A sub agent's opening context lives in its own copy, so a resumed agent is
-    // still the agent its blueprint made.
-    const readme = kind === "sub" ? agentReadme(this.opts.root, id) : undefined;
-    return this.build(id, history, kind, readme);
+    // An instantiated agent has a session row before it has a single message;
+    // that is still a session worth resuming — otherwise a page that has never
+    // been asked would 404 for the rest of the process's life.
+    if (!meta && !history.length) return undefined;
+    const kind = meta?.kind ?? "sub";
+    // The page is the blueprint's, so its README is read from the prototype —
+    // current, not frozen. A session with no blueprint (or one older than that
+    // rule) falls back to whatever per-agent copy it still has.
+    let tail: string | undefined;
+    if (kind === "sub") {
+      if (meta?.blueprint) {
+        let readme: string | undefined;
+        try {
+          readme = blueprintReadme(this.opts.root, meta.blueprint);
+        } catch {
+          readme = undefined; // the prototype was deleted: the page is gone too
+        }
+        tail = `${readme ?? ""}\n\n${pageLine(meta.blueprint)}`;
+      } else {
+        tail = `${legacyReadme(this.opts.root, id) ?? ""}\n\n${pageLine(undefined, id)}`;
+      }
+    }
+    return this.build(id, history, kind, tail);
   }
 
   private async build(

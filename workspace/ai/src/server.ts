@@ -1,7 +1,7 @@
 import YAML from "yaml";
 import type { Registry, EngineerEvent, IncomingBlock } from "./registry.ts";
 import { readBlob } from "./blobs.ts";
-import { BlueprintError, removeAgent, slugFrom } from "./blueprint.ts";
+import { BlueprintError, slugFrom } from "./blueprint.ts";
 
 // The ai API speaks YAML on the wire (application/yaml), like static / log.
 // JSON request bodies still parse, since JSON is a subset of YAML.
@@ -91,10 +91,11 @@ export function serve(registry: Registry, addr: string): void {
 
       switch (url.pathname) {
         case "/ai/new": {
-          // An agent is instantiated from a blueprint: the prototype's two files
-          // are copied under this session's id and its README becomes the tail of
-          // the system prompt. A bad slug / a prototype that breaks the two-file
-          // rule is the caller's mistake (400), not a server failure.
+          // An agent is made from a blueprint: the prototype's two files are
+          // checked, its slug is recorded on the session row in log, and its
+          // README plus its path become the tail of the system prompt. A bad
+          // slug / a prototype that breaks the two-file rule is the caller's
+          // mistake (400), not a server failure.
           let blueprint = "";
           if (body.blueprint !== undefined && body.blueprint !== null) {
             try {
@@ -230,8 +231,9 @@ export function serve(registry: Registry, addr: string): void {
           if (!registry.delete(id)) {
             return errRes(404, "not_found", "session not found");
           }
-          // The agent's copy is its own: deleting an agent deletes it too.
-          removeAgent(registry.rootDir, id);
+          // The page belongs to the blueprint and is shared, so deleting an
+          // agent leaves it alone (a legacy per-agent copy is cleaned up by
+          // the registry).
           return yamlRes({ sessionId: id });
         }
 

@@ -3,8 +3,9 @@
 A blueprint is a **directory** `<project>/.agents/blueprints/<slug>/` with **two
 required files**: `README.md` (what the agent instantiated from it is, and what its
 UI is for — this becomes that agent's opening context) and `index.html` (the UI's
-entry). Anything else in the directory belongs to the page and is copied with it
-(see `case-core-agent-instantiate`). There is no
+entry). Anything else in the directory belongs to the page and is served with it —
+the directory *is* the page every agent made from it drives (see
+`case-core-agent-instantiate`). There is no
 discovery and no database — the directory listing is the whole truth, and static
 lists and reads it. The agent creates, updates and deletes blueprints with its own
 file tools; the ai service has no CRUD interface, its only blueprint involvement is
@@ -107,23 +108,23 @@ id: .agents/blueprints/payment-logs/index.html' | head -2
 Expected: `1`, and the html still comes back — writing one file beside the other
 never removes it.
 
-## 5. an instantiated agent keeps its own copy
+## 5. the prototype is the page — an edit is what agents see
 
 ```bash
-mkdir -p "$ROOT/.engineer/agents/s_test"
-cp "$BPS/payment-logs/README.md" "$BPS/payment-logs/index.html" "$ROOT/.engineer/agents/s_test/"
 printf '\n# edited after instantiation\n' >> "$BPS/payment-logs/README.md"
-grep -c 'edited after instantiation' "$ROOT/.engineer/agents/s_test/README.md" || echo "copy unchanged"
+curl -s -X POST $STATIC/static/query-detail -d 'type: blueprint
+id: .agents/blueprints/payment-logs/README.md' | grep -c 'edited after instantiation'
+ls "$ROOT/.engineer/agents" 2>/dev/null || echo "no per-agent copies at all"
 ```
 
-Expected: `copy unchanged` — the copy is the agent's, and editing the prototype
-afterwards never reaches it. (`case-core-agent-instantiate` covers the copy being
-made by the service; here it only has to stay put.)
+Expected: `1`, and `no per-agent copies at all` — writing a blueprint is writing
+the page every agent made from it serves; there is no second copy to keep in
+step. (`case-core-agent-instantiate` covers the serving side.)
 
 ## 6. delete is rm
 
 ```bash
-rm -rf "$BPS/payment-logs" "$ROOT/.engineer/agents/s_test"
+rm -rf "$BPS/payment-logs"
 curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^blueprints:'
 ```
 
@@ -139,7 +140,7 @@ grep -l 'blueprint' contracts/ai-new.yaml >/dev/null && echo "(instantiation is 
 ```
 
 Expected: no CRUD contract files; `ai-new` is the one place the ai service touches
-a blueprint, and it only reads it to copy it.
+a blueprint, and it only reads it and records its slug — the page is never copied.
 
 ## 8. static serves only what is registered
 

@@ -92,7 +92,8 @@ page.on?.("pageerror", (e) => errors.push(String(e)));
 
 const log = (body) => page.evaluate(async (b) => {
   const yaml = (await import("/vendor/js-yaml.js")).default;
-  const res = await fetch(`${window.ENGINEER.log}` + b.path, {
+  const { ENGINEER } = await import("/config.js");
+  const res = await fetch(`${ENGINEER.log}` + b.path, {
     method: "POST", headers: { "Content-Type": "application/yaml" }, body: b.body,
   });
   return yaml.load(await res.text()) || {};
@@ -209,7 +210,7 @@ check("two composers hold two drafts at once",
 // conversation shown twice — each view has its own list and composer, and a run
 // started in either one lands in both. Seed a long history first, so the pane is
 // taller than the window and the scroll question is a real one.
-const ai = await page.evaluate(() => window.ENGINEER.ai);
+const ai = await page.evaluate(async () => (await import("/config.js")).ENGINEER.ai);
 const filler = Array.from({ length: 140 }, (_, i) =>
   `      filler line ${String(i + 1).padStart(3, "0")}\n`).join("");
 const seeded = await page.fetch(`${ai}/ai/ask`, { method: "POST",

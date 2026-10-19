@@ -1,5 +1,5 @@
 id: log-session-kind
-description: Read one conversation's role; a session with no row is not an error to the caller, but this endpoint answers 404
+description: Read one conversation's role and the blueprint it was made from (served at POST /log/session/detail); a session with no row is not an error to the caller, but this endpoint answers 404
 
 request:
   body:
@@ -10,6 +10,7 @@ response:
   body:
     sessionId: string
     kind: main | sub
+    blueprint: string  # slug of the page this session drives, "" when it has none; the web server resolves /agent/<sessionId>/ through this
     createdAt: string
 
 errors:

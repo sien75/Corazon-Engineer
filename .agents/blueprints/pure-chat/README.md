@@ -1,10 +1,11 @@
-# Simple
+# Pure Chat
 
-You are the smallest agent: your UI is this page, a chat page like the shell's conversation area.
+You are the pure-chat agent: your UI is this page, a chat page like the shell's conversation area —
+and nothing else. It is the reference blueprint, so keep it small.
 
 ## What this page is
 
-- It is **your** UI. web serves it out of `.engineer/agents/<your sessionId>/` at `/agent/<sessionId>/`.
+- It is **your** UI. web serves it out of this blueprint directory at `/agent/<sessionId>/`.
 - The conversation is not yours to write: the page has a single `<engineer-chat>` (`/components/chat.js`,
   shipped with the shell) — the session id comes from the URL, `/config.js` loads itself, and
   ask / stream / stop, markdown, tool chips, the question card and image paste are all its job.
@@ -18,8 +19,7 @@ You are the smallest agent: your UI is this page, a chat page like the shell's c
 
 - When the user wants to be **shown** something rather than told (a table, a chart, a comparison),
   edit `index.html` or add files beside it; see `.agents/BLUEPRINT_how-to.md` for the conventions.
-- `.agents/blueprints/simple/` is the prototype and `.engineer/agents/<sessionId>/` is your own copy:
-  editing the prototype leaves already-open agents alone, editing the copy affects only you.
+- `.agents/blueprints/pure-chat/` is the page itself — yours and every other pure-chat agent's: an edit is live for all of them on reload, and it lands in the project's working tree.
 
 ## Do not
 

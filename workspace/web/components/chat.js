@@ -9,7 +9,8 @@
 //
 // `session` is optional: without it the element reads /agent/<sessionId>/ from
 // the page's own URL (which is what a blueprint page wants). The ai address comes
-// from window.ENGINEER, or from /config.js when the page did not load it.
+// from /config.js, which the element imports itself — a page does not have to do
+// anything for the conversation to work.
 //
 // Events (bubbling, for the shell): "engineer-tool" with { name, isError } after
 // every tool call — main's tab-* tools are what make the shell re-read the
@@ -36,11 +37,12 @@ const TEMPLATE = `
 `;
 
 async function runtime() {
-  if (window.ENGINEER?.ai) return window.ENGINEER;
   try {
-    const text = await (await fetch("/config.js", { cache: "no-store" })).text();
-    const m = text.match(/window\.ENGINEER\s*=\s*(\{[\s\S]*\});?/);
-    return m ? JSON.parse(m[1]) : {};
+    // Dynamic so a page that never needs to talk to ai still renders, and so a
+    // missing /config.js turns into the readable message below instead of a
+    // module load failure that leaves a blank element.
+    const { ENGINEER } = await import("/config.js");
+    return ENGINEER || {};
   } catch {
     return {};
   }

@@ -93,7 +93,8 @@ check("log starts with no tab records",
 const records = () => page.evaluate(async () => {
   const yaml = (await import("/vendor/js-yaml.js")).default;
   
-  const res = await fetch(`${window.ENGINEER.log}/log/tab/list`, {
+  const { ENGINEER } = await import("/config.js");
+  const res = await fetch(`${ENGINEER.log}/log/tab/list`, {
     method: "POST", headers: { "Content-Type": "application/yaml" }, body: "pageNum: 1",
   });
   return (yaml.load(await res.text()) || {}).tabs || [];
@@ -191,7 +192,8 @@ await page.click("#ai-send");
 await page.waitForTimeout(2500);
 const sessionCount = await page.evaluate(async () => {
   const yaml = (await import("/vendor/js-yaml.js")).default;
-  const res = await fetch(`${window.ENGINEER.log}/log/list`, {
+  const { ENGINEER } = await import("/config.js");
+  const res = await fetch(`${ENGINEER.log}/log/list`, {
     method: "POST", headers: { "Content-Type": "application/yaml" }, body: "pageNum: 1",
   });
   return ((yaml.load(await res.text()) || {}).sessions || []).length;

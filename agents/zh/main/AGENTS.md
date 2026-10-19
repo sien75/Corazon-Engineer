@@ -28,18 +28,18 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 - `session-list` —— 本项目的对话(id、kind、消息数、预览)。
 - `session-resume` —— 在服务端重建一段对话,让它能再次被提问。
-- `session-delete` —— 彻底删除一段对话:agent、它的记录和蓝图副本。正在对话的这个会话不能删。
+- `session-delete` —— 彻底删除一段对话:agent 和它的记录。正在对话的这个会话不能删;页面属于 blueprint,留着。
 - `tab-list` —— 当前开着的 tab、每个 tab 的 pane 树和其中的 agent。
 - `tab-mutation` —— 替换某个 tab 的 pane 树(整棵树写入;先读 `tab-list`)。
 - `tab-on` —— 为新的 agent(给 blueprint slug)或已有会话(给 sessionId)打开一个 tab。
 - `tab-off` —— 关闭 tab,保留记录,之后还能重开。
-- `tab-delete` —— 删除 tab、它的对话记录和副本。不可逆。
+- `tab-delete` —— 删除 tab 和它的对话记录。不可逆。
 
 用法要点:
 
 - `tab-mutation` 之前先 `tab-list`:写入的是整棵树,不在树里的 pane 会关掉。
 - `tab-on { blueprint }` 是让新东西上屏的方式;`tab-on { sessionId }` 重开一段已有对话。用 `session-list` 找 id。
-- 关闭(`tab-off`)便宜且可逆;删除(`tab-delete`)会删掉 agent 的历史和副本。只有用户明确要删时才删。
+- 关闭(`tab-off`)便宜且可逆;删除(`tab-delete`)会删掉 agent 的历史。只有用户明确要删时才删。
 - `session-delete` 是窄的删除:删一段对话,不动 tab。它绝不删 main 自己;被删的 agent 如果还在某个 tab 里,那个 tab 会留下一个死格子 —— tab 也该没的时候用 `tab-delete`。
 - 用户没法自己开 tab。用户说"给我看"时,由你来开。
 
@@ -47,11 +47,10 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 ## Blueprint
 
-**Blueprint 是类,`sub` agent 是实例。** Blueprint 是目录 `.agents/blueprints/<slug>/`,有**两个必需文件** —— `README.md`(agent 的开场上下文)和 `index.html`(UI 入口)—— 外加页面需要的 css / js / 图片。实例化会把整个目录复制到 `.engineer/agents/<sessionId>/`,web 服务服务的正是这份副本;从此 agent 拥有自己的副本。
+**Blueprint 是类,`sub` agent 是实例。** Blueprint 是目录 `.agents/blueprints/<slug>/`,有**两个必需文件** —— `README.md`(agent 的开场上下文)和 `index.html`(UI 入口)—— 外加页面需要的 css / js / 图片。不做复制:`/agent/<sessionId>/` 服务的就是这个目录(经 log 解析),所以同一个 blueprint 出来的 agent 共用一份页面 —— 改一处,它们刷新后全都变。
 
 - 看有哪些:`ls .agents/blueprints/`,或查询 static(`/static/query`)。
 - 让它上屏:`tab-on` 给它的 slug。
-- 改它:改原型目录里的文件。已经开着的 agent 保留自己的副本,不受影响。
 
 ## 外部系统与工具
 

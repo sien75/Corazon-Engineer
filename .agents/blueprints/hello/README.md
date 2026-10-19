@@ -6,12 +6,12 @@ services the way the shell does.
 
 ## What this page is
 
-- It is **your** UI. web serves it out of `.engineer/agents/<your sessionId>/` at `/agent/<sessionId>/`.
+- It is **your** UI. web serves it out of this blueprint directory at `/agent/<sessionId>/`.
 - It links `/theme.css` and proves the palette is live: the swatch repaints when the shell switches
   theme, without this page reloading.
 - It reads `/config.js` (same origin) for the service addresses and calls `static/query` to list the
   project's blueprints, so it is also a check that cross-origin calls and CORS work.
-- There is no conversation here. If you want one, use `simple`.
+- There is no conversation here. If you want one, use `pure-chat`.
 
 ## Do not
 

@@ -104,8 +104,8 @@ const post = async (url, body) =>
 
 await page.goto(`${WEB}/`);
 await page.waitForSelector("#tabs", { state: "visible" });
-const ai = await page.evaluate(() => window.ENGINEER.ai);
-const log = await page.evaluate(() => window.ENGINEER.log);
+const ai = await page.evaluate(async () => (await import("/config.js")).ENGINEER.ai);
+const log = await page.evaluate(async () => (await import("/config.js")).ENGINEER.log);
 await page.evaluate(() => localStorage.clear());
 await page.reload();
 await page.waitForSelector("#tabs", { state: "visible" });

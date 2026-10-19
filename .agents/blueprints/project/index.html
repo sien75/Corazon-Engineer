@@ -74,13 +74,14 @@
   <main id="main"></main>
   <div id="err" style="display:none"></div>
 
-  <script>
+  <script type="module">
     /* The whole project on one page: schema (atoms / edges / contracts), how-to,
        iterations, log records, resources (skills / blueprints) and service endpoints.
-       Data comes from static and log only; both addresses are read from the same
-       origin's /config.js (window.ENGINEER), never hard-coded. */
+       Data comes from static and log only; both addresses are imported from the
+       same origin's /config.js, never hard-coded. */
+    import { ENGINEER } from "/config.js";
 
-    let STATIC = "", LOG = "";
+    let STATIC = ENGINEER.static, LOG = ENGINEER.log;
     const $ = (id) => document.getElementById(id);
     const err = (e) => {
       const box = $("err");
@@ -264,32 +265,13 @@
         root.append(et.table);
       },
 
-      /* Contracts: click a row to read the file. */
+      /* Contracts: list on the left, file body on the right. */
       async contracts(root) {
         root.append(el("h1", null, "Contracts"),
           el("p", "hint", "contracts/ is the single source of truth for request / response shapes — change the contract before the code."));
         const files = scalarList(await schema(), "contracts");
-        const t = table(["id", "file"]);
-        root.append(t.table);
-        const pane = el("div", "preview");
-        const head = el("div", "head", "Click a row for the source");
-        const pre = el("pre");
-        pane.append(head, pre);
-        root.append(pane);
-        for (const f of files) {
-          const tr = row(t.tbody, [
-            f.replace(/^contracts\//, "").replace(/\.yaml$/, ""),
-            { text: f, cls: "mono" },
-          ], "click");
-          tr.onclick = async () => {
-            for (const x of t.tbody.querySelectorAll("tr.sel")) x.classList.remove("sel");
-            tr.classList.add("sel");
-            head.textContent = f;
-            pre.textContent = "Loading…";
-            try { pre.textContent = await detail(f, "contract", "contract"); }
-            catch (e) { pre.textContent = ""; err(e); }
-          };
-        }
+        masterDetail(root, [{ title: "contracts", files, type: "contract", block: "contract",
+          label: (f) => f.replace(/^contracts\//, "") }], "Pick a contract…");
       },
 
       /* How-to: how the system is built, run and connected to. */
@@ -409,7 +391,7 @@
       /* Endpoints: read-only probes only; ai has none, so it is not bothered. */
       async endpoints(root) {
         root.append(el("h1", null, "Endpoints"),
-          el("p", "hint", "Addresses come from the same origin's /config.js (window.ENGINEER). Probes are read-only, so ai is left alone."));
+          el("p", "hint", "Addresses are imported from the same origin's /config.js (an ES module). Probes are read-only, so ai is left alone."));
         const bar = el("div", "bar");
         const reload = el("button", null, "Probe again");
         const stat = el("span", "hint");
@@ -418,7 +400,7 @@
         const t = table(["service", "address", "status", "probe"]);
         root.append(t.table);
 
-        const E = window.ENGINEER;
+        const E = ENGINEER;
         const YAML = { method: "POST", headers: { "Content-Type": "application/yaml" }, body: "{}" };
         const probe = async (service, addr, label, url, opts) => {
           const pill = el("span", "pill skip", url ? "…" : "not probed");
@@ -478,16 +460,7 @@
       $("nav").append(a);
     }
     window.addEventListener("hashchange", render);
-
-    const cfg = document.createElement("script");
-    cfg.src = "/config.js";
-    cfg.onload = () => {
-      STATIC = window.ENGINEER.static;
-      LOG = window.ENGINEER.log;
-      render();
-    };
-    cfg.onerror = () => err("Loading /config.js failed");
-    document.head.appendChild(cfg);
+    render();
   </script>
 </body>
 </html>

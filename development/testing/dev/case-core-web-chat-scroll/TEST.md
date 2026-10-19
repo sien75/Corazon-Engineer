@@ -90,7 +90,7 @@ const post = async (url, body) =>
 await page.goto(`${WEB}/`);
 await page.waitForSelector("#tabs", { state: "visible" });
 await page.evaluate(() => localStorage.clear());
-const ai = await page.evaluate(() => window.ENGINEER.ai);
+const ai = await page.evaluate(async () => (await import("/config.js")).ENGINEER.ai);
 
 // 1. seed a conversation much taller than the window (the stub echoes the prompt).
 // A conversation belongs to no tab, so this needs no tab id.

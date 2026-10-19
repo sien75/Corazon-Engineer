@@ -4,18 +4,19 @@
 // anything else the page needs: css, js, images, subdirectories. Relative URLs
 // work because the whole directory, and only it, is what gets served.
 //
-// Instantiating one copies the whole directory into
-// `.engineer/agents/<sessionId>/` and returns the README text, which the registry
-// appends to that session's system prompt. From that moment the agent owns its
-// copy: editing or deleting the prototype does not touch it, and what the web
-// server serves is the copy.
+// There is no per-agent copy: the web server serves the prototype directory
+// itself at /agent/<sessionId>/, resolving the session to its slug through log.
+// One page per blueprint, shared by every agent made from it — an edit is
+// visible to all of them on reload, and lands in the project's working tree.
+//
+// Instantiation therefore only checks the two required files and returns the
+// README text, which the registry appends to that session's system prompt.
 
-import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
-import { readdirSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import path from "node:path";
 
 const BLUEPRINT_DIR = path.join(".agents", "blueprints");
-const AGENT_DIR = path.join(".engineer", "agents");
 const README = "README.md";
 const HTML = "index.html";
 
@@ -37,8 +38,8 @@ export function slugFrom(raw: unknown): string {
 
 // readBlueprint reads a prototype's README and checks that both required files
 // are there. Everything else in the directory is the page's own business: the
-// copy is made directory-wide, so an asset the page links with a relative URL
-// travels with it.
+// web server serves the whole directory, so an asset the page links with a
+// relative URL resolves.
 function readBlueprint(root: string, slug: string): { readme: string; dir: string } {
   const dir = path.join(root, BLUEPRINT_DIR, slug);
   let entries: string[];
@@ -56,40 +57,16 @@ function readBlueprint(root: string, slug: string): { readme: string; dir: strin
   return { readme: readFileSync(path.join(dir, README), "utf8"), dir };
 }
 
-// agentDir is where an agent's own copy lives: keyed by session, so the URL the
-// UI is served at carries no slug and two agents of one blueprint never collide.
-export function agentDir(root: string, sessionId: string): string {
-  return path.join(root, AGENT_DIR, sessionId);
+// blueprintReadme is the prototype's opening context, read fresh for each agent
+// made from it. It validates the two required files on the way — a slug that
+// misses one is the caller's mistake, never a page the web server would serve.
+export function blueprintReadme(root: string, slug: string): string {
+  return readBlueprint(root, slug).readme;
 }
 
-// copyTree copies a prototype directory as-is: directories, then regular files.
-// Symbolic links are skipped on purpose — the copy is served as a directory, and
-// a link pointing outside it would serve files the blueprint never contained.
-function copyTree(from: string, to: string): void {
-  mkdirSync(to, { recursive: true });
-  for (const entry of readdirSync(from, { withFileTypes: true })) {
-    const src = path.join(from, entry.name);
-    const dst = path.join(to, entry.name);
-    if (entry.isDirectory()) copyTree(src, dst);
-    else if (entry.isFile()) copyFileSync(src, dst);
-  }
-}
-
-// instantiateBlueprint copies the prototype into the agent's directory and
-// returns the README text. The copy is a snapshot: what the agent later edits is
-// its own, and changing the prototype never reaches it.
-export function instantiateBlueprint(
-  root: string,
-  slug: string,
-  sessionId: string,
-): string {
-  const { readme, dir } = readBlueprint(root, slug);
-  copyTree(dir, agentDir(root, sessionId));
-  return readme;
-}
-
-// removeAgent deletes an agent's copy. Deleting an agent is a hard delete
-// (session, records, copy), so there is nothing to keep here.
-export function removeAgent(root: string, sessionId: string): void {
-  rmSync(agentDir(root, sessionId), { recursive: true, force: true });
+// legacyAgentDir is the per-agent copy older projects still have on disk. Nothing
+// writes it any more; it exists so a session created before blueprints stopped
+// being copied keeps working (its page and its README).
+export function legacyAgentDir(root: string, sessionId: string): string {
+  return path.join(root, ".engineer", "agents", sessionId);
 }

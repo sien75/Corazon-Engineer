@@ -39,7 +39,10 @@
   <p>Everything here is the page talking to the services the same way the shell
   does — same origin for <code>/config.js</code> and <code>/theme.css</code>,
   cross-origin (CORS) for the api. Delete this directory if you don't want it.</p>
-  <script>
+  <script type="module">
+    // /config.js is an ES module; importing it is how a page gets the addresses.
+    import { ENGINEER } from "/config.js";
+
     document.getElementById("path").textContent = location.pathname;
     const showTheme = () => {
       document.getElementById("theme").textContent =
@@ -49,26 +52,21 @@
     new MutationObserver(showTheme)
       .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
-    const s = document.createElement("script");
-    s.src = "/config.js";
-    s.onload = async () => {
-      document.getElementById("ai").textContent = window.ENGINEER.ai;
-      try {
-        // Blueprints are plain files; static serves the listing of them.
-        const r = await fetch(window.ENGINEER.static + "/static/query", {
-          method: "POST",
-          headers: { "Content-Type": "application/yaml" },
-          body: "{}",
-        });
-        const names = [...(await r.text()).matchAll(/\.agents\/blueprints\/([^/]+)\/index\.html/g)]
-          .map((m) => m[1]);
-        document.getElementById("bps").textContent =
-          [...new Set(names)].join(", ") + ` (HTTP ${r.status})`;
-      } catch (e) {
-        document.getElementById("err").textContent = "could not reach static: " + e;
-      }
-    };
-    document.head.appendChild(s);
+    document.getElementById("ai").textContent = ENGINEER.ai;
+    try {
+      // Blueprints are plain files; static serves the listing of them.
+      const r = await fetch(ENGINEER.static + "/static/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/yaml" },
+        body: "{}",
+      });
+      const names = [...(await r.text()).matchAll(/\.agents\/blueprints\/([^/]+)\/index\.html/g)]
+        .map((m) => m[1]);
+      document.getElementById("bps").textContent =
+        [...new Set(names)].join(", ") + ` (HTTP ${r.status})`;
+    } catch (e) {
+      document.getElementById("err").textContent = "could not reach static: " + e;
+    }
   </script>
 </body>
 </html>

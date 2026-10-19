@@ -2,7 +2,7 @@
 
 # ai
 
-Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), writes/reads records via log, connects external systems via bash; it owns two roles of custom tools — every session gets ask_user (ask and end the turn); main, the one conversation the shell itself hosts, additionally gets the workspace tools (session-list, session-resume, tab-list, tab-mutation, tab-on, tab-off, tab-delete) that read and write sessions, tabs and current through log, so main opens, closes, splits and deletes the tabs the shell shows; a sub agent, instantiated from a blueprint, has no workspace tools; ai-new takes a blueprint slug and copies the whole prototype directory (.agents/blueprints/<slug>/, README.md + index.html required, any css / js / images alongside them) into .engineer/agents/<sessionId>/, records the session's kind in log, and appends that README last in a sub agent's system prompt, so an agent carries its own copy of its UI and knows what it is from the first turn; the role's spec is agents/main or agents/sub; skill discovery is gone — skills are plain files that agents read, nothing more
+Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), writes/reads records via log, connects external systems via bash; it owns two roles of custom tools — every session gets ask_user (ask and end the turn); main, the one conversation the shell itself hosts, additionally gets the workspace tools (session-list, session-resume, tab-list, tab-mutation, tab-on, tab-off, tab-delete) that read and write sessions, tabs and current through log, so main opens, closes, splits and deletes the tabs the shell shows; a sub agent, instantiated from a blueprint, has no workspace tools; ai-new takes a blueprint slug, checks its two required files (README.md + index.html, any css / js / images alongside them), records the session's kind and blueprint in log, and appends that README plus the path of the blueprint directory last in a sub agent's system prompt, so the agent knows what its UI is and where it lives from the first turn; nothing is copied — the web server serves the prototype directory itself, so one page is shared by every agent made from it, and an edit reaches all of them on reload; the role's spec is agents/main or agents/sub; skill discovery is gone — skills are plain files that agents read, nothing more
 
 - runtime: bun 1.3
 
@@ -15,7 +15,7 @@ Instantiate an agent from a blueprint; where it is shown is the tab's business
 ### Request body
 
 ```yaml
-blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required for kind=sub, absent for kind=main. The whole directory is copied to .engineer/agents/<sessionId>/: README.md and index.html are required, and any other file (css / js / images / subdirectories) travels with it and is served from the copy by relative URL. The copy's README is appended to this session's system prompt
+blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required for kind=sub, absent for kind=main. README.md and index.html are required; every other file (css / js / images / subdirectories) is served from the same directory by relative URL. The directory is not copied — /agent/<sessionId>/ serves it directly — and its README plus its path are appended to this session's system prompt; the slug is recorded on the session row in log
 kind?: main | sub  # the role: "main" is the shell's own conversation (no blueprint, workspace tools), "sub" is a blueprint agent (default)
 ```
 
@@ -261,8 +261,8 @@ Two roles, two tool surfaces. Every session gets the pi built-ins (`read` / `gre
 
 - **`session-list`** — the project's conversations (id, kind, message count, preview).
 - **`session-resume`** — rebuild a conversation server-side so it can be asked again.
-- **`session-delete`** — delete one conversation for good: the agent, its records and its
-  blueprint copy. It refuses the conversation it runs in (main cannot delete itself), and it
+- **`session-delete`** — delete one conversation for good: the agent and its records. The page
+  belongs to its blueprint and stays. It refuses the conversation it runs in (main cannot delete itself), and it
   does not touch tabs — a tab still showing that agent keeps a dead pane, so a tab that should
   go too is `tab-delete`'s job. An unknown id is an error, not a silent success (`/log/delete`
   answers 200 with `deleted: 0` for ids that never existed).
@@ -270,6 +270,6 @@ Two roles, two tool surfaces. Every session gets the pi built-ins (`read` / `gre
 - **`tab-mutation`** — replace one tab's pane tree. The tree is `{ pane: { paneId, contentId, flex? } }`, `{ pane: { blueprint: "<slug>" } }` to instantiate a new agent into a pane, or `{ split: { flexDirection: "row" | "column", flex?, children: [ … ] } }`; at most 6 panes. A write replaces the whole tree, so the model is told to read `tab-list` first and pass back the paneIds it means to keep.
 - **`tab-on`** — open a tab for a new agent (`blueprint`) or an existing conversation (`sessionId`).
 - **`tab-off`** — close a tab, keeping its record so it can be reopened.
-- **`tab-delete`** — delete a tab, its conversations' records and their copies.
+- **`tab-delete`** — delete a tab and its conversations' records (pages belong to their blueprints and stay).
 
 There is no `layout` tool any more: layout is a tab's business, and main is the only one that changes it. A **sub** agent — instantiated from a blueprint — has `ask_user` and the built-ins, nothing else: its page is a view, not a workspace.

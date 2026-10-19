@@ -25,7 +25,8 @@ export interface WorkspaceDeps {
   newSession: (blueprint?: string) => Promise<string>;
   // Rebuild a session server-side so it can be asked again.
   resumeSession: (id: string) => Promise<{ id: string; kind: string } | undefined>;
-  // Hard delete: dispose the live session, delete its records, delete its copy.
+  // Hard delete: dispose the live session and delete its records. The page is the
+  // blueprint's, shared with every other agent of it, so it stays.
   deleteSession: (id: string) => Promise<void>;
   // Whether a session id is real (live, or has recorded history).
   hasSession: (id: string) => Promise<boolean>;
@@ -328,8 +329,9 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
     name: "tab-delete",
     label: "Delete a tab",
     description:
-      "Delete a tab and every agent it showed: the tab record, each conversation's " +
-      "records, and each agent's copy of its blueprint. This cannot be undone.",
+      "Delete a tab and every agent it showed: the tab record and each " +
+      "conversation's records. This cannot be undone. The pages stay (they belong to " +
+      "their blueprints).",
     promptSnippet: "tab-delete: delete a tab and its agents",
     parameters: Type.Object({ tabId: Type.String({ description: "the tab to delete" }) }),
     execute: async (_id, params) => {
@@ -362,8 +364,8 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
     name: "session-delete",
     label: "Delete a conversation",
     description:
-      "Delete one conversation for good: the live agent, its records in log, and " +
-      "its copy of its blueprint. This cannot be undone. It refuses only one id — " +
+      "Delete one conversation for good: the live agent and its records in log. " +
+      "The page belongs to its blueprint and stays. This cannot be undone. It refuses only one id — " +
       "the conversation you are talking in (main). It does not touch tabs: a tab " +
       "still showing the deleted agent keeps a dead pane and its page is gone, so " +
       "when the tab should go too, use tab-delete instead. To make an agent leave " +
@@ -391,7 +393,7 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       } catch (err) {
         return fail(`Could not delete ${id}: ${err instanceof Error ? err.message : String(err)}`);
       }
-      return ok(`Deleted ${id} for good: agent, records and blueprint copy.`, {
+      return ok(`Deleted ${id} for good: agent and records.`, {
         sessionId: id,
       });
     },

@@ -63,9 +63,9 @@ curl -s -o /dev/null -w '%{http_code}\n' "$WEB/"
 curl -s "$WEB/config.js"
 ```
 
-Expected: `200`, and a `window.ENGINEER = {...}` body whose three URLs point at
-`localhost:<port>` — the ports the launcher printed for static / ai / log
-(not necessarily 8502 / 8501 / 8503).
+Expected: `200`, and an ES module body (`export const ENGINEER = {...}`) whose three
+URLs point at `localhost:<port>` — the ports the launcher printed for static / ai /
+log (not necessarily 8502 / 8501 / 8503).
 
 ## 2. ENGINEER_BIND=0.0.0.0 opens it to the whole network  (opt-in, ⚠️ triggers the alarm)
 

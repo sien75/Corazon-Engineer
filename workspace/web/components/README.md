@@ -17,7 +17,8 @@ the shell's main and every blueprint page mount the same element.
 - `autofocus` — focus the composer on load.
 - `history` — replay the conversation from log before the first turn (main uses
   it; a page starts empty).
-- Without `window.ENGINEER` it loads `/config.js` itself.
+- It imports `/config.js` itself (an ES module exporting `ENGINEER`), so a page
+  only needs the element on the page.
 - Shadow DOM + `chat.css` (beside this file); the theme's `--*` variables inherit
   from the page, so it follows the shell's palette.
 - Event: `engineer-tool` (bubbling) with `{ name, isError }` after every tool call

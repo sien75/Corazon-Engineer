@@ -5,12 +5,14 @@ request:
   body:
     sessionId: string  # conversation session id
     kind?: main | sub  # the role; omitted or unknown reads as "sub"
+    blueprint?: string  # slug of the page this session drives; "" for main. An existing row keeps its value when this is empty
 
 response:
   status: 200
   body:
     sessionId: string
     kind: main | sub
+    blueprint: string  # blueprint slug, "" when this session has no page
     createdAt: string  # first write time, RFC3339
 
 errors:

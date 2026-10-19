@@ -131,6 +131,7 @@ func launch() {
 			args: []string{"serve-web",
 				"--bind", bind, "--port", strconv.Itoa(ports["web"]),
 				"--assets", filepath.Join(pkg, "web"),
+				"--blueprints", filepath.Join(root, ".agents", "blueprints"),
 				"--agents", filepath.Join(root, ".engineer", "agents"),
 				"--static", svcURL("static"), "--ai", svcURL("ai"), "--log", svcURL("log")}},
 	}
