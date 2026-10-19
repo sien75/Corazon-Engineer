@@ -103,3 +103,11 @@ edges:
     channel: network
     protocol: http
     description: tab-list (main's tool) reads which tabs are open and the main session
+  - id: ai-to-log-current-put
+    from: ai
+    from_interface: log-current-put
+    to: log
+    to_interface: log-current-put
+    channel: network
+    protocol: http
+    description: main-new (main's tool) moves log's main-session pointer to a fresh conversation, writing the open list back untouched

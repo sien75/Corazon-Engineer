@@ -1,0 +1,3 @@
+id: core-ai-main-new
+description: main-new replaces main with a fresh conversation — log's pointer moves, the old one keeps its records, a sub cannot call it, and the shell really switches to the new session when the tool frame lands
+atoms: [ai, log, web, static]

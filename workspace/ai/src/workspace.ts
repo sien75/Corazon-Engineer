@@ -39,6 +39,14 @@ export interface WorkspaceDeps {
   // Open a new conversation from a blueprint slug (the session row is written by
   // the registry, and so is its blueprint); returns its id.
   newSession: (blueprint: string) => Promise<string>;
+  // Open a new main conversation (kind "main": the same role and tools as the
+  // one these tools run inside); returns its id. The pointer is moved by the
+  // tool itself — the registry only makes the session.
+  newMainSession: () => Promise<string>;
+  // Make an existing conversation live again (or prove it can be): a session
+  // still in memory is a no-op, one with records is rebuilt from them. Throws
+  // when the id has nothing to resume.
+  resumeSession: (id: string) => Promise<void>;
   // The blueprint a conversation was made from; "" when it has none.
   sessionBlueprint: (id: string) => Promise<string>;
   // Hard delete: dispose the live session and delete its records. The page is the
@@ -234,6 +242,200 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       return ok(
         openTabs.length ? `open tabs: ${openTabs.join(", ")}` : "no tabs open",
         { openTabs },
+      );
+    },
+  });
+
+  const mainNew = defineTool({
+    name: "main-new",
+    label: "New main conversation",
+    description:
+      "Replace main with a fresh conversation: a new session is made with this one's " +
+      "role and tools, log's workspace pointer moves to it, and the shell switches to " +
+      "it. This conversation is not deleted — its records stay in log, and main-resume " +
+      "brings it back — but nothing shows it once the call returns, so anything you " +
+      "still want the user to read has to come before it.",
+    promptSnippet: "main-new: replace main with a fresh conversation",
+    parameters: Type.Object({}),
+    execute: async () => {
+      let current;
+      try {
+        current = await logCall(deps.logBase, "/log/current/get", {});
+      } catch (err) {
+        return fail(
+          `Could not read the workspace: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      const previous = String(current.mainSession ?? "");
+      let sessionId = "";
+      try {
+        sessionId = await deps.newMainSession();
+      } catch (err) {
+        return fail(
+          `Could not start a new main conversation: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      try {
+        await logCall(deps.logBase, "/log/current/put", {
+          // The open list is main's business only when a tab changes: write it
+          // back untouched, or this call would close every tab.
+          openTabs: current.openTabs ?? [],
+          mainSession: sessionId,
+        });
+      } catch (err) {
+        // A main nothing points at is a stray: drop it.
+        try {
+          await deps.deleteSession(sessionId);
+        } catch {
+          // the original error is what matters
+        }
+        return fail(
+          `Could not switch main to the new conversation: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      return ok(
+        `main is now ${sessionId}` +
+          (previous
+            ? `; ${previous} keeps its records — main-resume ${previous} brings it back.`
+            : "."),
+        { sessionId, previous },
+      );
+    },
+  });
+
+  const mainList = defineTool({
+    name: "main-list",
+    label: "List main conversations",
+    description:
+      "Main's own conversations, most recently active first: the id to give main-resume, " +
+      "when it was last active, how many messages it holds and the first thing the user " +
+      "said. The one on screen is marked `*`. Blueprint agents are not here — a tab is " +
+      "how they get on screen.",
+    promptSnippet: "main-list: main's earlier conversations, with their ids",
+    parameters: Type.Object({
+      pageNum: Type.Optional(
+        Type.Number({ description: "page number, 1-based; 100 conversations per page" }),
+      ),
+    }),
+    execute: async (_id, params) => {
+      let list;
+      try {
+        list = await logCall(deps.logBase, "/log/list", {
+          pageNum: Number(params.pageNum) || 1,
+        });
+      } catch (err) {
+        return fail(
+          `Could not read the conversations: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      let current = "";
+      try {
+        current = String(
+          (await logCall(deps.logBase, "/log/current/get", {})).mainSession ?? "",
+        );
+      } catch {
+        // a missing pointer does not make the list useless
+      }
+      const rows = (list.sessions ?? [])
+        .filter((s: any) => s.kind === "main")
+        .map((s: any) => ({
+          sessionId: String(s.sessionId ?? ""),
+          createdAt: String(s.createdAt ?? ""),
+          lastAt: String(s.lastAt ?? ""),
+          count: Number(s.count ?? 0),
+          preview: String(s.preview ?? ""),
+          current: String(s.sessionId ?? "") === current,
+        }));
+      const lines = rows.map(
+        (r: { current: boolean; sessionId: string; lastAt: string; count: number; preview: string }) =>
+          `${r.current ? "*" : " "} ${r.sessionId}  ${r.lastAt}  ${r.count} msg(s)  ` +
+          `${oneLine(r.preview, 60) || "(no messages)"}`,
+      );
+      const body = [
+        `current: ${current || "(none)"}`,
+        rows.length ? lines.join("\n") : "no main conversation has messages yet",
+        list.hasMore ? "(more on the next page — pass pageNum)" : "",
+      ].filter(Boolean);
+      return ok(body.join("\n"), { current, mains: rows });
+    },
+  });
+
+  const mainResume = defineTool({
+    name: "main-resume",
+    label: "Resume a main conversation",
+    description:
+      "Put an earlier main conversation back on screen: log's pointer moves to it, the " +
+      "shell switches to it and its history comes back with it — the conversation you are " +
+      "in now goes back to being a record. Take the id from main-list. A conversation " +
+      "already on screen is a no-op; a blueprint agent's id is refused, because a tab is " +
+      "how those get on screen.",
+    promptSnippet: "main-resume: bring an earlier main conversation back on screen",
+    parameters: Type.Object({
+      sessionId: Type.String({
+        description: "the main conversation to bring back — main-list lists the ids",
+      }),
+    }),
+    execute: async (_id, params) => {
+      const sessionId = String(params.sessionId ?? "").trim();
+      if (!sessionId) return fail("main-resume needs sessionId — main-list has the ids.");
+      let meta;
+      try {
+        meta = await logCall(deps.logBase, "/log/session/detail", { sessionId });
+      } catch {
+        return fail(
+          `No conversation ${sessionId}. main-list has the ones that can be resumed.`,
+        );
+      }
+      if (String(meta?.kind ?? "sub") !== "main") {
+        const slug = String(meta?.blueprint ?? "");
+        return fail(
+          `${sessionId} is a blueprint agent${slug ? ` (${slug})` : ""}, not a main ` +
+            "conversation — a tab is how it gets on screen (tab-new / current-tab-mutation).",
+        );
+      }
+      let current;
+      try {
+        current = await logCall(deps.logBase, "/log/current/get", {});
+      } catch (err) {
+        return fail(
+          `Could not read the workspace: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      const previous = String(current.mainSession ?? "");
+      if (previous === sessionId) {
+        return ok(`main is already ${sessionId}.`, { sessionId, previous });
+      }
+      // Prove there is something to come back to before pointing the screen at
+      // it: a live session is a no-op, records alone are enough to rebuild it.
+      try {
+        await deps.resumeSession(sessionId);
+      } catch (err) {
+        return fail(
+          `Could not resume ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      try {
+        await logCall(deps.logBase, "/log/current/put", {
+          openTabs: current.openTabs ?? [],
+          mainSession: sessionId,
+        });
+      } catch (err) {
+        return fail(
+          `Could not switch main to ${sessionId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      return ok(
+        `main is now ${sessionId}` +
+          (previous
+            ? `; ${previous} keeps its records and main-resume brings it back.`
+            : "."),
+        { sessionId, previous },
       );
     },
   });
@@ -482,5 +684,14 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
     },
   });
 
-  return [currentTabList, currentTabMutation, tabNew, tabDelete, tabLayoutMutation];
+  return [
+    currentTabList,
+    currentTabMutation,
+    mainList,
+    mainNew,
+    mainResume,
+    tabNew,
+    tabDelete,
+    tabLayoutMutation,
+  ];
 }

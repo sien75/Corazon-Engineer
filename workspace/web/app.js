@@ -192,7 +192,9 @@ function makeMainTab(sessionId) {
   // main's tools change the workspace; the element only reports them.
   chat.addEventListener("engineer-tool", (event) => {
     const d = event.detail || {};
-    if (!d.isError && /^(tab-|session-)/.test(String(d.name ?? ""))) {
+    // main-new replaces this very conversation: the refresh below is what makes
+    // the shell follow log's pointer to the new session.
+    if (!d.isError && /^(tab-|session-|main-)/.test(String(d.name ?? ""))) {
       void refreshWorkspace();
     }
   });

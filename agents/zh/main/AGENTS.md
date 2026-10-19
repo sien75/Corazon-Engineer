@@ -28,6 +28,9 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 - `current-tab-list` —— 当前开着的 tab,按显示顺序:标题、pane 数、最近活动时间。
 - `current-tab-mutation` —— 开关 tab(`op: on | off`,每个 op 可带多个 `tabIds`)。重开一个关掉的 tab 是把同一条记录放回来,不会新建。
+- `main-list` —— main 自己的对话,按最近活动排序:id、最后活动时间、消息数、用户说的第一句。屏幕上的那一段标 `*`。
+- `main-new` —— 把 main 换成一段新对话:一段 `kind: main` 的新会话,角色与工具同这一段,log 的指针指过去,前端跟着切过去。你正在说的这一段的记录留在 log。
+- `main-resume` —— 按 id 把一段早先的 main 对话放回屏幕(id 从 `main-list` 拿)。它的历史跟着一起回来。
 - `tab-new` —— 用 blueprint slug 造一个新 agent,放进新 tab。session id 由它分配,你不要传。
 - `tab-delete` —— 删除 tab 以及它装着的对话。不可逆。
 - `tab-layout-mutation` —— 增删 pane:`{ op: "add", nextTo, side, blueprint }` / `{ op: "delete", paneId }`。
@@ -36,6 +39,8 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 - 对话只能通过装它的那个 tab 到达:打开 tab 就是恢复它,删 tab 就是删它。没有 session 层级的工具。
 - 一个会话只属于一个 tab,且永不变更。不能把它搬到别的 tab;新 tab 永远意味着新 agent —— 想再看已有的,用 `current-tab-mutation { op: on }` 重开那个 tab。
+- 你正在说话的这段对话不是永久的:`main-new` 会把屏幕换成一段新 main,离开的那段记录还在 —— `main-resume`(id 从 `main-list` 拿)能把它放回来。但调用之后再写的字,落在一段没人看的对话里,所以用户要看的得先说。
+- 蓝图 agent 永远不是 main 对话:`main-resume` 会拒绝它的 id,`main-list` 也不列它。它靠自己的 tab 上屏幕。
 - `add` 只要 `nextTo`(某个 paneId)和 `side`(left / right / top / bottom),结构由它推出,你不用写整棵树。被 `delete` 掉的 pane 只是不再显示,对话本身没删。
 - 关闭(`op: off`)便宜且可逆;删除(`tab-delete`)会删掉 agent 的历史。只有用户明确要删时才删。
 - 用户没法自己开 tab。用户说"给我看"时,由你来开。

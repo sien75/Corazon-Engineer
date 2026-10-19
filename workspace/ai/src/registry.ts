@@ -32,6 +32,9 @@ import { dbg } from "./debug.ts";
 const WORKSPACE_TOOLS = [
   "current-tab-list",
   "current-tab-mutation",
+  "main-list",
+  "main-new",
+  "main-resume",
   "tab-new",
   "tab-delete",
   "tab-layout-mutation",
@@ -410,6 +413,12 @@ export class Registry {
                 selfId: sess.id,
                 newSession: async (blueprint?: string) =>
                   (await this.new(blueprint, "sub")).id,
+                newMainSession: async () => (await this.new(undefined, "main")).id,
+                resumeSession: async (id: string) => {
+                  if (!(await this.resume(id))) {
+                    throw new Error("nothing on record to resume");
+                  }
+                },
                 sessionBlueprint: async (id: string) =>
                   (await this.sessionMeta(id))?.blueprint ?? "",
                 deleteSession: (id: string) => this.deleteSession(id),

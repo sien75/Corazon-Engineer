@@ -2,7 +2,7 @@
 
 # ai
 
-Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), writes/reads records via log, connects external systems via bash; it owns two roles of custom tools — every session gets ask_user (ask and end the turn); main, the one conversation the shell itself hosts, additionally gets the workspace tools (current-tab-list, current-tab-mutation, tab-new, tab-delete, tab-layout-mutation) that read and write tabs and current through log, so main opens, closes, splits and deletes the tabs the shell shows; a sub agent, instantiated from a blueprint, has no workspace tools; ai-new takes a blueprint slug, checks its two required files (README.md + index.html, any css / js / images alongside them), records the session's kind and blueprint in log, and appends that README plus the path of the blueprint directory last in a sub agent's system prompt, so the agent knows what its UI is and where it lives from the first turn; nothing is copied — the web server serves the prototype directory itself, so one page is shared by every agent made from it, and an edit reaches all of them on reload; the role's spec is agents/main or agents/sub; skill discovery is gone — skills are plain files that agents read, nothing more
+Corazon Engineer ai service — pi-SDK-driven conversation / orchestration (any pi-supported LLM provider; keys from pi's own config (env, ~/.pi/agent/auth.json, or --api-key)); exposes ai session APIs to the frontend, reads/writes schema and project files directly via the built-in shell (bash), writes/reads records via log, connects external systems via bash; it owns two roles of custom tools — every session gets ask_user (ask and end the turn); main, the one conversation the shell itself hosts, additionally gets the workspace tools (current-tab-list, current-tab-mutation, main-list, main-new, main-resume, tab-new, tab-delete, tab-layout-mutation) that read and write tabs and current through log, so main opens, closes, splits and deletes the tabs the shell shows; main-new starts a fresh main conversation and moves log's main-session pointer to it, so the shell switches to an empty chat while the previous conversation keeps its records; main-list lists those earlier main conversations and main-resume points the shell back at one, history and all; a sub agent, instantiated from a blueprint, has no workspace tools; ai-new takes a blueprint slug, checks its two required files (README.md + index.html, any css / js / images alongside them), records the session's kind and blueprint in log, and appends that README plus the path of the blueprint directory last in a sub agent's system prompt, so the agent knows what its UI is and where it lives from the first turn; nothing is copied — the web server serves the prototype directory itself, so one page is shared by every agent made from it, and an edit reaches all of them on reload; the role's spec is agents/main or agents/sub; skill discovery is gone — skills are plain files that agents read, nothing more
 
 - runtime: bun 1.3
 
@@ -266,6 +266,17 @@ the tab resumes it and deleting the tab deletes it.
 - **`current-tab-mutation`** — open and close tabs: `ops: [{ op: "on" | "off", tabIds, index? }]`,
   applied in order. Opening a tab puts the same record back (it never creates one); both ops are
   idempotent.
+- **`main-list`** — main's own conversations, most recently active first: id, last activity,
+  message count and the first user message. The one on screen is marked `*`; blueprint agents are
+  not listed (a tab is how they get on screen). This is where `main-resume`'s ids come from.
+- **`main-new`** — replace main with a fresh conversation: a new `kind: main` session is made with
+  the same role and tools, log's `current.main_session` moves to it, and the shell follows the tool
+  frame to it. The conversation that called the tool is not deleted — its records stay in log, and
+  `main-resume` brings it back — but nothing shows it once the call returns.
+- **`main-resume`** — put an earlier main conversation back on screen by id: the session is resumed
+  (a live one is a no-op, one with records is rebuilt from them), `current.main_session` moves to
+  it, and the shell follows the tool frame. Resuming what is already on screen is a no-op; a
+  blueprint agent's id is refused.
 - **`tab-new`** — a new agent from a required `blueprint` slug, in a new tab holding one pane. The
   session id is assigned here — the model cannot pass one, and a conversation cannot be moved into
   a tab, because it belongs to the tab that made it.

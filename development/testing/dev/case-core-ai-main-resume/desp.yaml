@@ -1,0 +1,3 @@
+id: core-ai-main-resume
+description: main-list lists main's own conversations and main-resume puts an earlier one back on screen — the pointer moves, the session is rebuilt from its records when the ai process has forgotten it, blueprint agents and unknown ids are refused, and the shell switches back with the history on screen
+atoms: [ai, log, web, static]
