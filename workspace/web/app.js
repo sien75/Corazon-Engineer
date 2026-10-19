@@ -439,8 +439,29 @@ function installTitleWatchers() {
 const tabAddEl = document.getElementById("tab-add");
 const launcherEl = document.getElementById("launcher");
 
+// Opening a row takes several round trips (make the agent, write the tab, resume
+// the session, load its page), and until the last one the workspace under the
+// launcher still shows the tab that was active — main. So the launcher is not the
+// thing that reveals what a row opened: `launcherHold` keeps it up (and takes no
+// clicks, so one click cannot start two agents) until the new page has painted,
+// and only then is it closed. Releasing the hold is what lets it close at all.
+let launcherHold = false;
+
 function launcherClose() {
+  if (launcherHold) return;
   launcherEl.hidden = true;
+}
+
+function launcherHoldOn() {
+  launcherHold = true;
+  launcherEl.classList.add("busy");
+}
+
+// launcherRelease ends a hold and leaves the launcher on screen: a failed open
+// should show the list again, not an empty workspace.
+function launcherRelease() {
+  launcherHold = false;
+  launcherEl.classList.remove("busy");
 }
 
 async function staticCall(path, body = {}) {
@@ -529,6 +550,7 @@ function launcherRow({ name, desc, onOpen }) {
 }
 
 async function openLauncher() {
+  if (launcherHold) return;
   launcherEl.hidden = false;
   launcherEl.innerHTML = `<div class="launcher-empty">…</div>`;
   const [blueprints, recents] = await Promise.all([
@@ -585,6 +607,8 @@ async function openLauncher() {
 // openBlueprintFromLauncher makes a new agent from a blueprint and puts it in a
 // tab of its own — the same two writes main's tab-new does, from the UI.
 async function openBlueprintFromLauncher(b) {
+  if (launcherHold) return;
+  launcherHoldOn();
   try {
     const res = await fetch(`${AI_BASE}/ai/new`, {
       method: "POST",
@@ -601,9 +625,15 @@ async function openBlueprintFromLauncher(b) {
       sessionIds: [id],
       open: true,
     });
-    launcherClose();
+    // refreshWorkspace puts the tab up; the page inside it loads a moment later.
     await refreshWorkspace();
+    await waitForTabPaint(
+      openTabs.find((t) => !t.main && primaryPane(t.layout)?.contentId === id),
+    );
+    launcherRelease();
+    launcherClose();
   } catch (err) {
+    launcherRelease();
     toast(`could not open: ${err.message}`);
   }
 }
@@ -612,15 +642,24 @@ async function openBlueprintFromLauncher(b) {
 // re-created: a conversation belongs to the tab that made it, so a second copy of
 // it is not something the workspace can represent.
 async function openRecentTab(tabId) {
+  if (launcherHold) return;
+  launcherHoldOn();
   try {
     if (!openTabs.some((t) => t.tabId === tabId)) {
       await logTabOn([tabId]);
       await refreshWorkspace();
     }
-    launcherClose();
     const tab = openTabs.find((t) => t.tabId === tabId);
-    if (tab) await activateTab(tab.id);
+    if (tab) {
+      // refreshWorkspace already activated a tab it just added; one that was
+      // open but in the background is brought up here.
+      if (activeTabId !== tab.id) await activateTab(tab.id);
+      await waitForTabPaint(tab);
+    }
+    launcherRelease();
+    launcherClose();
   } catch (err) {
+    launcherRelease();
     toast(`could not open: ${err.message}`);
   }
 }
@@ -631,7 +670,7 @@ tabAddEl.addEventListener("click", (event) => {
 });
 
 window.addEventListener("mousedown", (event) => {
-  if (launcherEl.hidden) return;
+  if (launcherEl.hidden || launcherHold) return;
   if (launcherEl.contains(event.target) || event.target === tabAddEl) return;
   launcherClose();
 });
@@ -865,6 +904,32 @@ function dropTabPanes(tab) {
   // a tab that is gone must not leave one behind.
   tab.paneEl?.remove();
   tab.paneEl = null;
+}
+
+// A pane has something on screen once its iframe has a page of its own loaded;
+// before that it is a blank surface (its background, not a page).
+function paneFramePainted(frameEl) {
+  const doc = frameEl.contentDocument;
+  if (!doc) return false;
+  return doc.readyState === "complete" && !/^about:/.test(doc.URL);
+}
+
+// waitForTabPaint resolves when the tab's first pane shows its page, or after
+// `ms` — a page that never loads must not keep the launcher up for good.
+function waitForTabPaint(tab, ms = 4000) {
+  const first = tab && primaryPane(tab.layout);
+  const pane = first && [...tab.panes.values()].find((p) => p.contentId === first.contentId);
+  const frameEl = pane?.frameEl;
+  if (!frameEl || paneFramePainted(frameEl)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      frameEl.removeEventListener("load", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    frameEl.addEventListener("load", done);
+  });
 }
 
 function showPanes(tab) {

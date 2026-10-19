@@ -341,6 +341,14 @@ body {
   display: none;
 }
 
+/* A row is opening (app.js `launcherHold`): the launcher stays over the workspace
+   until the page it opened has painted, and takes no clicks meanwhile — one click
+   must not start two agents. */
+#launcher.busy {
+  cursor: progress;
+  pointer-events: none;
+}
+
 .launcher-sec {
   max-width: 760px;
   margin-inline: auto;
