@@ -14,8 +14,14 @@ resource browser, service endpoints) are now the sections of this page.
   `index.html` (instantiation refuses 0 or 2). Switching sections goes through the hash, so a reload
   stays where you were and the conversation is untouched.
 - There are exactly two data sources: **static** (`/static/query` for the file listing,
-  `/static/query-detail` for one file's body) and **log** (`/log/query` / `/log/query-detail`).
-  Addresses are always imported from the same origin's `/config.js` (`{ ENGINEER }`), never hard-coded.
+  `/static/query-detail` for one file's body, `/static/stream` for changes) and **log**
+  (`/log/query` / `/log/query-detail`). Addresses are always imported from the same origin's
+  `/config.js` (`{ ENGINEER }`), never hard-coded.
+- The page is **live**: it subscribes to `/static/stream` (long-lived SSE) and re-renders the
+  current section when a file the section shows is added, updated or removed — the selected file
+  is re-selected after the reload. `records` and `endpoints` do not subscribe (log changes have no
+  event; the endpoints view has a Reload button). The dot next to the nav brand is green while the
+  stream is connected, grey while it retries.
 - Theme: the `<head>` sets `data-theme` / `color-scheme` and links `/theme.css` before first paint;
   the shell keeps them in sync afterwards.
 
@@ -37,3 +43,5 @@ resource browser, service endpoints) are now the sections of this page.
 - Do not hard-code a service address: read it from `/config.js`.
 - Do not replay conversation in this page: it is not a chat page (use `pure-chat` for that).
 - Do not add write calls to static or log: this page is read-only.
+- Do not poll: live updates come from `/static/stream`, which is POSTed and read through `fetch`
+  (it is SSE but takes a body, so `EventSource` cannot be used).

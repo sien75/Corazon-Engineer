@@ -36,6 +36,10 @@
             color: var(--fg); font-size: 12px; }
     nav a:hover { background: var(--surface-3); }
     nav a.on { background: var(--accent-bg); color: var(--accent); }
+    /* the live dot: green while /static/stream is connected, grey while it retries */
+    #live { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            margin-left: 6px; vertical-align: middle; background: var(--border-strong); }
+    #live.on { background: var(--ok); }
     main { padding: 18px 22px 28px; overflow: auto; }
     main > * + * { margin-top: 14px; }
     h1 { font-size: 15px; margin: 0; }
@@ -79,7 +83,7 @@
   </style>
 </head>
 <body>
-  <nav id="nav"><div class="brand">Project</div></nav>
+  <nav id="nav"><div class="brand">Project<span id="live" title="live schema updates"></span></div></nav>
   <main id="main"></main>
   <section id="chat"><engineer-chat autofocus></engineer-chat></section>
   <div id="err" style="display:none"></div>
@@ -475,7 +479,14 @@
       ["resources", "Resources"], ["endpoints", "Endpoints"],
     ];
 
-    async function render() {
+    /* Renders are serialized: a hash change and a live reload can arrive together,
+       and two in flight would each append into the same cleared <main>. */
+    let renderQueue = Promise.resolve();
+    function render() {
+      renderQueue = renderQueue.then(renderNow, renderNow);
+      return renderQueue;
+    }
+    async function renderNow() {
       const key = (location.hash || "#overview").slice(1);
       const view = views[key] ? key : "overview";
       const main = $("main");
@@ -494,6 +505,89 @@
     }
     window.addEventListener("hashchange", render);
     render();
+
+    /* ---------- live: the static service watches the schema tree ----------
+       /static/stream is long-lived SSE but takes a POST body, so it is read with
+       fetch rather than EventSource. Only a change that can alter the section on
+       screen triggers a reload; an edit elsewhere leaves the page alone. */
+    const LIVE = {
+      overview: (t) => t === "atom" || t === "edge",
+      contracts: (t) => t === "contract",
+      howto: (t) => t === "how-to",
+      iterations: (t, id) => t === "development" && !/^development\/plans\//.test(id),
+      plans: (t, id) => t === "development" && /^development\/plans\//.test(id),
+      resources: (t) => t === "skill" || t === "blueprint" || t === "suggested-skill",
+    };
+
+    const currentView = () => {
+      const key = (location.hash || "#overview").slice(1);
+      return views[key] ? key : "overview";
+    };
+
+    // One reload per burst of events, and the selected file survives it.
+    let liveTimer = 0;
+    function liveReload() {
+      const li = document.querySelector("main li.sel");
+      const keepId = li ? li.title : "";
+      SCHEMA = null; // the file list is re-read with the view
+      render().then(() => {
+        if (!keepId) return;
+        const back = [...document.querySelectorAll("main li")].find((x) => x.title === keepId);
+        if (back) back.click();
+      });
+    }
+
+    // Only the event header is needed (kind / payload.type / payload.id): the body
+    // snapshot sits at a deeper indent, so lines indented more than two spaces
+    // are skipped.
+    function liveEvent(frame) {
+      const head = {};
+      let sect = "";
+      for (const raw of frame.split("\n")) {
+        if (!raw.startsWith("data:")) continue;
+        const m = /^(\s*)([A-Za-z0-9_-]+):\s*(.*)$/.exec(raw.slice(5).replace(/^ /, ""));
+        if (!m) continue;
+        if (m[1].length === 0) { sect = m[2]; head[m[2]] = m[3]; }
+        else if (m[1].length === 2) head[sect + "." + m[2]] = m[3];
+      }
+      if (head.kind !== "schema") return;
+      SCHEMA = null; // a change anywhere makes the cached listing stale
+      const view = currentView();
+      const pred = LIVE[view];
+      if (!pred) return;
+      if (!pred(head["payload.type"] || "", head["payload.id"] || "")) return;
+      clearTimeout(liveTimer);
+      liveTimer = setTimeout(liveReload, 200);
+    }
+
+    async function liveOnce() {
+      const res = await fetch(STATIC + "/static/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/yaml" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok || !res.body) throw new Error("static/stream → HTTP " + res.status);
+      $("live").classList.add("on");
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const frames = buf.split("\n\n");
+        buf = frames.pop(); // the last piece may be half a frame
+        for (const f of frames) liveEvent(f);
+      }
+    }
+
+    (async function liveLoop() {
+      for (;;) {
+        try { await liveOnce(); } catch (e) { /* static down or stream dropped */ }
+        $("live").classList.remove("on");
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    })();
   </script>
   <script type="module" src="/components/chat.js"></script>
 </body>
