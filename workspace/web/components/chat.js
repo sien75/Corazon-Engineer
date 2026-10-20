@@ -146,6 +146,23 @@ function wire(host, root, id, RT) {
     scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight <= STICK;
   const toBottom = () => { scrollEl.scrollTop = scrollEl.scrollHeight; };
 
+  // 切走的 tab 没有布局盒：scrollHeight / clientHeight / scrollTop 全读成 0，
+  // atBottom() 因此恒为 true，toBottom() 也是空操作。浏览器把 view 放回屏幕时
+  // 恢复的是隐藏前的旧像素偏移，隐藏期间到达的内容于是留在视口下面——回到这个
+  // tab 就不在底了。`pinned` 是能跨过这段时间的状态：它记“上一次真正量出来时
+  // 用户是不是贴着底”，所以贴着底离开的 tab 回来会重新贴底，手动往上翻的不会。
+  let pinned = true;
+  const hasBox = () => scrollEl.clientHeight > 0;
+  scrollEl.addEventListener("scroll", () => {
+    if (hasBox()) pinned = atBottom();
+  }, { passive: true });
+  // clientHeight 从 0 变回正常，就是这个 view 重新上屏了。尺寸变化（窗口、输入
+  // 框长高）也走这里：贴着的仍然贴着，翻上去了的不动。
+  new ResizeObserver(() => {
+    if (!hasBox()) return; // 还在屏幕外：等有了盒子再决定
+    if (pinned) toBottom();
+  }).observe(scrollEl);
+
   // ---------- 画东西：类名与结构都来自 app.js / chat.css ----------
 
   // 和外壳一样，芯片（thinking / 工具）按“一行”排：连续的芯片进同一个
@@ -160,7 +177,7 @@ function wire(host, root, id, RT) {
     rowEl = null; // 不是芯片：结束当前芯片行
     const el = document.createElement("div");
     el.className = cls;
-    const stick = atBottom();
+    const stick = pinned;
     messagesEl.appendChild(el);
     if (fill) fill(el);
     if (stick) toBottom();
@@ -168,7 +185,7 @@ function wire(host, root, id, RT) {
   }
 
   function addChip(cls, fill) {
-    const stick = atBottom();
+    const stick = pinned;
     if (!rowEl) {
       rowEl = document.createElement("div");
       rowEl.className = "ai-msg ai-chip-row";
@@ -190,7 +207,7 @@ function wire(host, root, id, RT) {
     let raf = 0;
     const render = () => {
       scheduled = false;
-      const stick = atBottom();
+      const stick = pinned;
       el.innerHTML = renderMarkdown(raw);
       if (stick) toBottom();
     };
@@ -227,6 +244,7 @@ function wire(host, root, id, RT) {
       }
     }
     toBottom(); // 自己发的消息总是露出来
+    pinned = true;
   }
 
   // ---------- 图片：粘贴 → 压缩 → [image] 标记（app.js 同款）----------
