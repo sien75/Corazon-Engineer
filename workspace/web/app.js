@@ -151,10 +151,10 @@ function makeMainTab(sessionId) {
     main: true,
   };
   // main is the shell's own conversation: one <engineer-chat>, the same element
-  // a blueprint page mounts. It shows its history (its records are in log).
+  // a blueprint page mounts. Every element replays its records from log on mount,
+  // so a rebuilt main tab shows the conversation again.
   const chat = document.createElement("engineer-chat");
   chat.setAttribute("session", sessionId);
-  chat.setAttribute("history", "");
   chat.className = "view view-main";
   // main's tools change the workspace; the element only reports them.
   chat.addEventListener("engineer-tool", (event) => {
@@ -233,10 +233,10 @@ function syncTabActive() {
 
 // syncTabUrl keeps the address bar naming the tab. A reload always lands on main
 // (the workspace is read from log, not from the URL), so this is a within-session
-// address, not a restore point. A tab's address is its session's.
+// address, not a restore point. A tab's address is its session's: /session/<id>.
 function syncTabUrl(tab, mode) {
   if (!mode) return;
-  const path = tab.main ? "/" : `/s/${encodeURIComponent(tab.sessionId)}`;
+  const path = tab.main ? "/" : `/session/${encodeURIComponent(tab.sessionId)}`;
   if (location.pathname === path) return;
   if (mode === "push") history.pushState({ tab: tab.id }, "", path);
   else history.replaceState({ tab: tab.id }, "", path);
@@ -718,7 +718,7 @@ async function boot() {
 }
 
 window.addEventListener("popstate", () => {
-  const m = location.pathname.match(/^\/s\/([^/]+)$/);
+  const m = location.pathname.match(/^\/session\/([^/]+)$/);
   const tab = m
     ? openTabs.find((t) => t.sessionId === decodeURIComponent(m[1]))
     : mainTab;

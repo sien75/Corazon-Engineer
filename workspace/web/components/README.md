@@ -9,14 +9,16 @@ the shell's main and every blueprint page mount the same element.
 
 ```html
 <script type="module" src="/components/chat.js"></script>
-<engineer-chat session="s_…" autofocus history></engineer-chat>
+<engineer-chat session="s_…" autofocus></engineer-chat>
 ```
 
 - `session` — optional; without it the element reads `/agent/<sessionId>/` from
   the page's URL.
 - `autofocus` — focus the composer on load.
-- `history` — replay the conversation from log before the first turn (main uses
-  it; a page starts empty).
+- `no-history` — do not replay the conversation from log (the default is to
+  replay: every mount reads its records back, so a page or a rebuilt tab shows
+  the conversation instead of an empty screen — a view does not survive a
+  reload, the records do).
 - It imports `/config.js` itself (an ES module exporting `ENGINEER`), so a page
   only needs the element on the page.
 - Shadow DOM + `chat.css` (beside this file); the theme's `--*` variables inherit

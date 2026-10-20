@@ -977,7 +977,7 @@ function wire(host, root, id, RT) {
   };
   window.addEventListener("keydown", onEscape);
 
-  // ---------- history (main replays its conversation; a page does not) ----------
+  // ---------- history (回放 log 里的对话：main 和页面一样) ----------
 
   async function replayHistory() {
     try {
@@ -1054,9 +1054,9 @@ function wire(host, root, id, RT) {
 
   // ---------- 起手 ----------
 
-  // The page does not replay history, so move the watermark before the first ask:
-  // read the backlog with since=0, draw nothing, keep the last seq. Without it the
-  // first ask would replay the whole past run into the view.
+  // Move the watermark before the first ask: read the backlog with since=0, draw
+  // nothing, keep the last seq. Without it the first ask would replay the whole
+  // past run (the events this ai process still holds) into the view.
   const ready = (async () => {
     try {
       await streamOnce(() => {});
@@ -1067,7 +1067,10 @@ function wire(host, root, id, RT) {
 
   resize();
   if (root.host.hasAttribute("autofocus")) inputEl.focus();
-  if (root.host.hasAttribute("history")) void replayHistory();
+  // 历史回放是默认行为：视图不持久，刷新页面、关掉 tab、换一个 iframe 都会把 DOM 丢掉，
+  // 而记录一直在 log 里，所以每次挂载都把它读回来（main 和 blueprint 页同一条路）。
+  // 只想看新内容的页面用 `no-history` 退出。
+  if (!root.host.hasAttribute("no-history")) void replayHistory();
 
   // 元素被移除时摘掉 window 上的监听（会话已不在屏幕上）。
   return () => window.removeEventListener("keydown", onEscape);

@@ -9,13 +9,16 @@ session id 画成一格，main 单独一格且不可关。所以本用例钉住�
 - 点一个 blueprint → 造出一条新 session，它立刻成为一格活动 tab，标题是那个 blueprint 页面
   的 `<title>`，内容是 `/agent/<sessionId>/` 的 iframe；
 - 点 `×` → tab 消失，`current.openSessions` 变空，但 session 行和它的记录还在；
-- 从 launcher 的 Recent 再打开 → 同一条 session（同一个 id、同一格 tab），不是复制；
-- 地址栏：tab 是 `/s/<sessionId>`，main 是 `/`；
-- 重载回到 main，开着的 tab 按 `openSessions` 原样恢复。
+- 从 launcher 的 Recent 再打开 → 同一条 session（同一个 id、同一格 tab），不是复制，
+  而且页面把这段对话从 log 回放出来（历史不是空白）；
+- 地址栏：tab 是 `/session/<sessionId>`，main 是 `/`；
+- 重载回到 main，开着的 tab 按 `openSessions` 原样恢复，点它照样能看到回放的历史。
 
 Source of truth: `workspace/web/app.js`（tab 条 / launcher / `activateTab` /
-`doRefreshWorkspace`）、`workspace/web/style.css`（`#tabs .tab`、`.view`）、
-`workspace/log`（`current` + `sessions`）。不需要模型，ai 用 `--stub`。
+`doRefreshWorkspace` / `syncTabUrl`）、`workspace/web/components/chat.js`（`replayHistory`：
+`/ai/resume` + `/log/session/messages`）、`workspace/web/style.css`（`#tabs .tab`、`.view`）、
+`workspace/log`（`current` + `sessions` + `session/messages`）。不需要模型，ai 用 `--stub`：
+历史用 `/log/mutation`（`kind: conversation`）直接写进 log。
 
 ## Setup
 
@@ -54,7 +57,8 @@ cat > "$ROOT/.agents/blueprints/probe/index.html" <<'HTML'
 </head>
 <body>
   <h1 id="probe-page">probe page</h1>
-  <engineer-chat></engineer-chat>
+  <engineer-chat autofocus></engineer-chat>
+  <script type="module" src="/components/chat.js"></script>
 </body>
 </html>
 HTML
@@ -163,7 +167,7 @@ b = await bar();
 const newest = b[b.length - 1];
 check("a new tab appeared, named after the page", !!opened && newest.label === "Probe Page", { bar: b, opened });
 check("the new tab is active and closable", newest.active && newest.closable, { bar: b, newest });
-check("the tab's address is its session", new URL(await page.url()).pathname === `/s/${opened}`,
+check("the tab's address is its session", new URL(await page.url()).pathname === `/session/${opened}`,
   { path: new URL(await page.url()).pathname, opened });
 await page.waitForFunction(
   (id) => {
@@ -177,6 +181,25 @@ const pageBody = await page.evaluate(() => {
 });
 check("the tab is an iframe onto /agent/<sessionId>/ and its page loaded",
   !!pageBody.src?.includes(`/agent/${opened}/`) && pageBody.probe === "probe page", pageBody);
+
+// 3b. seed two recorded messages: replay reads records, not the model (--stub)
+const LOG_URL = await page.evaluate(async () => (await import("/config.js")).ENGINEER.log);
+const seed = (seq, role, raw, content) =>
+  post(`${LOG_URL}/log/mutation`,
+    `op: add\nkind: conversation\nsessionId: ${opened}\npayload:\n  seq: ${seq}\n  role: ${role}\n  content: ${JSON.stringify(content)}\n  raw: ${JSON.stringify(raw)}`);
+await seed(1, "user", { role: "user", content: "seed question" }, "seed question");
+await seed(2, "assistant", { role: "assistant", content: [{ type: "text", text: "seed answer" }] },
+  "seed answer");
+const seen = await post(`${LOG_URL}/log/session/messages`, `sessionId: ${opened}`);
+check("the seeded messages are in log",
+  String(seen).includes("seed question") && String(seen).includes("seed answer"), { seen });
+// The conversation view is a shadow root inside the tab's iframe.
+const chatText = () =>
+  page.evaluate(() => {
+    const f = document.querySelector("#panes iframe.view-page:not([hidden])");
+    const shadow = f?.contentDocument?.querySelector("engineer-chat")?.shadowRoot;
+    return shadow ? shadow.textContent.replace(/\s+/g, " ").trim() : "";
+  });
 
 // 4. closing a tab keeps the conversation
 await page.click("loc=css:#tabs .tab:not(.main):last-of-type .tab-close");
@@ -204,6 +227,16 @@ await page.waitForFunction((n) => document.querySelectorAll("#tabs .tab:not(.mai
   base.length + 1, { timeout: 15_000 });
 check("reopening puts the same session back in the open list", (await openIds()).includes(opened),
   { open: await openIds(), opened });
+// 5b. the reopened page replays the conversation from log instead of a blank screen
+await page.waitForFunction(
+  () => {
+    const f = document.querySelector("#panes iframe.view-page:not([hidden])");
+    const shadow = f?.contentDocument?.querySelector("engineer-chat")?.shadowRoot;
+    return !!shadow && shadow.textContent.includes("seed question");
+  }, undefined, { timeout: 30_000 });
+const replayed = await chatText();
+check("the reopened tab replays its history from log",
+  replayed.includes("seed question") && replayed.includes("seed answer"), { replayed });
 
 // 6. switching tabs keeps both views in the document
 await page.click("loc=css:#tabs .tab.main");
@@ -234,15 +267,30 @@ check("the tab bar came back from log",
 check("a reload lands on main, not on the tab you were on",
   afterReload.active === "main" && afterReload.mainShown, afterReload);
 
+// 8. a reloaded shell still shows a restored tab's history
+await page.click("loc=css:#tabs .tab:not(.main):last-of-type");
+await page.waitForFunction(
+  () => {
+    const f = document.querySelector("#panes iframe.view-page:not([hidden])");
+    const shadow = f?.contentDocument?.querySelector("engineer-chat")?.shadowRoot;
+    return !!shadow && shadow.textContent.includes("seed question");
+  }, undefined, { timeout: 30_000 });
+const afterReloadChat = await chatText();
+check("a tab restored after a reload replays its history too",
+  afterReloadChat.includes("seed answer"), { afterReloadChat });
+check("a restored tab is addressed by its session",
+  new URL(await page.url()).pathname === `/session/${opened}`, { path: new URL(await page.url()).pathname });
+
 console.log(JSON.stringify({ ok: checks.every((c) => c.pass), checks }, null, 2));
 EOF
 ```
 
-Expected: eight groups of checks pass and the script prints `"ok": true` — main alone at boot,
+Expected: nine groups of checks pass and the script prints `"ok": true` — main alone at boot,
 a launcher with Blueprints/Recent, a blueprint pick that turns into a tab named after its page and
-addressed by its session, a close that keeps the conversation, a reopen that returns the *same*
-session, views kept in the document across a switch, and a reload that comes back to main with the
-open list restored.
+addressed by `/session/<sessionId>`, two seeded messages in log, a close that keeps the conversation,
+a reopen that returns the *same* session and replays its history into the page, views kept in the
+document across a switch, and a reload that comes back to main with the open list restored — the
+restored tab still addressed by its session, and still showing its replay.
 
 ## Teardown
 

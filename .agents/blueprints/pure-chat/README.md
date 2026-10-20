@@ -25,5 +25,6 @@ and nothing else. It is the reference blueprint, so keep it small.
 
 - Do not copy conversation logic into the page: use `<engineer-chat>`.
 - Do not hard-code service addresses: the component reads `/config.js`, and your own code should too.
-- Do not replay conversation history in the page: starting from an empty screen after a reload is
-  expected (the conversation is in log, nothing is lost).
+- Do not replay conversation history in the page yourself: `<engineer-chat>` already reads it back
+  from log on every mount, so a reload or a reopened tab shows the conversation again. Never keep a
+  second copy of it in the page.
