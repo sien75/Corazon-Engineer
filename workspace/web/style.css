@@ -342,6 +342,19 @@ body {
   font-size: 12px;
 }
 
+/* A section that could not be read says why, where an empty one would say there
+   is nothing. */
+.launcher-error {
+  margin: 2px 8px 4px;
+  padding: 7px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 #toast {
   position: fixed;
   left: 50%;

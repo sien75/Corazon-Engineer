@@ -446,7 +446,16 @@ async function staticCall(path, body = {}) {
     headers: { "Content-Type": "application/yaml" },
     body: yaml.dump(body),
   });
-  if (!res.ok) throw new Error(`static${path}: HTTP ${res.status}`);
+  if (!res.ok) {
+    // static says why in the body (`error.message`) — a schema file that does not
+    // parse is the usual reason, and the body is the only place that says so.
+    const text = await res.text().catch(() => "");
+    let why = "";
+    try {
+      why = yaml.load(text)?.error?.message || "";
+    } catch {}
+    throw new Error(`static${path}: HTTP ${res.status}${why ? ` — ${why}` : ""}`);
+  }
   return yaml.load(await res.text()) || {};
 }
 
@@ -526,59 +535,59 @@ function launcherRow({ name, desc, onOpen }) {
   return btn;
 }
 
+// launcherSection draws one list, or the reason it could not be read. "no
+// blueprints in this project" is a claim about the project; a call that failed
+// must not make it — that is how a broken schema file looked like an empty
+// project (`/static/query` 500, with the error swallowed here).
+function launcherSection(title, { rows, err }, emptyText, rowOf) {
+  const sec = document.createElement("section");
+  sec.className = "launcher-sec";
+  const h = document.createElement("h3");
+  h.textContent = err ? title : `${title} · ${rows.length}`;
+  sec.appendChild(h);
+  if (err) {
+    const e = document.createElement("div");
+    e.className = "launcher-error";
+    e.textContent = err.message;
+    sec.appendChild(e);
+    return sec;
+  }
+  if (!rows.length) {
+    const e = document.createElement("div");
+    e.className = "launcher-empty";
+    e.textContent = emptyText;
+    sec.appendChild(e);
+    return sec;
+  }
+  for (const row of rows) sec.appendChild(rowOf(row));
+  return sec;
+}
+
 async function openLauncher() {
   if (launcherHold) return;
   launcherEl.hidden = false;
   launcherEl.innerHTML = `<div class="launcher-empty">…</div>`;
+  const settle = (p) => p.then((rows) => ({ rows, err: null }), (err) => ({ rows: [], err }));
   const [blueprints, recents] = await Promise.all([
-    blueprintEntries().catch(() => []),
-    recentEntries().catch(() => []),
+    settle(blueprintEntries()),
+    settle(recentEntries()),
   ]);
   launcherEl.innerHTML = "";
 
-  const bp = document.createElement("section");
-  bp.className = "launcher-sec";
-  const h = document.createElement("h3");
-  h.textContent = `Blueprints · ${blueprints.length}`;
-  bp.appendChild(h);
-  if (!blueprints.length) {
-    const empty = document.createElement("div");
-    empty.className = "launcher-empty";
-    empty.textContent = "no blueprints in this project";
-    bp.appendChild(empty);
-  }
-  for (const b of blueprints) {
-    bp.appendChild(
-      launcherRow({
-        name: b.name,
-        desc: b.desc,
-        onOpen: () => void openBlueprintFromLauncher(b),
-      }),
-    );
-  }
-  launcherEl.appendChild(bp);
-
-  const recent = document.createElement("section");
-  recent.className = "launcher-sec";
-  const h2 = document.createElement("h3");
-  h2.textContent = `Recent · ${recents.length}`;
-  recent.appendChild(h2);
-  if (!recents.length) {
-    const empty = document.createElement("div");
-    empty.className = "launcher-empty";
-    empty.textContent = "nothing yet";
-    recent.appendChild(empty);
-  }
-  for (const r of recents) {
-    recent.appendChild(
+  launcherEl.appendChild(
+    launcherSection("Blueprints", blueprints, "no blueprints in this project", (b) =>
+      launcherRow({ name: b.name, desc: b.desc, onOpen: () => void openBlueprintFromLauncher(b) }),
+    ),
+  );
+  launcherEl.appendChild(
+    launcherSection("Recent", recents, "nothing yet", (r) =>
       launcherRow({
         name: r.title || r.sessionId,
         desc: r.desc,
         onOpen: () => void openSessionFromLauncher(r.sessionId),
       }),
-    );
-  }
-  launcherEl.appendChild(recent);
+    ),
+  );
 }
 
 // openBlueprintFromLauncher makes a new agent from a blueprint and puts it on
