@@ -105,3 +105,26 @@ const yaml = { "Content-Type": "application/yaml" };
 const files = await (await fetch(STATIC + "/static/query", { method: "POST", headers: yaml, body: "{}" })).text();
 const recs = await (await fetch(LOG + "/log/query", { method: "POST", headers: yaml, body: '{"pageNum":1}' })).text();
 ```
+
+#### The chat, hidden until the page asks for it
+
+One chat per page: exactly one `<engineer-chat>` in `index.html`, shown by default. If the page really
+has no use for the conversation, hide it rather than delete it — a page is one chat's, so the element
+is never removed or unmounted.
+
+```html
+<script type="module" src="/components/chat.js"></script>
+<style>
+  /* `hidden` alone would not do it: the component's own `:host { display: block }`
+     outranks the attribute's UA rule, a document rule outranks `:host` */
+  engineer-chat { display: none; }
+  engineer-chat.open { display: block; }
+</style>
+<div id="view"><!-- the page's own content --></div>
+<button id="ask">Ask about this</button>
+<engineer-chat id="chat"></engineer-chat>
+<script>
+  document.getElementById("ask").onclick = () =>
+    document.getElementById("chat").classList.add("open");
+</script>
+```

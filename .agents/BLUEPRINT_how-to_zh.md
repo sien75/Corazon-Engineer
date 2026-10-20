@@ -95,3 +95,24 @@ const yaml = { "Content-Type": "application/yaml" };
 const files = await (await fetch(STATIC + "/static/query", { method: "POST", headers: yaml, body: "{}" })).text();
 const recs = await (await fetch(LOG + "/log/query", { method: "POST", headers: yaml, body: '{"pageNum":1}' })).text();
 ```
+
+#### 把 chat 藏起来，需要时再露出来
+
+一页一个 chat：`index.html` 里有且仅有一个 `<engineer-chat>`，默认就是要显示出来。如果这个页面确实用不上对话，那就把它藏起来，而不是删掉（一个页面由一个 chat 代理，一定不能删除或者卸载组件）。
+
+```html
+<script type="module" src="/components/chat.js"></script>
+<style>
+  /* 光靠 hidden 不行：组件自己的 `:host { display: block }` 压过该属性对应的 UA 规则，
+     而文档里的规则又压过 `:host` */
+  engineer-chat { display: none; }
+  engineer-chat.open { display: block; }
+</style>
+<div id="view"><!-- 页面自己的内容 --></div>
+<button id="ask">问问这个</button>
+<engineer-chat id="chat"></engineer-chat>
+<script>
+  document.getElementById("ask").onclick = () =>
+    document.getElementById("chat").classList.add("open");
+</script>
+```
