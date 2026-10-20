@@ -141,7 +141,7 @@ function wire(host, root, id, RT) {
   const IMG_MAX_DIM = 1568;
 
   // ---------- 滚动：和外壳一样，只有本来贴着底才跟着滚 ----------
-  const STICK = 40;
+  const STICK = 5;
   const atBottom = () =>
     scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight <= STICK;
   const toBottom = () => { scrollEl.scrollTop = scrollEl.scrollHeight; };
@@ -165,16 +165,70 @@ function wire(host, root, id, RT) {
 
   // ---------- 画东西：类名与结构都来自 app.js / chat.css ----------
 
-  // 和外壳一样，芯片（thinking / 工具）按“一行”排：连续的芯片进同一个
-  // .ai-chip-row，一遇到文字、用户消息或问题卡，这一行就结束，下一个芯片
-  // 另起一行。芯片的宽度是 120px，靠的正是行容器是横向 flex。
-  let rowEl = null;
+  // 芯片（thinking / 工具）归到“芯片组”里：一组就是一段没被打断的连续步骤，
+  // 一遇到文字、用户消息或问题卡这组就结束，下一个芯片另起一组。组平时压成
+  // 一行，只报正在处理的那一步（thinking，或者工具名）；点这一行才展开成
+  // 卡片阵列（.ai-chip-row 的横向 flex，芯片 120px 宽）。
+  let group = null;
+
+  // 一组 = 一行摘要 + 芯片们 + 展开的 detail 面板。摘要是这一组的开关。
+  function chipGroup() {
+    const el = document.createElement("div");
+    el.className = "ai-msg ai-chip-row ai-chip-group";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "ai-chip-head";
+    head.setAttribute("aria-expanded", "false");
+    const caret = document.createElement("span");
+    caret.className = "ai-chip-caret";
+    caret.textContent = "▸";
+    const title = document.createElement("span");
+    title.className = "ai-chip-head-title";
+    const count = document.createElement("span");
+    count.className = "ai-chip-head-count";
+    const status = document.createElement("span");
+    status.className = "ai-collapse-status ai-loading";
+    head.append(caret, title, count, status);
+    // 展开方向由点下去的那一下决定：贴着底就往上长（继续跟底，摘要行原地不动），
+    // 翻上去了就往下长（就地展开，不抢滚动条）。箭头跟着说方向。
+    const setCaret = () => {
+      caret.textContent = !el.classList.contains("open")
+        ? "▸"
+        : el.classList.contains("up") ? "▴" : "▾";
+    };
+    head.addEventListener("click", () => {
+      const atEnd = atBottom();
+      const opening = !el.classList.contains("open");
+      el.classList.toggle("up", opening && atEnd);
+      el.classList.toggle("open", opening);
+      setCaret();
+      head.setAttribute("aria-expanded", String(opening));
+      if (atEnd) toBottom();
+    });
+    el.appendChild(head);
+    messagesEl.appendChild(el);
+    // 组一建出来就占住这一行（贴着底时量得到高度），摘要等第一个芯片补。
+    return { el, chips: [], title, count, status, caret };
+  }
+
+  // 摘要报的是“正在处理的这一步”：还在跑的芯片里最后起的那个；都跑完了就报
+  // 最后一个，把它的 ✓ / ! 一起带出来。
+  function refreshGroup(g) {
+    if (!g || !g.chips.length) return;
+    const running = g.chips.filter((c) => c.state === "loading").pop();
+    const cur = running || g.chips[g.chips.length - 1];
+    g.title.textContent = cur.summary;
+    const state = cur.state || "loading";
+    g.status.className = `ai-collapse-status ai-${state}`;
+    g.status.textContent = state === "loading" ? "" : state === "error" ? "!" : "✓";
+    g.count.textContent = g.chips.length > 1 ? `· ${g.chips.length}` : "";
+  }
 
   // `fill` 在元素挂进去之后、决定滚不滚之前调用：高度要等内容长齐才量得准。
   // 先挂空壳再塞内容、塞完不补一次滚动的话，新内容会比视口低一截（第一张
   // thinking 芯片的头和状态是后加的，所以它老是差一截、滚不到底）。
   function addMessage(cls, fill) {
-    rowEl = null; // 不是芯片：结束当前芯片行
+    group = null; // 不是芯片：结束当前芯片组
     const el = document.createElement("div");
     el.className = cls;
     const stick = pinned;
@@ -186,14 +240,13 @@ function wire(host, root, id, RT) {
 
   function addChip(cls, fill) {
     const stick = pinned;
-    if (!rowEl) {
-      rowEl = document.createElement("div");
-      rowEl.className = "ai-msg ai-chip-row";
-      messagesEl.appendChild(rowEl);
-    }
+    if (!group) group = chipGroup();
     const el = document.createElement("div");
     el.className = cls;
-    rowEl.appendChild(el);
+    // 展开的 detail 面板永远排在组尾，新芯片插到它前面，免得把面板顶到上面去。
+    const panel = group.el.querySelector(".ai-collapse-body");
+    if (panel) group.el.insertBefore(el, panel);
+    else group.el.appendChild(el);
     if (fill) fill(el);
     if (stick) toBottom();
     return el;
@@ -360,8 +413,9 @@ function wire(host, root, id, RT) {
   // 头一行是标题 + 状态（转圈 / ✓ / !）。外壳把展开的详情作为整行插在芯片
   // 行里（aiLayoutPanels），这里也一样：详情进芯片行，`flex: 0 0 100%` 让它
   // 换行占满整行。
-  function chip(kind, label, name) {
+  function chip(kind, label, name, summary) {
     let status, body;
+    const block = { label, summary: summary || label, state: "loading" };
     const wrap = addChip(`ai-msg ai-collapse ai-${kind}`, (el) => {
       const head = document.createElement("button");
       head.type = "button";
@@ -383,33 +437,49 @@ function wire(host, root, id, RT) {
       bd.appendChild(bodyName);
 
       head.addEventListener("click", () => {
+        const atEnd = atBottom();
         bd.hidden = !bd.hidden;
         el.classList.toggle("open", !bd.hidden);
-        if (bd.hidden) bd.remove();
-        else (rowEl || el.parentElement).appendChild(bd);
+        // 面板排在组尾：组往上长时它落在整组最上面，往下长时落在卡片下面。
+        if (!bd.hidden) el.parentElement.appendChild(bd);
+        if (atEnd) toBottom();
       });
 
       status = st;
       body = bd;
     });
-    return { wrap, status, body };
+    block.wrap = wrap;
+    block.status = status;
+    block.body = body;
+    block.group = group;
+    group.chips.push(block);
+    refreshGroup(group);
+    return block;
   }
 
   function settle(block, state) {
-    const status = block?.status;
-    if (!status || !status.classList.contains("ai-loading")) return;
-    status.classList.remove("ai-loading");
-    if (state === "error") {
-      status.classList.add("ai-error");
-      status.textContent = "!";
-    } else {
-      status.classList.add("ai-done");
-      status.textContent = "✓";
+    if (!block) return;
+    const status = block.status;
+    if (status && status.classList.contains("ai-loading")) {
+      status.classList.remove("ai-loading");
+      if (state === "error") {
+        status.classList.add("ai-error");
+        status.textContent = "!";
+      } else {
+        status.classList.add("ai-done");
+        status.textContent = "✓";
+      }
+    }
+    // 只认第一次落定：出错之后再被 done 收尾，摘要里的 ! 不该被抹掉。
+    if (block.state === "loading") {
+      block.state = state === "error" ? "error" : "done";
+      refreshGroup(block.group);
     }
   }
 
   function toolChip(name, args) {
-    const block = chip("tool", toolLabel(name, args), name);
+    const label = toolLabel(name, args);
+    const block = chip("tool", label, name, label === name ? name : `${name} ${label}`);
     const pre = document.createElement("pre");
     pre.className = "ai-tool-body";
     pre.textContent = stringify(args);
@@ -622,6 +692,9 @@ function wire(host, root, id, RT) {
         } else if (ae.type === "thinking_delta") {
           if (!thinking) thinking = thinkingChip();
           thinking.text.textContent += ae.delta || "";
+        } else if (ae.type === "thinking_end") {
+          // 这一步完了就落定：一行摘要里它不再算“正在处理的那一步”。
+          if (thinking) { settle(thinking, "done"); thinking = null; }
         } else if (ae.type === "error") {
           addMessage("ai-msg ai-assistant", (el) => {
             el.textContent = `[error] ${ae.error?.errorMessage || ""}`;
