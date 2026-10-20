@@ -60,6 +60,55 @@ function pushPageTheme() {
   }
 }
 
+// The topbar's theme menu: a quiet button that opens three choices. The block
+// below is the only thing that binds it — without it the markup in index.html is
+// inert (the button renders and does nothing).
+function syncThemeMenu() {
+  const cur = currentTheme();
+  for (const btn of themeMenuEl.querySelectorAll("button[data-theme]")) {
+    btn.classList.toggle("active", btn.dataset.theme === cur);
+  }
+}
+
+function themeMenuHide() {
+  themeMenuEl.hidden = true;
+  themeToggleEl.classList.remove("active");
+}
+
+themeToggleEl.title = `theme: ${currentTheme()}`;
+themeToggleEl.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (themeMenuEl.hidden) {
+    syncThemeMenu();
+    themeMenuEl.hidden = false;
+    themeToggleEl.classList.add("active");
+  } else {
+    themeMenuHide();
+  }
+});
+
+themeMenuEl.addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-theme]");
+  if (!btn) return;
+  applyTheme(btn.dataset.theme);
+  themeMenuHide();
+});
+
+window.addEventListener("click", (event) => {
+  if (themeMenuEl.hidden) return;
+  if (!themeMenuEl.contains(event.target) && event.target !== themeToggleEl) {
+    themeMenuHide();
+  }
+});
+
+// Esc closes the menu, and stops there: the conversation under it keeps its own
+// Esc (chat.js binds it per pane).
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || themeMenuEl.hidden) return;
+  event.stopPropagation();
+  themeMenuHide();
+});
+
 // ---------- the workspace ----------
 //
 // The shell is main's conversation plus the tabs main opens. Both are state in
