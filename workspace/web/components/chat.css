@@ -53,10 +53,17 @@
 }
 
 /* Every chat pane's list, not `#ai-messages`: the id marks the focused pane, so
-   keying this on it would restyle one pane and strip the other bare. */
+   keying this on it would restyle one pane and strip the other bare.
+
+   The 12px left / 0 right inset is not free: together with the composer's
+   880px cap and 12px padding it puts the message column's text edge on the
+   composer's padding edge, and the column's right edge on the composer's
+   border edge. Change one of the three (left inset, right inset, `.ai-input`
+   cap) and the two drift apart: left inset + cap/2 = 452, right inset =
+   440 - cap/2. */
 .ai-messages {
   box-sizing: border-box;
-  padding: 32px 24px 32px 36px;
+  padding: 32px 0 32px 12px;
   font-size: 15px;
   line-height: 1.75;
   display: flex;
@@ -492,8 +499,8 @@
   display: flex;
   align-items: flex-end;
   box-sizing: border-box;
-  width: calc(100% - 48px);
-  max-width: 832px;
+  width: 100%;
+  max-width: 880px;
   gap: 10px;
   margin-block: 8px 24px;
   padding: 12px;
