@@ -26,7 +26,7 @@ const themeMenuEl = document.getElementById("theme-menu");
 const AI_INPUT_MAX_LINES = 10;
 
 
-const THEME_ORDER = ["light", "dark", "solarized"];
+const THEME_ORDER = ["light", "warm", "cold", "dark", "slate"];
 const THEME_KEY = "engineer.theme";
 
 function currentTheme() {
@@ -56,17 +56,19 @@ function pushPageTheme() {
     if (!doc) continue;
     doc.documentElement.setAttribute("data-theme", theme);
     // Native widgets and the scrollbar follow color-scheme, not our variables.
-    doc.documentElement.style.colorScheme = theme === "dark" ? "dark" : "light";
+    doc.documentElement.style.colorScheme = (theme === "dark" || theme === "slate") ? "dark" : "light";
   }
 }
 
-// The topbar's theme menu: a quiet button that opens three choices. The block
+// The topbar's theme menu: a quiet button that opens five choices. The block
 // below is the only thing that binds it — without it the markup in index.html is
 // inert (the button renders and does nothing).
 function syncThemeMenu() {
   const cur = currentTheme();
   for (const btn of themeMenuEl.querySelectorAll("button[data-theme]")) {
-    btn.classList.toggle("active", btn.dataset.theme === cur);
+    const selected = btn.dataset.theme === cur;
+    btn.classList.toggle("active", selected);
+    btn.setAttribute("aria-pressed", String(selected));
   }
 }
 
@@ -275,14 +277,14 @@ function renderTabs() {
 }
 
 function syncTabActive() {
+  tabAddEl.classList.toggle("active", !launcherEl.hidden);
+  tabAddEl.setAttribute("aria-expanded", String(!launcherEl.hidden));
   for (const btn of tabsEl.querySelectorAll(".tab")) {
-    btn.classList.toggle("active", btn.dataset.tabId === activeTabId);
+    btn.classList.toggle("active", launcherEl.hidden && btn.dataset.tabId === activeTabId);
   }
 }
 
-// syncTabUrl keeps the address bar naming the tab. A reload always lands on main
-// (the workspace is read from log, not from the URL), so this is a within-session
-// address, not a restore point. A tab's address is its session's: /session/<id>.
+// The URL names the visible page and is also its reload/history restore point.
 function syncTabUrl(tab, mode) {
   if (!mode) return;
   const path = tab.main ? "/" : `/session/${encodeURIComponent(tab.sessionId)}`;
@@ -472,9 +474,12 @@ const launcherEl = document.getElementById("launcher");
 // and only then is it closed. Releasing the hold is what lets it close at all.
 let launcherHold = false;
 
-function launcherClose() {
+function launcherClose(mode = null) {
   if (launcherHold) return;
   launcherEl.hidden = true;
+  syncTabActive();
+  const tab = openTabs.find((t) => t.id === activeTabId);
+  if (mode && tab) syncTabUrl(tab, mode);
 }
 
 function launcherHoldOn() {
@@ -612,9 +617,14 @@ function launcherSection(title, { rows, err }, emptyText, rowOf) {
   return sec;
 }
 
-async function openLauncher() {
+async function openLauncher(mode = "push") {
   if (launcherHold) return;
+  if (mode && location.pathname !== "/new") {
+    if (mode === "push") history.pushState({ launcher: true }, "", "/new");
+    else history.replaceState({ launcher: true }, "", "/new");
+  }
   launcherEl.hidden = false;
+  syncTabActive();
   launcherEl.innerHTML = `<div class="launcher-empty">…</div>`;
   const settle = (p) => p.then((rows) => ({ rows, err: null }), (err) => ({ rows: [], err }));
   const [blueprints, recents] = await Promise.all([
@@ -659,7 +669,7 @@ async function openBlueprintFromLauncher(b) {
     await refreshWorkspace();
     await waitForTabPaint(openTabs.find((t) => t.sessionId === sessionId));
     launcherRelease();
-    launcherClose();
+    launcherClose("replace");
   } catch (err) {
     launcherRelease();
     toast(`could not open: ${err.message}`);
@@ -685,7 +695,7 @@ async function openSessionFromLauncher(sessionId) {
       await waitForTabPaint(tab);
     }
     launcherRelease();
-    launcherClose();
+    launcherClose("replace");
   } catch (err) {
     launcherRelease();
     toast(`could not open: ${err.message}`);
@@ -699,14 +709,15 @@ tabAddEl.addEventListener("click", (event) => {
 
 window.addEventListener("mousedown", (event) => {
   if (launcherEl.hidden || launcherHold) return;
-  if (launcherEl.contains(event.target) || event.target === tabAddEl) return;
-  launcherClose();
+  // A tab switches views on click. Keep the launcher up during mousedown so
+  // the previous view cannot flash before that click activates the new one.
+  if (launcherEl.contains(event.target) || tabAddEl.contains(event.target) || tabsEl.contains(event.target)) return;
+  launcherClose("push");
 });
 
 // ---------- boot ----------
 //
-// Always main. A reload reads the workspace back from log and puts main on
-// screen; it never restores "the tab you were on".
+// Rebuild the workspace from log, then restore the visible page from the URL.
 
 async function boot() {
   let cur;
@@ -762,17 +773,54 @@ async function boot() {
   );
 
   renderTabs();
-  await activateTab("main", null);
+  await restoreRoute();
   void hydrateNames();
 }
 
-window.addEventListener("popstate", () => {
-  const m = location.pathname.match(/^\/session\/([^/]+)$/);
-  const tab = m
-    ? openTabs.find((t) => t.sessionId === decodeURIComponent(m[1]))
-    : mainTab;
-  if (tab) void activateTab(tab.id, null);
-});
+// Boot and browser history share the same route resolution. A closed sub
+// session may still have a valid bookmark: reopen it instead of showing main.
+async function restoreRoute() {
+  const path = location.pathname;
+  if (path === "/new") {
+    const tab = openTabs.find((t) => t.id === activeTabId) || mainTab;
+    activeTabId = tab.id;
+    showTab(tab);
+    await openLauncher(null);
+    return;
+  }
+  if (path === "/") {
+    await activateTab("main", null);
+    return;
+  }
+  try {
+    const match = path.match(/^\/session\/([^/]+)$/);
+    if (!match) throw new Error("unknown page");
+    const id = decodeURIComponent(match[1]);
+    let tab = openTabs.find((t) => t.sessionId === id);
+    if (!tab) {
+      const rec = await logSessionMeta(id);
+      if (rec.kind !== "sub") throw new Error("this is not an open workspace session");
+      // Do not let a late response replace a page the user navigated to meanwhile.
+      if (location.pathname !== path) return;
+      await aiResume(id);
+      await logSessionOn([id]);
+      tab = openTabs.find((t) => t.sessionId === id);
+      if (!tab) {
+        tab = tabFromSession(rec);
+        openTabs.push(tab);
+        renderTabs();
+      }
+    }
+    if (location.pathname !== path) return;
+    await activateTab(tab.id, "replace");
+  } catch (err) {
+    if (location.pathname !== path) return;
+    toast(`could not open page: ${err.message}`);
+    await activateTab("main", "replace");
+  }
+}
+
+window.addEventListener("popstate", () => { void restoreRoute(); });
 
 // ---------- the stage: what a tab shows ----------
 

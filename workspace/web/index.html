@@ -9,7 +9,11 @@
       var t = "light";
       try {
         var stored = localStorage.getItem("engineer.theme");
-        if (stored === "dark" || stored === "solarized" || stored === "light") t = stored;
+        if (stored === "solarized") {
+          stored = "warm";
+          localStorage.setItem("engineer.theme", stored);
+        }
+        if (["light", "warm", "cold", "dark", "slate"].includes(stored)) t = stored;
       } catch (e) {}
       document.documentElement.setAttribute("data-theme", t);
     })();
@@ -28,9 +32,11 @@
     <div id="theme-wrap">
       <button id="theme-toggle" type="button" title="theme">theme</button>
       <div id="theme-menu" hidden>
-        <button type="button" data-theme="light">light</button>
-        <button type="button" data-theme="dark">dark</button>
-        <button type="button" data-theme="solarized">solarized</button>
+        <button type="button" data-theme="light" aria-pressed="false"><span class="theme-swatch" data-theme="light" aria-hidden="true"></span><span>light</span><span class="theme-check" aria-hidden="true">✓</span></button>
+        <button type="button" data-theme="warm" aria-pressed="false"><span class="theme-swatch" data-theme="warm" aria-hidden="true"></span><span>warm</span><span class="theme-check" aria-hidden="true">✓</span></button>
+        <button type="button" data-theme="cold" aria-pressed="false"><span class="theme-swatch" data-theme="cold" aria-hidden="true"></span><span>cold</span><span class="theme-check" aria-hidden="true">✓</span></button>
+        <button type="button" data-theme="dark" aria-pressed="false"><span class="theme-swatch" data-theme="dark" aria-hidden="true"></span><span>dark</span><span class="theme-check" aria-hidden="true">✓</span></button>
+        <button type="button" data-theme="slate" aria-pressed="false"><span class="theme-swatch" data-theme="slate" aria-hidden="true"></span><span>slate</span><span class="theme-check" aria-hidden="true">✓</span></button>
       </div>
     </div>
   </header>

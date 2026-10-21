@@ -251,7 +251,7 @@ check("every shown tab keeps its view; only one is on stage",
   views.views === 2 && views.shown === 1 && views.mainShown, views);
 check("main's address is /", new URL(await page.url()).pathname === "/", { path: new URL(await page.url()).pathname });
 
-// 7. a reload comes back to main with the open list intact
+// 7. reloading / keeps main visible with the open list intact
 await page.reload();
 await page.waitForSelector("#tabs .tab.main", { state: "visible" });
 await page.waitForFunction((n) => document.querySelectorAll("#tabs .tab:not(.main)").length === n,
@@ -264,7 +264,7 @@ const afterReload = await page.evaluate(() => ({
 check("the tab bar came back from log",
   b.filter((x) => !x.main).length === base.length + 1 && b[b.length - 1].label === "Probe Page",
   { bar: b });
-check("a reload lands on main, not on the tab you were on",
+check("a reload of / keeps main visible",
   afterReload.active === "main" && afterReload.mainShown, afterReload);
 
 // 8. a reloaded shell still shows a restored tab's history
@@ -289,7 +289,7 @@ Expected: nine groups of checks pass and the script prints `"ok": true` — main
 a launcher with Blueprints/Recent, a blueprint pick that turns into a tab named after its page and
 addressed by `/session/<sessionId>`, two seeded messages in log, a close that keeps the conversation,
 a reopen that returns the *same* session and replays its history into the page, views kept in the
-document across a switch, and a reload that comes back to main with the open list restored — the
+document across a switch, and a reload of / that keeps main with the open list restored — the
 restored tab still addressed by its session, and still showing its replay.
 
 ## Teardown

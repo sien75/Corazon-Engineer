@@ -29,7 +29,7 @@ const TEMPLATE = `
   </div>
   <div class="ai-input">
     <textarea class="ai-input-field" rows="2"
-      placeholder="ask… (Enter send, Shift+Enter newline, Esc stop; paste image)" autocomplete="off"></textarea>
+      placeholder="Enter send&nbsp;&nbsp;/&nbsp;&nbsp;Shift-enter newline&nbsp;&nbsp;/&nbsp;&nbsp;Esc stop&nbsp;&nbsp;/&nbsp;&nbsp;Paste image" autocomplete="off"></textarea>
     <button type="button" class="ai-stop" hidden>stop</button>
     <button type="button" class="ai-send">send</button>
   </div>

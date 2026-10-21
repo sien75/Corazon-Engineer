@@ -9,7 +9,11 @@
       var t = "light";
       try {
         var stored = localStorage.getItem("engineer.theme");
-        if (stored === "dark" || stored === "solarized" || stored === "light") t = stored;
+        if (stored === "solarized") {
+          stored = "warm";
+          localStorage.setItem("engineer.theme", stored);
+        }
+        if (["light", "dark", "warm", "cold", "slate"].includes(stored)) t = stored;
       } catch (e) {}
       document.documentElement.setAttribute("data-theme", t);
       document.documentElement.style.colorScheme = t === "dark" ? "dark" : "light";
