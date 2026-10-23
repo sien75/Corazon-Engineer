@@ -514,8 +514,9 @@ function wire(host, root, id, RT) {
 
   // 外壳的 aiAskUser：问题是一张卡，有 options 就画按钮，没有就输入框；
   // 回答就是一条普通的 /ai/ask 文本。
-  function questionCard(args) {
-    addMessage("ai-msg ai-question", (div) => {
+  // settled：从历史回放出来的卡 —— 当初问过、也答过了，画出来但不能点。
+  function questionCard(args, settled) {
+    addMessage(settled ? "ai-msg ai-question settled" : "ai-msg ai-question", (div) => {
       const q = document.createElement("div");
       q.textContent = args?.text || "";
       div.appendChild(q);
@@ -550,6 +551,7 @@ function wire(host, root, id, RT) {
         row.append(input, b);
       }
       div.appendChild(row);
+      if (settled) close();
     });
   }
 
@@ -632,6 +634,7 @@ function wire(host, root, id, RT) {
   // 就带着 seq 重开一次 —— 服务端只重放 since 之后的事件，所以不会重复。
   async function pump() {
     while (running) {
+      const before = seq;
       try {
         await streamOnce(onEvent);
       } catch (err) {
@@ -641,6 +644,13 @@ function wire(host, root, id, RT) {
         });
         await sleep(500);
         continue;
+      }
+      // 一段流一个事件都没拿到，而这一轮还挂着：多半是它在接头之前就收工了
+      // （服务端重启之类）。复查一次 active，不活跃就把这一轮收掉，
+      // 否则接管会变成 300ms 一次的空转。（挂载不用接管就不会走到这里。）
+      if (running && seq === before) {
+        const state = await resumeState();
+        if (state && !state.active) finish();
       }
       if (running) await sleep(300);
     }
@@ -1005,13 +1015,30 @@ function wire(host, root, id, RT) {
 
   // ---------- history (回放 log 里的对话：main 和页面一样) ----------
 
-  async function replayHistory() {
+  // resumeState 一次 /ai/resume 拿两件事：水位（lastSeq）和这一轮还在不在跑（active）。
+  // 契约（contracts/ai-resume.yaml）写明 active 时客户端应当重新接管 /ai/stream。
+  // 拿不到（404 / 网络）就返回 null，挂载退回原来的行为。
+  async function resumeState() {
     try {
-      await fetch(`${AI}/ai/resume`, {
+      const res = await fetch(`${AI}/ai/resume`, {
         method: "POST",
         headers: { "Content-Type": "application/yaml" },
         body: yaml.dump({ id }),
       });
+      if (!res.ok) return null;
+      const data = yaml.load(await res.text()) || {};
+      return {
+        lastSeq: typeof data.lastSeq === "number" ? data.lastSeq : null,
+        active: data.active === true,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  // 历史只读 log：ai 不在的时候，记录照样该看得到（resume 是起手那边的事）。
+  async function replayHistory() {
+    try {
       const res = await fetch(`${LOG}/log/session/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/yaml" },
@@ -1048,8 +1075,10 @@ function wire(host, root, id, RT) {
               const bubble = assistantBubble();
               bubble.append(b.text);
               bubble.flush();
-            } else if (b.type === "toolCall" && b.name !== "ask_user") {
-              toolBlocks.set(b.id, toolChip(b.name, b.arguments));
+            } else if (b.type === "toolCall") {
+              // ask_user 当初是一张卡，重画也还是那张卡：画在原位，只是不能再点。
+              if (b.name === "ask_user") questionCard(b.arguments, true);
+              else toolBlocks.set(b.id, toolChip(b.name, b.arguments));
             }
           }
           continue;
@@ -1079,24 +1108,37 @@ function wire(host, root, id, RT) {
   }
 
   // ---------- 起手 ----------
-
-  // Move the watermark before the first ask: read the backlog with since=0, draw
-  // nothing, keep the last seq. Without it the first ask would replay the whole
-  // past run (the events this ai process still holds) into the view.
+  //
+  // 挂载做三件事，顺序有讲究：
+  // 1. /ai/resume：水位 lastSeq + 这一轮还在不在跑 active；
+  // 2. 画历史；
+  // 3. 在跑就接管 —— stop 亮起来、流从 lastSeq 续上。不接管的话，页面在一次运行
+  //    中途挂载（刷新 / 重开标签）就会是死的：没有 stop，也没有新内容，直到用户
+  //    自己发一条消息（见 development/iterations/2610-50-中途挂载接管在跑的那一轮.md）。
+  //
+  // 水位从 lastSeq 来，因为它说的是「这个会话已经发出过的事件」，比空订阅读流便宜，
+  // 也不怕那一轮把流占着。resume 不可用（没有会话 / ai 不在）才退回空订阅：
+  // 从 since=0 读一遍、什么都不画，只记下水位数，免得第一次发送把整轮重放进视图。
   const ready = (async () => {
-    try {
-      await streamOnce(() => {});
-    } catch {
-      // no watermark is not fatal: the worst case is one replayed run
+    const resumed = await resumeState();
+    if (!root.host.hasAttribute("no-history")) await replayHistory();
+    if (resumed?.lastSeq != null) {
+      seq = Math.max(seq, resumed.lastSeq);
+    } else {
+      try {
+        await streamOnce(() => {});
+      } catch {
+        // no watermark is not fatal: the worst case is one replayed run
+      }
+    }
+    if (resumed?.active) {
+      setRunning(true);
+      void pump();
     }
   })();
 
   resize();
   if (root.host.hasAttribute("autofocus")) inputEl.focus();
-  // 历史回放是默认行为：视图不持久，刷新页面、关掉 tab、换一个 iframe 都会把 DOM 丢掉，
-  // 而记录一直在 log 里，所以每次挂载都把它读回来（main 和 blueprint 页同一条路）。
-  // 只想看新内容的页面用 `no-history` 退出。
-  if (!root.host.hasAttribute("no-history")) void replayHistory();
 
   // 元素被移除时摘掉 window 上的监听（会话已不在屏幕上）。
   return () => window.removeEventListener("keydown", onEscape);

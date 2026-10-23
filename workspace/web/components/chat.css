@@ -452,6 +452,8 @@
 .ai-question {
   align-self: flex-start;
   max-width: 95%;
+  /* 卡自己的内边距：.ai-msg 是 0（用户气泡也用它），问题文字和选项行靠它离开边框。 */
+  padding: 10px 12px;
   background: var(--surface-question);
   border: 1px solid var(--question-border);
   color: var(--fg);
