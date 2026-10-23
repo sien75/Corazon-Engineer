@@ -512,6 +512,9 @@
   border-radius: 16px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
   flex-shrink: 0;
+  /* The whole box is the input (see the mousedown handler in chat.js), so the
+     cursor says so everywhere except on the buttons, which say `pointer`. */
+  cursor: text;
 }
 
 .ai-user-img {
@@ -582,10 +585,12 @@
   border-color: var(--accent);
 }
 
+/* Same quiet border as .ai-send: the fill and the border of a resting button
+   sit a hair apart, and only hover brings the colour up to full strength. */
 .ai-stop,
 #ai-stop {
   background: var(--danger-bg);
-  border: 1px solid var(--danger);
+  border: 1px solid var(--danger-border);
   border-radius: 8px;
   color: var(--danger-fg);
   font: inherit;
@@ -598,6 +603,7 @@
 
 .ai-stop:hover,
 #ai-stop:hover {
+  border-color: var(--danger);
   background: var(--danger-bg-hover);
 }
 

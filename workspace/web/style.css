@@ -2,6 +2,16 @@
   box-sizing: border-box;
 }
 
+/* The titlebar's height lives here because #main is offset by it: one number,
+   two users, so the conversation never drifts off the bar. */
+:root {
+  --topbar-h: 36px;
+  /* The active tab's underline — a border on the tab itself, so the line spans
+     the whole box (close button included) and nothing shifts when it appears.
+     Thin: at 36px it reads as a rule under the label, not a slab. */
+  --tab-underline: 1.5px;
+}
+
 html,
 body {
   margin: 0;
@@ -12,11 +22,11 @@ body {
 }
 
 #topbar {
-  height: 44px;
+  height: var(--topbar-h);
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 16px;
+  gap: 10px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -55,7 +65,7 @@ body {
   font-size: 13px;
   padding: 4px 10px;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
+  border-bottom: var(--tab-underline) solid transparent;
   white-space: nowrap;
 }
 
@@ -104,7 +114,7 @@ body {
   font-size: 13px;
   padding: 4px 10px;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
+  border-bottom: var(--tab-underline) solid transparent;
 }
 
 #theme-toggle:hover {
@@ -168,7 +178,7 @@ body {
 #main {
   position: relative;
   display: flex;
-  height: calc(100% - 44px);
+  height: calc(100% - var(--topbar-h));
 }
 
 .empty-hint {
@@ -231,13 +241,13 @@ body {
      no icon metrics to compensate for. */
   display: inline-flex;
   align-items: center;
-  /* The tab's box exactly: 4px vertical padding and a 2px transparent bottom
-     border (the active underline). Any top border here would push the + down by
-     that many pixels relative to the labels. */
+  /* The tab's box exactly: 4px vertical padding and the shared transparent
+     bottom border (the active underline). Any top border here would push the +
+     down by that many pixels relative to the labels. */
   padding: 4px 10px;
   background: none;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-bottom: var(--tab-underline) solid transparent;
   border-radius: 0;
   color: var(--fg-muted);
   font: inherit;

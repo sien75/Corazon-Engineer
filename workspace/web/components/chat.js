@@ -104,6 +104,7 @@ function wire(host, root, id, RT) {
   const inputEl = root.querySelector(".ai-input-field");
   const sendEl = root.querySelector(".ai-send");
   const stopEl = root.querySelector(".ai-stop");
+  const composerEl = root.querySelector(".ai-input");
   // 外壳把它的前端库放在 /vendor/ 下（同源可取）：用同一份 markdown-it /
   // DOMPurify / highlight.js / js-yaml，渲染结果和外壳一模一样。
 
@@ -903,6 +904,17 @@ function wire(host, root, id, RT) {
   }
 
   sendEl.addEventListener("click", submit);
+  // 输入框是一整块：点内边距、点按钮那一行的空白，都该落回文本上，只有真点在
+  // 控件上才留给控件。mousedown + preventDefault 是为了不打断已有的选区 ——
+  // 光标不跳、拖选过的文字还在；点空白处首次聚焦时，光标放到末尾（接着写）。
+  composerEl.addEventListener("mousedown", (event) => {
+    if (event.target.closest?.("button") || event.target === inputEl) return;
+    event.preventDefault();
+    if (root.activeElement !== inputEl && inputEl.selectionStart === inputEl.selectionEnd) {
+      inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    }
+    inputEl.focus();
+  });
   inputEl.addEventListener("input", () => { resize(); historyEnd(); });
   inputEl.addEventListener("click", snapCaretOutOfToken);
   inputEl.addEventListener("keyup", snapCaretOutOfToken);
