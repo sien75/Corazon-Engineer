@@ -44,7 +44,11 @@
     #live { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
             margin-left: 6px; vertical-align: middle; background: var(--border-strong); }
     #live.on { background: var(--ok); }
-    main { padding: 18px 22px 28px; overflow: auto; }
+    /* A flex column that still scrolls: views without a file pane (overview,
+       tables) grow as before, while the master-detail views hand their leftover
+       height to .cols (flex:1) and scroll inside it instead of the page. */
+    main { padding: 18px 22px 28px; overflow: auto;
+           display: flex; flex-direction: column; }
     main > * + * { margin-top: 14px; }
     h1 { font-size: 15px; margin: 0; }
     h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
@@ -62,20 +66,60 @@
     tbody tr.click:hover { background: var(--surface-3); }
     tbody tr.sel { background: var(--accent-bg); color: var(--accent); }
     td.mono, .mono { color: var(--fg-dim); font-size: 12px; }
-    .cols { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 18px; align-items: start; }
+    .cols { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 18px;
+            align-items: stretch; flex: 1; min-height: 0; }
+    /* the list scrolls on its own so the file body can take the full height */
+    .cols > :first-child { min-height: 0; overflow: auto; }
     .group + .group { margin-top: 14px; }
-    ul { list-style: none; margin: 0; padding: 0; max-height: 68vh; overflow: auto; }
+    ul { list-style: none; margin: 0; padding: 0; }
     li { padding: 3px 8px; border-radius: 5px; cursor: pointer; font-size: 12px;
          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     li:hover { background: var(--surface-3); }
     li.sel { background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-border); padding: 2px 7px; }
     li.empty { color: var(--fg-muted); font-style: italic; cursor: default; }
     li.empty:hover { background: none; }
-    .preview { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+    /* head + body; the body is the only scrolling part, so the pane fills the
+       column and the frame stays put while the file scrolls */
+    .preview { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2);
+               overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
     .preview .head { padding: 7px 12px; border-bottom: 1px solid var(--border); color: var(--fg-dim);
-                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    pre { margin: 0; padding: 12px; max-height: 66vh; overflow: auto; font-size: 12px;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
+    .preview > pre, .preview > .body { flex: 1; min-height: 0; overflow: auto; }
+    /* the record detail sits under a table, so it stays usable instead of collapsing */
+    .preview.rec { flex: 1 0 260px; min-height: 240px; }
+    pre { margin: 0; padding: 12px; font-size: 12px;
           white-space: pre-wrap; word-break: break-word; }
+    /* Markdown bodies (README / SKILL.md / iterations / plans) — prose, so it is
+       set looser than the page's own chrome: bigger steps between blocks and
+       between the lines inside one. */
+    .md { padding: 20px 22px; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+    .md > :first-child { margin-top: 0; }
+    .md > :last-child { margin-bottom: 0; }
+    .md h1, .md h2, .md h3, .md h4 { margin: 28px 0 12px; text-transform: none;
+          letter-spacing: 0; font-weight: 600; color: var(--fg); line-height: 1.45; }
+    .md h1 { font-size: 17px; }
+    .md h2 { font-size: 13.5px; }
+    .md h3 { font-size: 13px; }
+    .md h4 { font-size: 12.5px; color: var(--fg-muted); }
+    .md p, .md ul, .md ol, .md blockquote, .md pre, .md table { margin: 13px 0; }
+    /* the page's own lists are nav-like; inside a document they are lists again */
+    .md ul, .md ol { list-style: revert; padding-left: 22px; }
+    .md li { padding: 0; cursor: auto; white-space: normal; overflow: visible;
+             font-size: inherit; color: inherit; }
+    .md li + li { margin-top: 5px; }
+    .md li > ul, .md li > ol { margin: 5px 0; }
+    .md li:hover { background: none; }
+    .md code { font-family: var(--font-mono); font-size: 12px; background: var(--code-bg);
+               padding: 2px 5px; border-radius: 4px; }
+    .md pre { background: var(--code-bg); border-radius: 6px; padding: 13px 15px; overflow: auto;
+              line-height: 1.6; white-space: pre; }
+    .md pre code { background: none; padding: 0; }
+    .md blockquote { border-left: 3px solid var(--accent-border); color: var(--fg-dim);
+                     padding: 2px 0 2px 16px; }
+    .md a { color: var(--accent); }
+    .md hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0; }
+    .md img { max-width: 100%; }
+    .md th, .md td { padding: 8px 10px; }
     .bar { display: flex; gap: 10px; align-items: center; }
     select, button { font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 5px; cursor: pointer;
                      border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--fg); }
@@ -98,6 +142,8 @@
        Data comes from static and log only; both addresses are imported from the
        same origin's /config.js, never hard-coded. */
     import { ENGINEER } from "/config.js";
+    import MarkdownIt from "/vendor/markdown-it.js";
+    import DOMPurify from "/vendor/dompurify.js";
 
     let STATIC = ENGINEER.static, LOG = ENGINEER.log;
     const $ = (id) => document.getElementById(id);
@@ -207,17 +253,68 @@
       return block(text, key || type) || text;
     }
 
+    /* A file body: markdown is rendered (README / SKILL / iterations / plans),
+       anything else keeps its raw text. Both share the pane's scrolling box. */
+    const mdEngine = new MarkdownIt({ linkify: true });
+    const isMarkdown = (path) => /\.(md|markdown)$/i.test(path);
+    function showBody(box, path, text) {
+      box.textContent = "";
+      if (!isMarkdown(path)) {
+        const pre = el("pre");
+        pre.textContent = text;
+        box.append(pre);
+        return;
+      }
+      const div = el("div", "md");
+      div.innerHTML = DOMPurify.sanitize(mdEngine.render(text));
+      // a relative link is meaningless here; open what does resolve in a new tab
+      for (const a of div.querySelectorAll("a")) { a.target = "_blank"; a.rel = "noreferrer"; }
+      box.append(div);
+    }
+
+    /* The file each view had open last time: navigation is per view, so coming
+       back to How-to reopens the book you were reading rather than an empty pane.
+       Stored in the shell's own origin (localStorage), one path per view key. */
+    const LASTFILE = "engineer.project.lastFile";
+    function lastFiles() {
+      try { return JSON.parse(localStorage.getItem(LASTFILE) || "{}") || {}; } catch (e) { return {}; }
+    }
+    const lastFile = (view) => lastFiles()[view] || "";
+    function rememberFile(view, path) {
+      try {
+        const all = lastFiles();
+        all[view] = path;
+        localStorage.setItem(LASTFILE, JSON.stringify(all));
+      } catch (e) { /* private mode / quota: remembering is a nicety */ }
+    }
+    function forgetFile(view) {
+      try {
+        const all = lastFiles();
+        delete all[view];
+        localStorage.setItem(LASTFILE, JSON.stringify(all));
+      } catch (e) {}
+    }
+    // Scroll the list, not the page: the selected row has to be visible in its own
+    // column without dragging `main` along.
+    function reveal(li, list) {
+      const a = li.getBoundingClientRect(), b = list.getBoundingClientRect();
+      if (a.top < b.top + 4) list.scrollTop += a.top - b.top - 8;
+      else if (a.bottom > b.bottom - 4) list.scrollTop += a.bottom - b.bottom + 8;
+    }
+
     /* List on the left, file body on the right — the shape most views share. */
     function masterDetail(root, groups, empty) {
+      const view = currentView();
       const wrap = el("div", "cols");
       const left = el("div");
       const pane = el("div", "preview");
       const head = el("div", "head", empty || "Pick a file…");
-      const pre = el("pre");
-      pre.textContent = "";
-      pane.append(head, pre);
+      const body = el("div", "body");
+      pane.append(head, body);
       wrap.append(left, pane);
       root.append(wrap);
+      const wanted = lastFile(view);
+      let restore = null;
       for (const g of groups) {
         const box = el("div", "group");
         box.append(el("h2", null, g.title));
@@ -228,21 +325,33 @@
         for (const f of g.files) {
           const li = el("li", null, g.label ? g.label(f) : f);
           li.title = f;
+          if (f === wanted) restore = li;
           li.onclick = async () => {
             for (const x of root.querySelectorAll("li.sel")) x.classList.remove("sel");
             li.classList.add("sel");
+            rememberFile(view, f);
+            reveal(li, left);
             head.textContent = f;
-            pre.textContent = "Loading…";
-            try { pre.textContent = await detail(f, g.type, g.block); }
-            catch (e) { pre.textContent = ""; err(e); }
+            body.textContent = "Loading…";
+            try { showBody(body, f, await detail(f, g.type, g.block)); }
+            catch (e) { body.textContent = ""; err(e); }
           };
           ul.append(li);
         }
       }
+      // A file that is gone (deleted, renamed, filtered out) leaves the pane empty
+      // rather than pointing at something that no longer exists — and forgets it.
+      if (restore) restore.click();
+      else if (wanted) forgetFile(view);
     }
 
     const shorten = (prefix, suffix) => (f) =>
       f.slice(prefix.length).replace(suffix || /$^/, "");
+
+    const currentView = () => {
+      const key = (location.hash || "#overview").slice(1);
+      return views[key] ? key : "overview";
+    };
 
     const views = {
       /* Overview: the whole schema at a glance. */
@@ -361,7 +470,7 @@
 
         const t = table(["createdAt", "kind", "atom", "summary", "id"]);
         root.append(t.table);
-        const pane = el("div", "preview");
+        const pane = el("div", "preview rec");
         const pre = el("pre");
         pre.textContent = "";
         pane.append(pre);
@@ -394,7 +503,7 @@
             tr.onclick = async () => {
               for (const x of t.tbody.querySelectorAll("tr.sel")) x.classList.remove("sel");
               tr.classList.add("sel");
-              pane.style.display = "block";
+              pane.style.display = "flex";
               pre.textContent = "Loading…";
               try { pre.textContent = await api(LOG, "/log/query-detail", { id }); }
               catch (e) { pre.textContent = ""; err(e); }
@@ -521,11 +630,6 @@
       iterations: (t, id) => t === "development" && !/^development\/plans\//.test(id),
       plans: (t, id) => t === "development" && /^development\/plans\//.test(id),
       resources: (t) => t === "skill" || t === "blueprint" || t === "suggested-skill",
-    };
-
-    const currentView = () => {
-      const key = (location.hash || "#overview").slice(1);
-      return views[key] ? key : "overview";
     };
 
     // One reload per burst of events, and the selected file survives it.

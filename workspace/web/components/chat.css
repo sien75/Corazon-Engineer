@@ -89,10 +89,12 @@
   background: var(--surface-3);
   border: 1px solid transparent;
   color: var(--fg);
+  letter-spacing: 0.05rem;
 }
 
 .ai-assistant {
   align-self: flex-start;
+  letter-spacing: 0.05rem;
   background: transparent;
   border: 0;
   color: var(--fg);
@@ -175,6 +177,8 @@
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 0.08em 0.35em;
+  /* Monospace stays untracked: extra space there reads as a broken column. */
+  letter-spacing: normal;
 }
 
 .ai-markdown pre {
@@ -280,17 +284,11 @@
   background: var(--surface-inset);
 }
 
-/* Direction of the fold is decided when the line is clicked (chat.js):
-   `.up` = opened while the view sat at the bottom, so the summary keeps its own
-   line at the bottom and the cards, then the detail panel, stack up from it —
-   `wrap-reverse` puts the first line last and the last line first, so DOM order
-   stays header → cards → panel. Without `.up` the group opens downwards in that
-   same DOM order. The summary is still not a box: with nothing to highlight in
-   the open state the full-width row reads as a plain label. */
-.ai-chip-group.up {
-  flex-wrap: wrap-reverse;
-}
-
+/* Opening is always downwards: the summary keeps its line, the cards and the
+   detail panel stack below it, in DOM order (header → cards → panel). The
+   summary is still not a box: with nothing to highlight in the open state the
+   full-width row reads as a plain label. Keeping the line still on screen while
+   it opens and closes is chat.js's job (`syncPin`), not the layout's. */
 .ai-chip-group.open > .ai-chip-head {
   flex: 0 0 100%;
 }
@@ -497,6 +495,11 @@
 .ai-input {
   position: relative;
   display: flex;
+  /* Two rows: the text owns the top one at full width, the buttons sit on the
+     bottom one, right-aligned. `wrap` + a 100% basis on the field is what makes
+     the split, so no extra wrapper element is needed. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: flex-end;
   box-sizing: border-box;
   width: 100%;
@@ -521,7 +524,7 @@
 
 .ai-input-field,
 #ai-input-field {
-  flex: 1;
+  flex: 1 0 100%;
   overflow-y: hidden;
   box-sizing: border-box;
   min-width: 0;
@@ -534,6 +537,9 @@
   outline: none;
   resize: none;
   line-height: 1.6;
+  /* One tracking value for the whole pane, composer included — the text being
+     written was 0.1rem for a while and read as scattered. */
+  letter-spacing: 0.05rem;
 }
 
 .ai-input-field:focus,
@@ -559,12 +565,15 @@
 #ai-send {
   background: var(--accent-bg);
   border: 1px solid var(--accent-border);
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--accent);
   font: inherit;
-  font-size: 13px;
+  /* Just under the composer's 15px, and bold like its sibling: the row is the
+     composer's own, so the buttons read as part of it rather than as chrome. */
+  font-size: 14px;
   font-weight: 600;
-  padding: 9px 14px;
+  line-height: 1.45;
+  padding: 6px 14px;
   cursor: pointer;
 }
 
@@ -577,11 +586,13 @@
 #ai-stop {
   background: var(--danger-bg);
   border: 1px solid var(--danger);
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--danger-fg);
   font: inherit;
-  font-size: 13px;
-  padding: 9px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  padding: 6px 14px;
   cursor: pointer;
 }
 

@@ -146,6 +146,21 @@ function wire(host, root, id, RT) {
     scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight <= STICK;
   const toBottom = () => { scrollEl.scrollTop = scrollEl.scrollHeight; };
 
+  // 展开/收起之后把被点的那一行按回它原来的屏幕位置。向下展开的内容长在它下面，
+  // 它自己本来不该动；真会动的是浏览器自己的滚动锚定（anchoring）——它锚的是下面
+  // 的内容，一展开就把整块往上拨，箭头跟着跑。这里量一次差值再补回去，同步完成，
+  // 不会闪。真在最底部时收起就补不回来了：内容变短，scrollTop 被钳在新的最大值。
+  function keepStill(row, fn) {
+    const top = row.getBoundingClientRect().top;
+    fn();
+    const moved = row.getBoundingClientRect().top - top;
+    if (moved) scrollEl.scrollTop += moved;
+  }
+
+  // 面板一律往下长。开合之后重新量一次“是不是贴着底”：贴着底展开时人已经在看
+  // 新面板了，再接着跟底会把这一行连同箭头一起顶上去（收起时反之，贴着底就继续贴）。
+  const syncPin = () => { if (hasBox()) pinned = atBottom(); };
+
   // 切走的 tab 没有布局盒：scrollHeight / clientHeight / scrollTop 全读成 0，
   // atBottom() 因此恒为 true，toBottom() 也是空操作。浏览器把 view 放回屏幕时
   // 恢复的是隐藏前的旧像素偏移，隐藏期间到达的内容于是留在视口下面——回到这个
@@ -189,21 +204,19 @@ function wire(host, root, id, RT) {
     const status = document.createElement("span");
     status.className = "ai-collapse-status ai-loading";
     head.append(caret, title, count, status);
-    // 展开方向由点下去的那一下决定：贴着底就往上长（继续跟底，摘要行原地不动），
-    // 翻上去了就往下长（就地展开，不抢滚动条）。箭头跟着说方向。
+    // 一律向下展开：箭头只报开合状态，不再报方向。贴着底展开时靠 syncPin 收住
+    // 跟底，免得把这一行连同箭头一起顶上去。
     const setCaret = () => {
-      caret.textContent = !el.classList.contains("open")
-        ? "▸"
-        : el.classList.contains("up") ? "▴" : "▾";
+      caret.textContent = el.classList.contains("open") ? "▾" : "▸";
     };
     head.addEventListener("click", () => {
-      const atEnd = atBottom();
       const opening = !el.classList.contains("open");
-      el.classList.toggle("up", opening && atEnd);
-      el.classList.toggle("open", opening);
+      keepStill(head, () => {
+        el.classList.toggle("open", opening);
+        head.setAttribute("aria-expanded", String(opening));
+      });
       setCaret();
-      head.setAttribute("aria-expanded", String(opening));
-      if (atEnd) toBottom();
+      syncPin();
     });
     el.appendChild(head);
     messagesEl.appendChild(el);
@@ -437,12 +450,13 @@ function wire(host, root, id, RT) {
       bd.appendChild(bodyName);
 
       head.addEventListener("click", () => {
-        const atEnd = atBottom();
-        bd.hidden = !bd.hidden;
-        el.classList.toggle("open", !bd.hidden);
-        // 面板排在组尾：组往上长时它落在整组最上面，往下长时落在卡片下面。
-        if (!bd.hidden) el.parentElement.appendChild(bd);
-        if (atEnd) toBottom();
+        keepStill(head, () => {
+          bd.hidden = !bd.hidden;
+          el.classList.toggle("open", !bd.hidden);
+          // 面板排到组尾：一律落在卡片下面，不因为组的位置换方向。
+          if (!bd.hidden) el.parentElement.appendChild(bd);
+        });
+        syncPin();
       });
 
       status = st;
