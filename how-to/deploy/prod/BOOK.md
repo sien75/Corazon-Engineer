@@ -27,7 +27,13 @@ The installed layout (under `~/.engineer/`) is software only — **upgrades only
 
 `bin/engineer` is the whole command: a native Go launcher serving `start` (default) / `status` / `version` / `uninstall [--purge]`.
 
-**Which project gets served**: `engineer` serves the directory it was invoked from — the cwd **is** the project, and may be empty (the agent initializes it). All data lives in that directory's `.engineer/`; the tool ships no project and keeps no project data. Logs and pids live under the project's `.engineer/logs/` and `.engineer/run/`, so two projects started from different directories never share processes or ports.
+**Which projects get served**: the program is not tied to the directory it was invoked from. Its data
+lives in one home — `$ENGINEER_DATA`, default `~/.engineer/data` (never inside a project): the database,
+the project board, uploads, and the `run/` + `logs/` directories. Projects are folders added on the web
+page (Engineer launcher, `+`) and remembered there; launching in a folder that holds `engineer.yaml`
+puts that folder on the board as a convenience, and a pre-home `.engineer/engineer.db` in it is merged
+into the home at start-up (records and sessions only — every start merges whatever is new). The tool
+ships no project and keeps no project data.
 
 **Lifecycle**: `engineer` starts the four services and holds the foreground; Ctrl-C stops them all. There is no `stop` command.
 
