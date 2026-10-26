@@ -1,0 +1,389 @@
+/* Agent Capability — a matrix page, with the conversation kept beside it. */
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 14px;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--surface-3);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  height: 100vh;
+}
+
+.board {
+  overflow: auto;
+  /* Centred reading column on a wide screen, full width below it. */
+  padding: 30px max(36px, calc((100% - 1080px) / 2)) 56px;
+}
+
+/* ---------- head ---------- */
+
+.head h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+
+.lede {
+  margin: 0 0 22px;
+  color: var(--fg-dim);
+  line-height: 1.65;
+  max-width: 62em;
+}
+
+/* ---------- stats ---------- */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 30px;
+}
+
+.stat {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat b {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.stat span {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+/* ---------- blocks ---------- */
+
+.block {
+  margin-bottom: 34px;
+}
+
+.block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.block-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+
+/* segmented filter */
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.seg button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+
+.seg button + button {
+  border-left: 1px solid var(--border);
+}
+
+.seg button:hover {
+  background: var(--surface-3);
+  color: var(--fg);
+}
+
+.seg button.on {
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------- tool table ---------- */
+
+table.tools {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+table.tools th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  font-weight: 600;
+  padding: 9px 14px;
+  background: var(--surface-inset);
+  border-bottom: 1px solid var(--border);
+}
+
+table.tools th.mark {
+  width: 76px;
+  text-align: center;
+}
+
+table.tools td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+table.tools tr:last-child td {
+  border-bottom: 0;
+}
+
+table.tools tbody tr:hover td {
+  background: var(--surface-inset);
+}
+
+table.tools td.name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  white-space: nowrap;
+  color: var(--fg);
+}
+
+table.tools td.what {
+  color: var(--fg-dim);
+}
+
+table.tools td.mark {
+  text-align: center;
+  font-size: 13px;
+}
+
+.yes {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.no {
+  color: var(--fg-muted);
+  opacity: 0.45;
+}
+
+tr.group td {
+  background: var(--surface-inset);
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  padding: 7px 14px;
+  font-weight: 600;
+}
+
+/* filters */
+
+#tools[data-filter="main"] tr[data-only="both"],
+#tools[data-filter="both"] tr[data-only="main"] {
+  display: none;
+}
+
+/* ---------- skill roots ---------- */
+
+.roots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.root {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 13px 14px 14px;
+}
+
+.root h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.root > code {
+  display: block;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  padding: 7px 9px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* An inline code inside the prose keeps its paragraph together. */
+.root p code {
+  display: inline;
+  background: var(--surface-3);
+  border: 0;
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+
+.root p {
+  margin: 9px 0 0;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* ---------- live skills ---------- */
+
+.live {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  padding: 14px 16px 16px;
+}
+
+.live-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.live-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tag {
+  font-size: 11px;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+
+.tag.ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+}
+
+.tag.err {
+  color: var(--err);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+.chip.suggested {
+  color: var(--fg-muted);
+  border-style: dashed;
+}
+
+.chip.suggested::after {
+  content: " · 未加载";
+  font-family: var(--font);
+  font-size: 11px;
+}
+
+.empty {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+}
+
+.hint {
+  margin: 12px 0 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.65;
+  max-width: 68em;
+}
+
+.foot {
+  margin-top: 34px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+/* ---------- chat ---------- */
+
+.chatpane {
+  border-left: 1px solid var(--border);
+  min-height: 0;
+}
+
+engineer-chat {
+  display: block;
+  height: 100%;
+}
+
+/* ---------- narrow ---------- */
+
+@media (max-width: 1080px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .board {
+    padding: 24px 20px 40px;
+    max-width: none;
+  }
+  .chatpane {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    height: 78vh;
+  }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .roots { grid-template-columns: minmax(0, 1fr); }
+}

@@ -1,7 +1,7 @@
 #!/bin/sh
 # stop the dev stack started by launch.sh
-ROOT="$PWD"
-D="$ROOT/.engineer/dev"
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+D="$ROOT/.engineer/dev${ENGINEER_INSTANCE:+-$ENGINEER_INSTANCE}"
 if [ ! -d "$D" ]; then
   echo "nothing to stop (no $D)"
   exit 0

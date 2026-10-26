@@ -10,7 +10,9 @@ System-level test cases. One directory per case under `dev/`: `desp.yaml` (metad
 
 Read `TEST.md` top to bottom and run it top to bottom. Three sections, in order:
 
-1. **Setup** — a scratch project root under `.engineer/<case>/`, the services this case needs, and any fixture files. Everything this case touches lives under that root; a case must never touch the real `.agents/` or `.engineer/`.
+1. **Setup** — a scratch project root under `.engineer/<case>/`, a scratch **data home** (`<root>/home`), the services this case needs, and any fixture files. Everything this case touches lives under that root; a case must never touch the real `.agents/` or `.engineer/`.
+
+   There is no `--root` any more: log and ai take `--home` (the program's own data directory), static takes `--log` and resolves the project each request names through it, and web serves whatever project a session belongs to. A case therefore **registers its scratch root as a project** after log is up (`POST /log/project/add` with `{path}`) and passes that `projectId` in every static request and in `ai/new`.
 2. **Run** — the checks. Either `curl` blocks (with the expected response written out) or one `ego-browser nodejs` script that prints `{ ok, checks }`.
 3. **Teardown** — `pkill` the services it started.
 
@@ -38,9 +40,9 @@ The reclaim block every Setup starts with (adjust the root and ports to this cas
 # A leftover service keeps serving its old database, and the failure it causes
 # looks like a wrong answer, not a dead service — so this happens before
 # anything starts, not after.
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts --root $ROOT" 2>/dev/null || true
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-static --log $LOG_URL" 2>/dev/null || true
+pkill -f "main.ts --home $HOME_DIR" 2>/dev/null || true
 pkill -f "serve-web.*--port $PORT_WEB" 2>/dev/null || true
 sleep 1
 ```

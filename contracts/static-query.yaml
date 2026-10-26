@@ -2,7 +2,8 @@ id: static-query
 description: Return full schema data for rendering the architecture graph and atom/edge details
 
 request:
-  body: {}
+  body:
+    projectId: string  # p_<12 hex> — whose tree to read; static has no root of its own any more
 
 response:
   status: 200
@@ -51,10 +52,10 @@ response:
 errors:
   - status: 400
     code: bad_request
-    description: bad request
+    description: projectId missing
   - status: 404
     code: not_found
-    description: not found
+    description: no such project
   - status: 500
     code: internal
-    description: server error
+    description: server error (including log being unreachable)

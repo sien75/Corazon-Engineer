@@ -121,8 +121,23 @@ window.addEventListener("keydown", (event) => {
 // There is no way for the user to open or close a tab here either: main's tools
 // do that, and a tool frame makes the shell re-read the workspace below.
 const openTabs = []; // main first, then the open sessions in display order
-let activeTabId = null; // "main" or a session id
+let activeTabId = null; // "main", a session id, or "launcher:<projectId>"
 let mainTab = null;
+// The project board, exactly as log remembers it: the titlebar's groups, and what
+// the Engineer launcher lists. Filled by loadProjects.
+let projectList = [];
+
+// loadProjects re-reads the board. It is the only place projectList changes.
+async function loadProjects() {
+  const data = await logCall("/log/project/list");
+  projectList = (data.projects || []).map((p) => ({
+    projectId: String(p.projectId ?? ""),
+    name: String(p.name || ""),
+    path: String(p.path || ""),
+    visible: p.visible !== false,
+  }));
+  return projectList;
+}
 
 async function logCall(path, body = {}) {
   const res = await fetch(`${LOG_BASE}${path}`, {
@@ -178,6 +193,9 @@ function tabFromSession(rec) {
     id: rec.sessionId,
     sessionId: rec.sessionId,
     kind: rec.kind || "sub",
+    // The project this session belongs to: what its page resolves through, and
+    // which project's tabs go away when the project leaves the board.
+    projectId: rec.projectId || "",
     // The name is stored with the session, so a reload draws the tab bar without
     // loading a single page. hydrateNames fills in rows that predate the field.
     name: rec.title || "",
@@ -220,11 +238,16 @@ function makeMainTab(sessionId) {
   return tab;
 }
 
-// viewOf builds the one element a tab shows: main's chat, or the agent's own page
-// in an iframe (its blueprint's index.html, served at /agent/<sessionId>/).
+// viewOf builds the one element a tab shows: main's chat, an agent's own page in
+// an iframe (its blueprint's index.html, served at /agent/<sessionId>/), or a
+// project's launcher page.
 function viewOf(tab) {
   if (tab.el) return tab.el;
   if (tab.main) return null; // built by makeMainTab
+  if (tab.kind === "launcher") {
+    tab.el = buildProjectLauncherView(tab.projectId);
+    return tab.el;
+  }
   const frame = document.createElement("iframe");
   frame.className = "view view-page";
   frame.title = tab.sessionId;
@@ -245,33 +268,204 @@ function viewOf(tab) {
   return frame;
 }
 
-// ---------- the tab bar ----------
+// ---------- the tab bar: main, then one group per project ----------
+//
+// The titlebar is grouped the way Chrome groups tabs — by project, not by the
+// user's choice: every project on the board has one chip, the chip expands to
+// that project's open session tabs, and the group stays after its last tab is
+// closed (a group is the project, not its tabs). main is global and sits outside
+// every group.
+//
+// A launcher tab is a tab of a group that is not a session: it shows that
+// project's launcher page (blueprints + recents). Its id is `launcher:<projectId>`,
+// it exists only in this browser — the page has no conversation to keep — and the
+// route puts it back after a reload.
+//
+// Expansion is this window's state, not stored: a chip click expands or collapses a
+// group, and a group that has open tabs starts expanded — so a reload comes back to
+// the tabs you had, and a project with nothing open is just its chip. Opening or
+// activating one of its tabs expands the group; hiding it forgets both, so showing
+// it again derives the state from its tabs.
+
+// Icons are inline SVG, drawn with the text colour: a tab group's edit is a pen on
+// a sheet (the "edit in a box" shape), the eye is a plain outline eye (and a
+// crossed one when the group is hidden). No font, no CDN, no emoji.
+const ICON_EDIT = `
+<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor"
+     stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M13.5 8.7V12.5A1.5 1.5 0 0 1 12 14H3.5A1.5 1.5 0 0 1 2 12.5V4A1.5 1.5 0 0 1 3.5 2.5H7.3" />
+  <path d="M11.7 2.3a1.45 1.45 0 0 1 2.05 2.05L8.1 10 5.3 10.7 6 7.9Z" />
+</svg>`;
+const ICON_EYE = `
+<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
+     stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M1.4 8S3.9 4.1 8 4.1 14.6 8 14.6 8 12.1 11.9 8 11.9 1.4 8 1.4 8Z" />
+  <circle cx="8" cy="8" r="1.9" />
+</svg>`;
+const ICON_EYE_OFF = `
+<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
+     stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M1.4 8S3.9 4.1 8 4.1 14.6 8 14.6 8 12.1 11.9 8 11.9 1.4 8 1.4 8Z" />
+  <circle cx="8" cy="8" r="1.9" />
+  <path d="M2.6 2.6 13.4 13.4" />
+</svg>`;
+
+const expandedGroups = new Set(); // explicitly expanded by the user
+const collapsedGroups = new Set(); // explicitly collapsed by the user
+
+function groupHasTabs(projectId) {
+  return openTabs.some((t) => !t.main && t.projectId === projectId);
+}
+
+function groupExpanded(projectId) {
+  if (collapsedGroups.has(projectId)) return false;
+  if (expandedGroups.has(projectId)) return true;
+  return groupHasTabs(projectId);
+}
+
+function expandGroup(projectId) {
+  if (!projectId) return;
+  collapsedGroups.delete(projectId);
+  expandedGroups.add(projectId);
+}
+
+function projectOf(tab) {
+  return tab.projectId ? projectList.find((p) => p.projectId === tab.projectId) : undefined;
+}
+
+function launcherTabId(projectId) {
+  return `launcher:${projectId}`;
+}
+
+function launcherTab(projectId) {
+  return openTabs.find((t) => t.id === launcherTabId(projectId));
+}
+
+// ensureLauncherTab puts a project's launcher on screen as a tab of its group. A
+// hidden group is made visible first: a group that is not drawn cannot be worked
+// in (`edit` on a hidden project means "show it, then open this").
+async function ensureLauncherTab(projectId) {
+  const project = projectList.find((p) => p.projectId === projectId);
+  if (!project) throw new Error(`project ${projectId} is not on the board`);
+  if (project.visible === false) await setProjectVisible(project, true);
+  expandGroup(projectId);
+  let tab = launcherTab(projectId);
+  if (!tab) {
+    tab = {
+      id: launcherTabId(projectId),
+      kind: "launcher",
+      projectId,
+      sessionId: "",
+      name: "launcher",
+      blueprint: "",
+      el: null,
+      frameEl: null,
+      main: false,
+    };
+    openTabs.push(tab);
+  }
+  return tab;
+}
+
+// tabButton is one tab in the bar: a label, and a close that takes the tab off
+// screen without losing anything behind it.
+function tabButton(tab) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className =
+    "tab" + (tab.main ? " main" : "") + (tab.kind === "launcher" ? " launcher" : "");
+  btn.dataset.tabId = tab.id;
+  const label = document.createElement("span");
+  label.className = "tab-label";
+  if (tab.main) label.textContent = "main";
+  else if (tab.kind === "launcher") label.innerHTML = ICON_EDIT; // the project launcher, drawn
+  else label.textContent = tab.name || "…";
+  btn.appendChild(label);
+  // The project launcher is not closable: it is the group's own page, the place
+  // that group's tabs are opened from. Only a conversation tab has a ×.
+  if (!tab.main && tab.kind !== "launcher") {
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "tab-close";
+    close.title = "close this tab (the conversation is kept)";
+    close.textContent = "×";
+    close.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void closeWorkspaceTab(tab);
+    });
+    btn.appendChild(close);
+  }
+  btn.addEventListener("click", () => void activateTab(tab.id));
+  return btn;
+}
+
+// launcherEntry is the project's launcher at the end of its group: always the same
+// icon, never a ×. Before its page is opened it opens it; once opened, that same
+// icon is the tab (it carries the tab id and the active underline), and clicking it
+// brings the page back.
+function launcherEntry(project) {
+  const tab = launcherTab(project.projectId);
+  if (tab) return tabButton(tab);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "tab launcher launcher-entry";
+  btn.dataset.launcherFor = project.projectId;
+  btn.innerHTML = ICON_EDIT;
+  const what = project.name || project.path || "this project";
+  btn.title = `open ${what}'s launcher`;
+  btn.setAttribute("aria-label", "open this project's launcher");
+  btn.addEventListener("click", () => void openProjectLauncher(project.projectId));
+  return btn;
+}
 
 function renderTabs() {
   tabsEl.innerHTML = "";
-  for (const tab of openTabs) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "tab" + (tab.main ? " main" : "");
-    btn.dataset.tabId = tab.id;
-    const label = document.createElement("span");
-    label.className = "tab-label";
-    label.textContent = tab.main ? "main" : tab.name || "…";
-    btn.appendChild(label);
-    if (!tab.main) {
-      const close = document.createElement("button");
-      close.type = "button";
-      close.className = "tab-close";
-      close.title = "close this tab (the conversation is kept)";
-      close.textContent = "×";
-      close.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void closeWorkspaceTab(tab);
-      });
-      btn.appendChild(close);
+  if (mainTab) tabsEl.appendChild(tabButton(mainTab));
+  for (const project of projectList) {
+    // Hidden is not closed: the group is not drawn, and every tab it had is still
+    // open in log — showing it again draws the same ones.
+    if (project.visible === false) continue;
+    const expanded = groupExpanded(project.projectId);
+    const group = document.createElement("div");
+    group.className = "tab-group" + (expanded ? " expanded" : "");
+    group.dataset.projectId = project.projectId;
+
+    const chip = document.createElement("div");
+    chip.className = "group-chip";
+    // The chip is the group's name and nothing else: it expands and collapses the
+    // group. The project launcher is not part of it — it is the last tab in the
+    // group (see launcherEntry), the way a browser puts "+" at the end of the tabs.
+    const name = document.createElement("button");
+    name.type = "button";
+    name.className = "group-label";
+    name.textContent = project.name || project.path || project.projectId;
+    name.title = `${project.name || project.path} — click to ${expanded ? "collapse" : "expand"} its tabs`;
+    name.setAttribute("aria-expanded", String(expanded));
+    name.addEventListener("click", () => {
+      const pid = project.projectId;
+      if (groupExpanded(pid)) {
+        expandedGroups.delete(pid);
+        collapsedGroups.add(pid);
+      } else {
+        expandGroup(pid);
+      }
+      renderTabs();
+    });
+    chip.appendChild(name);
+    group.appendChild(chip);
+
+    if (expanded) {
+      // The project's session tabs, then its launcher — last, like a browser's
+      // new-tab button. The launcher is a real tab once it is open (icon label,
+      // close button, underline when active); closed, it is the same icon with
+      // nothing around it, and clicking it opens that tab.
+      const tabs = openTabs.filter(
+        (t) => !t.main && t.kind !== "launcher" && t.projectId === project.projectId,
+      );
+      for (const tab of tabs) group.appendChild(tabButton(tab));
+      group.appendChild(launcherEntry(project));
     }
-    btn.addEventListener("click", () => void activateTab(tab.id));
-    tabsEl.appendChild(btn);
+    tabsEl.appendChild(group);
   }
   syncTabActive();
 }
@@ -284,10 +478,17 @@ function syncTabActive() {
   }
 }
 
-// The URL names the visible page and is also its reload/history restore point.
+// tabPath is the URL of the page a tab shows: the reload and history restore
+// point. main, a session, or a project's launcher.
+function tabPath(tab) {
+  if (tab.main) return "/";
+  if (tab.kind === "launcher") return `/project/${encodeURIComponent(tab.projectId)}/new`;
+  return `/session/${encodeURIComponent(tab.sessionId)}`;
+}
+
 function syncTabUrl(tab, mode) {
   if (!mode) return;
-  const path = tab.main ? "/" : `/session/${encodeURIComponent(tab.sessionId)}`;
+  const path = tabPath(tab);
   if (location.pathname === path) return;
   if (mode === "push") history.pushState({ tab: tab.id }, "", path);
   else history.replaceState({ tab: tab.id }, "", path);
@@ -296,23 +497,37 @@ function syncTabUrl(tab, mode) {
 async function activateTab(id, mode = "push") {
   const tab = openTabs.find((t) => t.id === id);
   if (!tab) return;
+  // A tab you are looking at must be visible: activating one of a hidden group
+  // shows the group (the eye is a view toggle, not a close).
+  const project = projectOf(tab);
+  if (project && project.visible === false) await setProjectVisible(project, true);
+  expandGroup(tab.projectId);
   launcherClose();
+  // A launcher tab is a live list (blueprints + that project's recents), not a
+  // document: rebuild it each time it comes back on stage, so a session created
+  // while it was in the background shows up in Recent.
+  if (tab.kind === "launcher") {
+    tab.el?.parentNode?.removeChild(tab.el);
+    tab.el = null;
+  }
   activeTabId = tab.id;
   showTab(tab);
   if (tab.main) tab.el?.focus?.();
-  syncTabActive();
+  renderTabs();
   syncTabUrl(tab, mode);
 }
 
 // closeWorkspaceTab closes a tab: log takes the session out of the open list and
 // everything the conversation holds stays (main's session-delete is what removes
-// things for good).
+// things for good). A launcher tab has nothing in log to close; its group stays.
 async function closeWorkspaceTab(tab) {
   if (tab.main) return;
-  try {
-    await logSessionOff(tab.sessionId);
-  } catch {
-    // Even if log says no, take it off screen; the next refresh will reconcile.
+  if (tab.kind !== "launcher") {
+    try {
+      await logSessionOff(tab.sessionId);
+    } catch {
+      // Even if log says no, take it off screen; the next refresh will reconcile.
+    }
   }
   removeTab(tab);
   if (activeTabId === tab.id) await activateTab("main", "replace");
@@ -366,11 +581,31 @@ async function doRefreshWorkspace() {
     // tab as it is rather than "repairing" the worker space into an empty one.
     byId = null;
   }
+  // The board first: every group in the titlebar comes from it, so a tab cannot
+  // be drawn before the projects are known.
+  let projectsKnown = true;
+  try {
+    await loadProjects();
+  } catch {
+    projectsKnown = false; // keep the board we had rather than emptying the bar
+  }
+  const onBoard = new Set(projectList.map((p) => p.projectId));
   const want = cur.openSessions ?? [];
   // A tab the workspace no longer holds goes off screen (a session-delete closes
-  // it too, but session-off or another window can drop it as well).
+  // it too, but session-off or another window can drop it as well). A launcher tab
+  // goes with its project: a project off the board has no group to live in.
   for (const tab of [...openTabs]) {
     if (tab.main) continue;
+    if (tab.kind === "launcher") {
+      if (projectsKnown && !onBoard.has(tab.projectId)) removeTab(tab);
+      continue;
+    }
+    // A session whose project is not on the board has no group to be drawn in;
+    // taking it off screen is the only honest thing left (it keeps its records).
+    if (projectsKnown && tab.projectId && !onBoard.has(tab.projectId)) {
+      removeTab(tab);
+      continue;
+    }
     if (!want.includes(tab.sessionId)) removeTab(tab);
   }
   // A tab the workspace gained: build it, resume it, put it up. `opened` is what
@@ -402,7 +637,7 @@ async function doRefreshWorkspace() {
       tab.name = rec.title;
     }
   }
-  if (byId && (repaired.length || want.some((id) => !byId.has(id)))) {
+  if (byId && projectsKnown && (repaired.length || want.some((id) => !byId.has(id)))) {
     const kept = want.filter((id) => byId.has(id));
     await logCurrentPut(kept, cur.mainSession).catch(() => {});
   }
@@ -416,7 +651,15 @@ async function doRefreshWorkspace() {
   }
   renderTabs();
   if (opened) await activateTab(opened.id);
-  const active = openTabs.find((t) => t.id === activeTabId);
+  let active = openTabs.find((t) => t.id === activeTabId);
+  // The active tab's group was hidden (the eye, here or in another window): the
+  // tab is still open, it is just not drawn — so the screen goes back to main
+  // instead of showing a page the bar does not account for.
+  const activeProject = active && active.projectId ? projectList.find((p) => p.projectId === active.projectId) : undefined;
+  if (active && !active.main && activeProject && activeProject.visible === false) {
+    await activateTab("main", "replace");
+    return;
+  }
   if (active) showTab(active);
   else await activateTab("main", "replace");
 }
@@ -457,11 +700,16 @@ async function fetchTabName(sessionId) {
   return title;
 }
 
-// ---------- the launcher (the +) ----------
+// ---------- the launcher: two pages ----------
 //
-// A popover, not a view: blueprints (static) and recent sessions (log). Picking a
-// blueprint makes a new agent in a new tab; picking a recent session puts that
-// session back on screen. main is not a tab, so it is not listed.
+// `+` opens the Engineer launcher: the board of projects, where a folder is
+// added or taken off. A project opens its own launcher: that project's
+// blueprints (static) and its recent conversations (log). Neither page is a tab
+// — both are routes, so a reload comes back to the same page.
+//
+// The program is not tied to a folder any more: a project is a folder the user
+// added here, remembered in the program's own home database, and the page is the
+// only place the board changes.
 
 const tabAddEl = document.getElementById("tab-add");
 const launcherEl = document.getElementById("launcher");
@@ -494,6 +742,18 @@ function launcherRelease() {
   launcherEl.classList.remove("busy");
 }
 
+// A launcher page is a route. Writing it here (rather than in the caller) keeps
+// every launcher entry point — +, a project row, the back link, a reload — on the
+// same URL.
+function launcherRoute(path, state, mode) {
+  if (location.pathname === path) return;
+  // The overlay page is a route too: while it is up the address must say so, even
+  // when it was reached without a navigation (a redraw after adding a project, or
+  // a redraw after hiding a group sent the screen back to main).
+  if (mode === "push") history.pushState(state, "", path);
+  else history.replaceState(state, "", path);
+}
+
 async function staticCall(path, body = {}) {
   const res = await fetch(`${STATIC_BASE}${path}`, {
     method: "POST",
@@ -521,8 +781,40 @@ function firstLine(markdown) {
   return String(markdown || "").split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "").trim() || "";
 }
 
-async function blueprintEntries() {
-  const data = await staticCall("/static/query", {});
+// ---------- projects ----------
+
+// addProject hands a path to the web server. web is the service that may read
+// the disk, so it is the one that decides what an engineer project is (a folder
+// holding engineer.yaml) and log is only what remembers the answer.
+async function addProject(path) {
+  const res = await fetch("/project/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/yaml" },
+    body: yaml.dump({ path }),
+  });
+  const text = await res.text();
+  let data = {};
+  try {
+    data = text ? yaml.load(text) || {} : {};
+  } catch {}
+  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+  return data;
+}
+
+// removeProject takes a project off the board. The folder and the conversations
+// stay — a tab of that project is closed first, because a tab is a session and a
+// session of a project nobody opened has nowhere to go.
+async function removeProject(project) {
+  const ids = openTabs.filter((t) => !t.main && t.projectId === project.projectId).map((t) => t.sessionId);
+  for (const id of ids) await logSessionOff(id).catch(() => {});
+  await logCall("/log/project/remove", { projectId: project.projectId });
+  await refreshWorkspace();
+}
+
+// ---------- a project's blueprints and recents ----------
+
+async function blueprintEntries(projectId) {
+  const data = await staticCall("/static/query", { projectId });
   const slugs = [...new Set(
     (data.blueprints || [])
       .map((p) => String(p))
@@ -538,6 +830,7 @@ async function blueprintEntries() {
       const index = await staticCall("/static/query-detail", {
         type: "blueprint",
         id: `.agents/blueprints/${slug}/index.html`,
+        projectId,
       });
       name = titleOf(index.blueprint) || slug;
     } catch {}
@@ -545,6 +838,7 @@ async function blueprintEntries() {
       const readme = await staticCall("/static/query-detail", {
         type: "blueprint",
         id: `.agents/blueprints/${slug}/README.md`,
+        projectId,
       });
       desc = firstLine(readme.blueprint);
     } catch {}
@@ -554,11 +848,11 @@ async function blueprintEntries() {
   return out;
 }
 
-// recentEntries is every session there is, most recently active first — a session
-// whose tab is closed is still a thing you can bring back, and bringing it back is
-// the same conversation, not a copy of it.
-async function recentEntries() {
-  const data = await logSessionList(1);
+// recentEntries is the project's sessions, most recently active first — a session
+// whose tab is closed is still a thing you can bring back, and bringing it back
+// is the same conversation, not a copy of it.
+async function recentEntries(projectId) {
+  const data = await logCall("/log/list", { pageNum: 1, projectId });
   return (data.sessions || [])
     .filter((s) => s.kind !== "main")
     .map((s) => ({
@@ -617,49 +911,313 @@ function launcherSection(title, { rows, err }, emptyText, rowOf) {
   return sec;
 }
 
-async function openLauncher(mode = "push") {
+function launcherSectionOf(title, promise, emptyText, rowOf) {
+  const sec = document.createElement("section");
+  sec.className = "launcher-sec";
+  const h = document.createElement("h3");
+  h.textContent = title;
+  sec.appendChild(h);
+  const pending = document.createElement("div");
+  pending.className = "launcher-empty";
+  pending.textContent = "…";
+  sec.appendChild(pending);
+  promise.then(
+    (rows) => {
+      const filled = launcherSection(title, { rows, err: null }, emptyText, rowOf);
+      sec.replaceWith(filled);
+    },
+    (err) => {
+      const failed = launcherSection(title, { rows: [], err }, emptyText, rowOf);
+      sec.replaceWith(failed);
+    },
+  );
+  return sec;
+}
+
+// ---------- engineer launcher (the +) ----------
+//
+// The board: every folder this engineer works on, with the two things the user
+// does to one — open it, or take it off the board — and a field to add another.
+// Nothing about the folder the program was started in appears here that was not
+// added on purpose.
+
+async function openEngineerLauncher(mode = "push") {
   if (launcherHold) return;
-  if (mode && location.pathname !== "/new") {
-    if (mode === "push") history.pushState({ launcher: true }, "", "/new");
-    else history.replaceState({ launcher: true }, "", "/new");
-  }
+  launcherRoute("/new", { launcher: "engineer" }, mode);
   launcherEl.hidden = false;
   syncTabActive();
   launcherEl.innerHTML = `<div class="launcher-empty">…</div>`;
-  const settle = (p) => p.then((rows) => ({ rows, err: null }), (err) => ({ rows: [], err }));
-  const [blueprints, recents] = await Promise.all([
-    settle(blueprintEntries()),
-    settle(recentEntries()),
-  ]);
+
+  let rows = [];
+  let err = null;
+  try {
+    rows = await loadProjects();
+    // The board is what the titlebar draws, so a project added (or removed) here
+    // shows up in the bar behind the overlay without a reload.
+    renderTabs();
+  } catch (e) {
+    err = e;
+  }
   launcherEl.innerHTML = "";
 
-  launcherEl.appendChild(
-    launcherSection("Blueprints", blueprints, "no blueprints in this project", (b) =>
-      launcherRow({ name: b.name, desc: b.desc, onOpen: () => void openBlueprintFromLauncher(b) }),
-    ),
-  );
-  launcherEl.appendChild(
-    launcherSection("Recent", recents, "nothing yet", (r) =>
-      launcherRow({
-        name: r.title || r.sessionId,
-        desc: r.desc,
-        onOpen: () => void openSessionFromLauncher(r.sessionId),
-      }),
-    ),
-  );
+  const sec = document.createElement("section");
+  sec.className = "launcher-sec";
+  const h = document.createElement("h3");
+  h.textContent = err ? "Projects" : `Projects · ${rows.length}`;
+  sec.appendChild(h);
+  sec.appendChild(projectForm());
+  if (err) {
+    const e = document.createElement("div");
+    e.className = "launcher-error";
+    e.textContent = err.message;
+    sec.appendChild(e);
+  } else if (!rows.length) {
+    const e = document.createElement("div");
+    e.className = "launcher-empty";
+    e.textContent = "no projects yet — add a folder above";
+    sec.appendChild(e);
+  } else {
+    for (const p of rows) sec.appendChild(projectRow(p));
+  }
+  launcherEl.appendChild(sec);
 }
 
-// openBlueprintFromLauncher makes a new agent from a blueprint and puts it on
-// screen as a tab of its own — the same two writes main's session-new does, from
-// the UI. `ai/new` has already written the session row (kind, blueprint, title).
-async function openBlueprintFromLauncher(b) {
+// projectForm is how a folder becomes a project. It stays on screen after a
+// failure: the reason (no engineer.yaml there, no such folder) is the whole
+// answer, and the field the user typed in should still hold it.
+function projectForm() {
+  const form = document.createElement("form");
+  form.className = "launcher-form";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.name = "path";
+  input.placeholder = "/absolute/path/to/project (or ~/…)";
+  input.spellcheck = false;
+  input.autocomplete = "off";
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.textContent = "add project";
+  const err = document.createElement("div");
+  err.className = "launcher-error";
+  err.hidden = true;
+  form.append(input, submit, err);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const path = input.value.trim();
+    if (!path) return;
+    submit.disabled = true;
+    err.hidden = true;
+    try {
+      await addProject(path);
+      input.value = "";
+      // Redraw from log: the board is log's, and a project added twice comes
+      // back as the same row.
+      await openEngineerLauncher(null);
+    } catch (e) {
+      err.textContent = e.message;
+      err.hidden = false;
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  return form;
+}
+
+// projectRow is one project on the board: the name opens its launcher tab, `edit`
+// does the same thing explicitly, the eye hides or shows its group in the
+// titlebar, and `remove` takes the project off the board.
+function projectRow(p) {
+  const row = document.createElement("div");
+  row.className = "project-row" + (p.visible === false ? " hidden-group" : "");
+  const open = launcherRow({
+    name: p.name || p.path || p.projectId,
+    desc: [p.path, p.visible === false ? "hidden from the titlebar" : ""].filter(Boolean).join(" · "),
+    onOpen: () => void openProjectLauncher(p.projectId),
+  });
+  open.dataset.projectId = p.projectId;
+  const actions = document.createElement("div");
+  actions.className = "project-actions";
+
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "row-btn edit";
+  edit.innerHTML = ICON_EDIT;
+  edit.title = "edit — open this project's launcher in a new tab";
+  edit.setAttribute("aria-label", "edit this project");
+  edit.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void openProjectLauncher(p.projectId);
+  });
+
+  const eye = document.createElement("button");
+  eye.type = "button";
+  eye.className = "row-btn eye" + (p.visible === false ? " off" : "");
+  eye.innerHTML = p.visible === false ? ICON_EYE_OFF : ICON_EYE;
+  eye.title =
+    p.visible === false
+      ? "show this project's group in the titlebar (its tabs are still open)"
+      : "hide this project's group from the titlebar (its tabs stay open)";
+  eye.setAttribute("aria-label", p.visible === false ? "show group" : "hide group");
+  eye.setAttribute("aria-pressed", String(p.visible !== false));
+  eye.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (launcherHold) return;
+    launcherHoldOn();
+    try {
+      await setProjectVisible(p, p.visible === false);
+      launcherRelease();
+      await openEngineerLauncher(null);
+    } catch (e) {
+      launcherRelease();
+      toast(`could not change the group: ${e.message}`);
+    }
+  });
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "row-btn";
+  remove.textContent = "remove";
+  remove.title = "take this project off the board — its folder and conversations stay";
+  remove.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (launcherHold) return;
+    launcherHoldOn();
+    try {
+      await removeProject(p);
+      launcherRelease();
+      await openEngineerLauncher(null);
+    } catch (e) {
+      launcherRelease();
+      toast(`could not remove: ${e.message}`);
+    }
+  });
+  actions.append(edit, eye, remove);
+  row.append(open, actions);
+  return row;
+}
+
+// setProjectVisible is the eye: it stores the group's visibility and redraws the
+// bar. Its tabs are not touched — a hidden group keeps them open, and showing it
+// again draws exactly those. Hiding the group of the tab on screen sends the
+// screen back to main.
+async function setProjectVisible(project, visible) {
+  const row = await logCall("/log/project/visible", { projectId: project.projectId, visible });
+  const known = projectList.find((p) => p.projectId === project.projectId);
+  if (known) known.visible = row.visible !== false;
+  else await loadProjects().catch(() => {});
+  if (!visible) {
+    expandedGroups.delete(project.projectId);
+    collapsedGroups.delete(project.projectId);
+    const active = openTabs.find((t) => t.id === activeTabId);
+    if (active && !active.main && active.projectId === project.projectId) {
+      await activateTab("main", "replace");
+    }
+  }
+  renderTabs();
+  return known || project;
+}
+
+// ---------- project launcher ----------
+
+// A project's launcher is a tab of that project's group: what it can be asked to
+// open (its blueprints) and what was opened before (its recents). It belongs to
+// the group, so opening it means showing the group, adding the tab and bringing
+// it up.
+async function openProjectLauncher(projectId, mode = "push") {
+  if (launcherHold) return;
+  const project = projectList.find((p) => p.projectId === projectId);
+  if (!project) {
+    toast(`project ${projectId} is not on the board`);
+    await openEngineerLauncher();
+    return;
+  }
+  launcherHoldOn();
+  try {
+    await ensureLauncherTab(projectId);
+    await activateTab(launcherTabId(projectId), mode);
+  } catch (err) {
+    launcherRelease();
+    toast(`could not open the launcher: ${err.message}`);
+    return;
+  }
+  launcherRelease();
+  launcherClose();
+}
+
+// buildProjectLauncherView draws the page a launcher tab shows. Everything on it
+// is that project's: the query carries its id, and log answers for that project
+// alone. The sections fill in as they arrive; a section that cannot be read says
+// why instead of pretending the project is empty.
+function buildProjectLauncherView(projectId) {
+  const view = document.createElement("div");
+  view.className = "view view-launcher";
+  const project = projectList.find((p) => p.projectId === projectId);
+  const name = project?.name || project?.path || projectId;
+  const path = project?.path || "";
+  view.appendChild(
+    launcherHead(name, path, () => void openEngineerLauncher()),
+  );
+  view.appendChild(
+    launcherSectionOf(
+      "Blueprints",
+      blueprintEntries(projectId),
+      "no blueprints in this project",
+      (b) =>
+        launcherRow({
+          name: b.name,
+          desc: b.desc,
+          onOpen: () => void openBlueprintFromLauncher(b, projectId),
+        }),
+    ),
+  );
+  view.appendChild(
+    launcherSectionOf(
+      "Recent",
+      recentEntries(projectId),
+      "nothing yet",
+      (r) =>
+        launcherRow({
+          name: r.title || r.sessionId,
+          desc: r.desc,
+          onOpen: () => void openSessionFromLauncher(r.sessionId),
+        }),
+    ),
+  );
+  return view;
+}
+
+// launcherHead is the project launcher's title: the project's name, the folder it
+// lives in, and the way back to the board.
+function launcherHead(title, path, onBack) {
+  const head = document.createElement("div");
+  head.className = "launcher-head";
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "row-btn";
+  back.textContent = "← projects";
+  back.addEventListener("click", onBack);
+  const name = document.createElement("span");
+  name.className = "launcher-title";
+  name.textContent = title;
+  const dir = document.createElement("span");
+  dir.className = "launcher-path";
+  dir.textContent = path;
+  head.append(back, name, dir);
+  return head;
+}
+
+// openBlueprintFromLauncher makes a new agent from a blueprint inside a project
+// and puts it on screen as a tab of its own — the same two writes main's
+// session-new does, from the UI. `ai/new` has already written the session row
+// (kind, project, blueprint, title).
+async function openBlueprintFromLauncher(b, projectId) {
   if (launcherHold) return;
   launcherHoldOn();
   try {
     const res = await fetch(`${AI_BASE}/ai/new`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
-      body: yaml.dump({ blueprint: b.slug }),
+      body: yaml.dump({ blueprint: b.slug, projectId }),
     });
     const data = yaml.load(await res.text()) || {};
     if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
@@ -704,7 +1262,7 @@ async function openSessionFromLauncher(sessionId) {
 
 tabAddEl.addEventListener("click", (event) => {
   event.stopPropagation();
-  void openLauncher();
+  void openEngineerLauncher();
 });
 
 window.addEventListener("mousedown", (event) => {
@@ -748,6 +1306,17 @@ async function boot() {
   mainTab = makeMainTab(mainSession);
   openTabs.push(mainTab);
 
+  // The bar is drawn group by group, so the board has to be known first. A board
+  // that cannot be read still leaves main usable — the groups are simply absent,
+  // and nothing is repaired: a board we could not read says nothing about which
+  // sessions belong where, and writing that guess back would close them.
+  let boardKnown = true;
+  try {
+    await loadProjects();
+  } catch {
+    boardKnown = false;
+  }
+
   let byId = null;
   try {
     byId = await sessionsById();
@@ -755,12 +1324,17 @@ async function boot() {
     // a list that cannot be read still leaves main usable, and must not make the
     // open list look empty
   }
+  const onBoard = new Set(projectList.map((p) => p.projectId));
   const kept = [];
   for (const sessionId of cur.openSessions ?? []) {
     if (byId && !byId.has(sessionId)) continue; // row gone: repair, don't show a ghost
-    kept.push(tabFromSession(byId?.get(sessionId) ?? { sessionId }));
+    const tab = tabFromSession(byId?.get(sessionId) ?? { sessionId });
+    // A tab lives in a group, and a group is a project on the board: a session
+    // left open by a project that was taken off has nowhere to be drawn.
+    if (boardKnown && tab.projectId && !onBoard.has(tab.projectId)) continue;
+    kept.push(tab);
   }
-  if (byId && kept.length !== (cur.openSessions ?? []).length) {
+  if (byId && boardKnown && kept.length !== (cur.openSessions ?? []).length) {
     await logCurrentPut(kept.map((t) => t.sessionId), mainSession).catch(() => {});
   }
   openTabs.push(...kept);
@@ -785,7 +1359,15 @@ async function restoreRoute() {
     const tab = openTabs.find((t) => t.id === activeTabId) || mainTab;
     activeTabId = tab.id;
     showTab(tab);
-    await openLauncher(null);
+    await openEngineerLauncher(null);
+    return;
+  }
+  const projectPage = path.match(/^\/project\/([^/]+)\/new$/);
+  if (projectPage) {
+    const tab = openTabs.find((t) => t.id === activeTabId) || mainTab;
+    activeTabId = tab.id;
+    showTab(tab);
+    await openProjectLauncher(decodeURIComponent(projectPage[1]), null);
     return;
   }
   if (path === "/") {
@@ -800,6 +1382,9 @@ async function restoreRoute() {
     if (!tab) {
       const rec = await logSessionMeta(id);
       if (rec.kind !== "sub") throw new Error("this is not an open workspace session");
+      if (rec.projectId && !projectList.some((p) => p.projectId === rec.projectId)) {
+        throw new Error("that project is not on the board");
+      }
       // Do not let a late response replace a page the user navigated to meanwhile.
       if (location.pathname !== path) return;
       await aiResume(id);

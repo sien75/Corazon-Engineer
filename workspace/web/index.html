@@ -23,12 +23,14 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <!-- The shell is one thing: main's own conversation, and the tabs main opens.
-       Both live in #tabs; both are drawn into #panes. There are no fixed views. -->
+  <!-- The shell is one thing: main's own conversation (global, in no group) and
+       the sessions on screen. Both live in #tabs; both are drawn into #panes.
+       `+` is not "new tab" — it opens the engineer launcher, where the projects
+       this program works on are added and removed. -->
   <header id="topbar">
     <span id="logo">Corazon Engineer</span>
     <nav id="tabs"></nav>
-    <button id="tab-add" type="button" title="new tab" aria-label="new tab"><span class="tab-label">+</span></button>
+    <button id="tab-add" type="button" title="projects — add or open one" aria-label="projects"><span class="tab-label">+</span></button>
     <div id="theme-wrap">
       <button id="theme-toggle" type="button" title="theme">theme</button>
       <div id="theme-menu" hidden>

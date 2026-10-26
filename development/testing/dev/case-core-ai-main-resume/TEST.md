@@ -43,14 +43,15 @@ Run from the project root (the directory holding `engineer.yaml`).
 ```bash
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.main-resume"
-: "${ROOT:?this case must set ROOT before reclaiming}"
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
-for p in 9030 9031 9032 9033; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+# log's database and the project board live in the engineer home, not in a project.
+HOME_DIR="$ROOT/home"
+: "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+for p in 9030 9031 9032 9033; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$ROOT"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: main-resume\n' > "$ROOT/engineer.yaml"
 # the browser part runs in Node, outside this shell's cwd: it reads the root from here
 printf '%s\n' "$ROOT" > /tmp/main-resume-root
@@ -61,14 +62,20 @@ printf '# Demo\n\na page\n' > "$ROOT/.agents/blueprints/demo/README.md"
 printf '<!doctype html><title>Demo</title>demo<engineer-chat></engineer-chat>\n' > "$ROOT/.agents/blueprints/demo/index.html"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer-main-resume .)
-/tmp/engineer-main-resume serve-log --root "$ROOT" --bind 127.0.0.1 --port 9031 >/tmp/main-resume-log.log 2>&1 &
-/tmp/engineer-main-resume serve-static --root "$ROOT" --bind 127.0.0.1 --port 9032 >/tmp/main-resume-static.log 2>&1 &
+/tmp/engineer-main-resume serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9031 >/tmp/main-resume-log.log 2>&1 &
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:9031/log/project/list -d '{}' && break
+  sleep 1
+done
+curl -s -X POST http://localhost:9031/log/project/add -H 'Content-Type: application/yaml' \
+  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > /tmp/main-resume-project
+/tmp/engineer-main-resume serve-static --log http://localhost:9031 --bind 127.0.0.1 --port 9032 >/tmp/main-resume-static.log 2>&1 &
 
 # start_ai is reused in section 2: the ai process is restarted there to prove that
 # resume rebuilds a conversation from its records once memory is gone.
 BUNSRC="$ROOTDIR/workspace/ai"
 start_ai() {
-  (cd "$BUNSRC" && bun run src/main.ts --bind 127.0.0.1 --port 9033 --root "$ROOT" \
+  (cd "$BUNSRC" && bun run src/main.ts --bind 127.0.0.1 --port 9033 --home "$HOME_DIR" \
     --log http://localhost:9031 --static http://localhost:9032 \
     --agents "$ROOTDIR/agents" >>/tmp/main-resume-ai.log 2>&1 &)
 }
@@ -76,7 +83,6 @@ start_ai() {
 start_ai
 
 /tmp/engineer-main-resume serve-web --bind 127.0.0.1 --port 9030 --assets "$ROOTDIR/workspace/web" \
-  --blueprints "$ROOT/.agents/blueprints" \
   --static http://localhost:9032 --ai http://localhost:9033 --log http://localhost:9031 \
   >/tmp/main-resume-web.log 2>&1 &
 
@@ -126,7 +132,10 @@ MAIN1=$(curl -s -X POST $AI/ai/new -d 'kind: main' | sid)
 ask $MAIN1 "Remember the word alpha. Reply with the single word: ok"
 MAIN2=$(curl -s -X POST $AI/ai/new -d 'kind: main' | sid)
 ask $MAIN2 "Remember the word beta. Reply with the single word: ok"
-SUB=$(curl -s -X POST $AI/ai/new -d 'blueprint: demo' | sid)
+PROJECT=$(cat /tmp/main-resume-project)
+SUB=$(curl -s -X POST $AI/ai/new \
+  -H 'Content-Type: application/yaml' \
+  --data-binary "$(printf 'projectId: %s\nblueprint: demo' "$PROJECT")" | sid)
 # the pointer starts on MAIN1, so section 2's resume of MAIN2 is a real move
 curl -s -o /dev/null -X POST $LOG/log/current/put -d "openSessions: []
 mainSession: $MAIN1"
@@ -145,7 +154,7 @@ MAIN2 is the conversation that is *not* on screen, and after the restart no proc
 the only way back is its records.
 
 ```bash
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 sleep 2
 start_ai
 for i in $(seq 1 60); do
@@ -324,9 +333,9 @@ check would sit on the old session until its 180 s timeout.
 ## Teardown
 
 ```bash
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
-for p in 9030 9031 9032 9033; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-static --log http://localhost:9032" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+for p in 9030 9031 9032 9033; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 rm -rf "$ROOT"
 ```

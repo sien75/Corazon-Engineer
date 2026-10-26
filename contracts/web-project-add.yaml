@@ -1,0 +1,26 @@
+id: web-project-add
+description: Admit a folder as a project. The web server is the service that reads the disk, so the rule lives here — a folder is an engineer project when it holds an engineer.yaml — and log only remembers the answer (log-project-add). The path is expanded (~) and made absolute first; the name is the marker's `project:` line, or the folder name
+
+request:
+  body:
+    path: string  # folder path as typed: absolute, or starting with ~
+
+response:
+  status: 200
+  body:  # the project row, exactly as log-project-add returns it
+    projectId: string
+    path: string  # absolute
+    name: string
+    createdAt: string
+    updatedAt: string
+
+errors:
+  - status: 400
+    code: bad_request
+    description: path missing, no such folder, not a folder, or no engineer.yaml in it
+  - status: 502
+    code: internal
+    description: log could not be reached
+  - status: 500
+    code: internal
+    description: server internal error

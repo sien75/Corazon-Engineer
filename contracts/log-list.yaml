@@ -4,6 +4,7 @@ description: List conversation sessions, most recently active first — one entr
 request:
   body:
     pageNum?: number  # page number, 1-based, default 1
+    projectId?: string  # only this project's sessions; empty = every session, main included
 
 response:
   status: 200
@@ -11,6 +12,7 @@ response:
     sessions:
       - sessionId: string  # conversation session id
         kind: main | sub  # the session's role; "sub" when it has no row in sessions
+        projectId: string  # the project it belongs to, "" for main
         blueprint: string  # slug of the page it drives, "" when it has none
         title: string  # display name (the blueprint page's <title>); "" when none was written
         createdAt: string  # first message time, or the session row's creation time when nothing was said yet, RFC3339

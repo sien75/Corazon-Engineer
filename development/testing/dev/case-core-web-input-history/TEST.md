@@ -1,4 +1,9 @@
 # Test: core-web-input-history
+> ⚠️ 这个用例的 launcher 交互写的是旧外壳（`#newtab` / `data-action=newchat` / `#ai-input-field` 直接挂在
+> document 上）。P1/P2 只改了它的启动参数（`--home` / 项目注册），断言部分**尚未**跟上当前外壳
+> （composer 在 `<engineer-chat>` 的 shadow DOM 里，`+` 开的是 Engineer launcher）。重写属于另一件事，
+> 记在 `development/iterations/2610-50-多项目工作区.md` 的已知缺口里。
+
 
 The chat composer behaves like a CLI prompt line: ArrowUp walks back through the
 conversation's prompts (newest first), and ArrowDown walks forward again, giving
@@ -22,40 +27,45 @@ Prerequisite: `ego-browser` on `PATH` (`ego-browser --version`).
 ```bash
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.input-history-test"
-rm -rf "$ROOT" && mkdir -p "$ROOT"
+HOME_DIR="$ROOT/home"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: input-history-test\n' > "$ROOT/engineer.yaml"
 
-# Guard first: with an empty $ROOT the pattern below degrades to
-# "serve-log --root " and kills every service on the machine —
+# Guard first: with an empty $HOME_DIR the pattern below degrades to
+# "serve-log --home " and kills every service on the machine —
 # including the one running the agent. Fail loudly instead.
-: "${ROOT:?this case must set ROOT before reclaiming}"
+: "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 # Reclaim a previous run of this case. A leftover service keeps serving its
 # old database (or silently stops this run's from binding, so the frontend
 # talks to the other case's services) — and the failure that causes looks
 # like a wrong answer, not a dead service. This happens before, not after.
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
-for p in 8930 8931 8932 8933; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+for p in 8930 8931 8932 8933; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8930 >/tmp/input-history-log.log 2>&1 &
-# its own static, rooted at $ROOT: the launcher reads skills from static
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8931 >/tmp/input-history-static.log 2>&1 &
+/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8930 >/tmp/input-history-log.log 2>&1 &
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8930/log/project/list -d '{}' && break
+  sleep 1
+done
+curl -s -o /dev/null -X POST http://localhost:8930/log/project/add \
+  -H 'Content-Type: application/yaml' --data-binary "path: $ROOT"
+# its own static: the launcher reads the project's tree through it, by projectId
+/tmp/engineer serve-static --log http://localhost:8930 --bind 127.0.0.1 --port 8931 >/tmp/input-history-static.log 2>&1 &
 
-(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8932 --stub \
+(cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 8932 --stub \
   --log http://localhost:8930 --static http://localhost:8931 \
   --agents "$ROOTDIR/agents" >/tmp/input-history-ai.log 2>&1 &)
 sleep 2
 # wait for ai: the first /ai/new must not race the boot
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8932/ai/new -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8932/ai/new -d 'kind: main' && break
   sleep 1
 done
 
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8933 --assets "$ROOTDIR/workspace/web" \
-  --pages /tmp/engineer-pages-unused \
   --static http://localhost:8931 --ai http://localhost:8932 --log http://localhost:8930 \
   >/tmp/input-history-web.log 2>&1 &
 ```

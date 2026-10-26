@@ -36,14 +36,15 @@ Run from the project root (the directory holding `engineer.yaml`).
 ```bash
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.main-new"
-: "${ROOT:?this case must set ROOT before reclaiming}"
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
-for p in 9020 9021 9022 9023; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+# log's database and the project board live in the engineer home, not in a project.
+HOME_DIR="$ROOT/home"
+: "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+for p in 9020 9021 9022 9023; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$ROOT"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: main-new\n' > "$ROOT/engineer.yaml"
 # the browser part runs in Node, outside this shell's cwd: it reads the root from here
 printf '%s\n' "$ROOT" > /tmp/main-new-root
@@ -54,15 +55,21 @@ printf '# Demo\n\na page\n' > "$ROOT/.agents/blueprints/demo/README.md"
 printf '<!doctype html><title>Demo</title>demo<engineer-chat></engineer-chat>\n' > "$ROOT/.agents/blueprints/demo/index.html"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer-main-new .)
-/tmp/engineer-main-new serve-log --root "$ROOT" --bind 127.0.0.1 --port 9021 >/tmp/main-new-log.log 2>&1 &
-/tmp/engineer-main-new serve-static --root "$ROOT" --bind 127.0.0.1 --port 9022 >/tmp/main-new-static.log 2>&1 &
+/tmp/engineer-main-new serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9021 >/tmp/main-new-log.log 2>&1 &
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:9021/log/project/list -d '{}' && break
+  sleep 1
+done
+curl -s -X POST http://localhost:9021/log/project/add -H 'Content-Type: application/yaml' \
+  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > /tmp/main-new-project
+PROJECT=$(cat /tmp/main-new-project)
+/tmp/engineer-main-new serve-static --log http://localhost:9021 --bind 127.0.0.1 --port 9022 >/tmp/main-new-static.log 2>&1 &
 
-(cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 9023 --root "$ROOT" \
+(cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 9023 --home "$HOME_DIR" \
   --log http://localhost:9021 --static http://localhost:9022 \
   --agents "$ROOTDIR/agents" >/tmp/main-new-ai.log 2>&1 &)
 
 /tmp/engineer-main-new serve-web --bind 127.0.0.1 --port 9020 --assets "$ROOTDIR/workspace/web" \
-  --blueprints "$ROOT/.agents/blueprints" \
   --static http://localhost:9022 --ai http://localhost:9023 --log http://localhost:9021 \
   >/tmp/main-new-web.log 2>&1 &
 
@@ -136,7 +143,10 @@ still `$MAIN2` — the new main did not quietly switch again.
 ## 3. a sub agent does not have the tool
 
 ```bash
-SUB=$(curl -s -X POST $AI/ai/new -d 'blueprint: demo' | sid)
+PROJECT=$(cat /tmp/main-new-project)
+SUB=$(curl -s -X POST $AI/ai/new \
+  -H 'Content-Type: application/yaml' \
+  --data-binary "$(printf 'projectId: %s\nblueprint: demo' "$PROJECT")" | sid)
 ask $SUB "Call the main-new tool right now. Do not use bash or curl, and do not ask me anything — just call the tool and report its exact reply."
 echo "current: $(mainid)  expected: $MAIN2"
 curl -s -X POST $LOG/log/session/messages -d "sessionId: $SUB" | grep -c 'name: main-new' || true
@@ -253,9 +263,9 @@ between log and the screen is the reproduction, not a flaky check.
 ## Teardown
 
 ```bash
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
-for p in 9020 9021 9022 9023; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-static --log http://localhost:9021" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+for p in 9020 9021 9022 9023; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 rm -rf "$ROOT"
 ```

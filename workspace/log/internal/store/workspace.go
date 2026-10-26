@@ -19,6 +19,10 @@ import (
 type Session struct {
 	SessionID string `yaml:"sessionId"`
 	Kind      string `yaml:"kind"`
+	// ProjectID is the project this conversation belongs to — the group it is
+	// drawn under. "" means it belongs to none: main is the shell's own
+	// conversation and is not part of any project.
+	ProjectID string `yaml:"projectId"`
 	// Blueprint is the slug of the page this conversation drives; "" for main and
 	// for conversations that never had one. The web server resolves
 	// /agent/<sessionId>/ through it — the database is the only place the mapping
@@ -36,6 +40,7 @@ func (s Session) Body() map[string]interface{} {
 	return map[string]interface{}{
 		"sessionId": s.SessionID,
 		"kind":      s.Kind,
+		"projectId": s.ProjectID,
 		"blueprint": s.Blueprint,
 		"title":     s.Title,
 		"createdAt": s.CreatedAt,
@@ -92,9 +97,19 @@ func (s *Store) createWorkspaceTables() error {
 		`CREATE TABLE IF NOT EXISTS sessions (
 			session_id TEXT PRIMARY KEY,
 			kind TEXT NOT NULL DEFAULT 'sub',
+			project_id TEXT NOT NULL DEFAULT '',
 			blueprint TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS projects (
+			project_id TEXT PRIMARY KEY,
+			path TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			removed_at TEXT NOT NULL DEFAULT '',
+			visible INTEGER NOT NULL DEFAULT 1
 		)`,
 		`CREATE TABLE IF NOT EXISTS current (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -114,10 +129,18 @@ func (s *Store) createWorkspaceTables() error {
 	for _, stmt := range []string{
 		`ALTER TABLE sessions ADD COLUMN blueprint TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`,
+		// A board written before groups existed gets the eye's column in place:
+		// every project it holds was drawn in the titlebar, so visible is the
+		// honest default.
+		`ALTER TABLE projects ADD COLUMN visible INTEGER NOT NULL DEFAULT 1`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err
 		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_session_project ON sessions(project_id)`); err != nil {
+		return err
 	}
 	// The workspace used to list tab ids and the current list was called open_tabs;
 	// this is the one-way move to session ids. It runs before the old tab table is
@@ -256,10 +279,11 @@ func (s *Store) writeOpenSessions(sessionIDs []string) error {
 	return err
 }
 
-// UpsertSession stores a session's kind, blueprint and display name. An existing
-// row keeps its createdAt, and an empty blueprint / title keeps the stored value:
-// a resume or a replay says nothing about the page, so it must not wipe it.
-func (s *Store) UpsertSession(sessionID, kind, blueprint, title string) (Session, error) {
+// UpsertSession stores a session's kind, project, blueprint and display name. An
+// existing row keeps its createdAt, and an empty project / blueprint / title
+// keeps the stored value: a resume or a replay says nothing about the project or
+// the page, so it must not wipe it.
+func (s *Store) UpsertSession(sessionID, kind, projectID, blueprint, title string) (Session, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return Session{}, sql.ErrNoRows
@@ -267,16 +291,18 @@ func (s *Store) UpsertSession(sessionID, kind, blueprint, title string) (Session
 	if kind != "main" {
 		kind = "sub"
 	}
+	projectID = strings.TrimSpace(projectID)
 	blueprint = strings.TrimSpace(blueprint)
 	title = strings.TrimSpace(title)
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.Exec(`INSERT INTO sessions (session_id, kind, blueprint, title, created_at)
-		VALUES (?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`INSERT INTO sessions (session_id, kind, project_id, blueprint, title, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			kind = excluded.kind,
+			project_id = CASE WHEN excluded.project_id = '' THEN sessions.project_id ELSE excluded.project_id END,
 			blueprint = CASE WHEN excluded.blueprint = '' THEN sessions.blueprint ELSE excluded.blueprint END,
 			title = CASE WHEN excluded.title = '' THEN sessions.title ELSE excluded.title END`,
-		sessionID, kind, blueprint, title, now)
+		sessionID, kind, projectID, blueprint, title, now)
 	if err != nil {
 		return Session{}, err
 	}
@@ -286,8 +312,8 @@ func (s *Store) UpsertSession(sessionID, kind, blueprint, title string) (Session
 // GetSession returns one session; sql.ErrNoRows when it does not exist.
 func (s *Store) GetSession(sessionID string) (Session, error) {
 	var out Session
-	err := s.db.QueryRow(`SELECT session_id, kind, blueprint, title, created_at FROM sessions WHERE session_id = ?`,
-		sessionID).Scan(&out.SessionID, &out.Kind, &out.Blueprint, &out.Title, &out.CreatedAt)
+	err := s.db.QueryRow(`SELECT session_id, kind, project_id, blueprint, title, created_at FROM sessions WHERE session_id = ?`,
+		sessionID).Scan(&out.SessionID, &out.Kind, &out.ProjectID, &out.Blueprint, &out.Title, &out.CreatedAt)
 	return out, err
 }
 

@@ -22,8 +22,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -32,6 +34,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	logsvc "engineer/log"
 	staticsvc "engineer/static"
@@ -66,6 +70,10 @@ func main() {
 		staticsvc.Serve(os.Args[2:])
 	case "serve-web":
 		websrv.Serve(os.Args[2:])
+	// Internal too: the launchers run it to move a pre-home database into the
+	// data home (see log.Migrate). Idempotent, so running it again is harmless.
+	case "migrate":
+		logsvc.Migrate(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usageText)
 		os.Exit(1)
@@ -81,9 +89,13 @@ func launch() {
 	}
 	self, binDir, pkg := selfDirs()
 
-	d := filepath.Join(root, ".engineer")
-	runDir := filepath.Join(d, "run")
-	logDir := filepath.Join(d, "logs")
+	// The data home holds the database, the project board and uploads. It is not
+	// a project: which folders the program works on is data in there, and the
+	// folder it happens to start in is only a convenience (registered below when
+	// it is an engineer project).
+	data := dataHome()
+	runDir := filepath.Join(data, "run")
+	logDir := filepath.Join(data, "logs")
 	mustMkdir(runDir)
 	mustMkdir(logDir)
 
@@ -92,7 +104,14 @@ func launch() {
 		fmt.Print("\033]0;engineer\007")
 	}
 
-	reclaim(runDir, root)
+	reclaim(runDir, self)
+
+	// A database from before the home existed: Engineer's own history moves over
+	// (once — the subcommand copies only when the home has no database). Another
+	// project starts from an empty history by design.
+	if _, err := os.Stat(filepath.Join(root, ".engineer", "engineer.db")); err == nil {
+		logsvc.Migrate([]string{"--home", data, "--from", filepath.Join(root, ".engineer"), "--project", root})
+	}
 
 	// Where the four services bind. Loopback by default, so a local tool is
 	// not a service on the office network; ENGINEER_BIND opens the stack
@@ -117,13 +136,13 @@ func launch() {
 
 	specs := []*service{
 		{name: "log", bin: self,
-			args: []string{"serve-log", "--root", root,
+			args: []string{"serve-log", "--home", data,
 				"--bind", bind, "--port", strconv.Itoa(ports["log"])}},
 		{name: "static", bin: self,
-			args: []string{"serve-static", "--root", root,
+			args: []string{"serve-static", "--log", svcURL("log"),
 				"--bind", bind, "--port", strconv.Itoa(ports["static"])}},
 		{name: "ai", bin: filepath.Join(binDir, "engineer-ai"),
-			args: []string{"--root", root,
+			args: []string{"--home", data,
 				"--bind", bind, "--port", strconv.Itoa(ports["ai"]),
 				"--agents", filepath.Join(pkg, "agents"),
 				"--log", svcURL("log"), "--static", svcURL("static")}},
@@ -131,8 +150,6 @@ func launch() {
 			args: []string{"serve-web",
 				"--bind", bind, "--port", strconv.Itoa(ports["web"]),
 				"--assets", filepath.Join(pkg, "web"),
-				"--blueprints", filepath.Join(root, ".agents", "blueprints"),
-				"--agents", filepath.Join(root, ".engineer", "agents"),
 				"--static", svcURL("static"), "--ai", svcURL("ai"), "--log", svcURL("log")}},
 	}
 
@@ -148,7 +165,14 @@ func launch() {
 		started = append(started, s)
 	}
 
-	fmt.Printf("engineer up — project: %s\n", root)
+	// A folder the user started the program in is a project they mean to work on:
+	// put it on the board (adding a folder that is already there keeps its
+	// history). The page can add and remove others.
+	if name := registerCwd(svcURL("log"), root); name != "" {
+		fmt.Printf("engineer up — project: %s (%s)\n", name, root)
+	} else {
+		fmt.Printf("engineer up — data: %s\n", data)
+	}
 	fmt.Printf("  web     %s\n", svcURL("web"))
 	fmt.Printf("  ai      %s\n", svcURL("ai"))
 	fmt.Printf("  static  %s\n", svcURL("static"))
@@ -190,13 +214,9 @@ func launch() {
 	removePids(runDir)
 }
 
-// status prints the per-service state of the current project.
+// status prints the per-service state of the data home's instance.
 func status() {
-	root, err := os.Getwd()
-	if err != nil {
-		fatal(err)
-	}
-	runDir := filepath.Join(root, ".engineer", "run")
+	runDir := filepath.Join(dataHome(), "run")
 	for _, name := range []string{"log", "static", "ai", "web"} {
 		pid, err := readPid(filepath.Join(runDir, name+".pid"))
 		if err == nil && alive(pid) {
@@ -214,8 +234,9 @@ func versionName() string {
 	return filepath.Base(pkg)
 }
 
-// uninstall removes the software and the command. Project .engineer/ dirs are
-// never touched — they stay with their projects.
+// uninstall removes the software and the command. Project folders are never
+// touched; --purge also removes the data home (the project board and every
+// conversation).
 func uninstall(purge bool) {
 	home := engineerHome()
 	apps := filepath.Join(home, "apps")
@@ -284,10 +305,10 @@ func removePids(runDir string) {
 	}
 }
 
-// reclaim stops a previous instance of THIS project (recorded pids, then any
-// stray process started with --root pointing here) so we reuse its ports
-// instead of advancing past them. Another project's stack is never touched.
-func reclaim(runDir, root string) {
+// reclaim stops a previous instance of THIS install (recorded pids, then any
+// stray service started from this install's own binary) so we reuse its ports
+// instead of advancing past them. Another install's stack is never touched.
+func reclaim(runDir, self string) {
 	for _, name := range []string{"web", "ai", "static", "log"} {
 		pf := filepath.Join(runDir, name+".pid")
 		if pid, err := readPid(pf); err == nil {
@@ -295,7 +316,7 @@ func reclaim(runDir, root string) {
 		}
 		_ = os.Remove(pf)
 	}
-	killMatching("root " + root)
+	killMatching(self)
 	time.Sleep(time.Second)
 }
 
@@ -495,6 +516,66 @@ func engineerHome() string {
 		fatal(err)
 	}
 	return filepath.Join(home, ".engineer")
+}
+
+// dataHome is where the running program keeps its own data: the database, the
+// project board, uploads and the run/log directories. It sits next to the
+// installed versions, never inside a project.
+func dataHome() string {
+	if d := os.Getenv("ENGINEER_DATA"); d != "" {
+		return d
+	}
+	return filepath.Join(engineerHome(), "data")
+}
+
+// registerCwd puts the folder the program was started in on the board when it is
+// an engineer project. It returns the project's name, or "" when this folder is
+// not a project (the program runs anywhere — starting it somewhere else is not an
+// error, and the page is where projects are added).
+func registerCwd(logURL, root string) string {
+	if _, err := os.Stat(filepath.Join(root, "engineer.yaml")); err != nil {
+		return ""
+	}
+	body, err := yaml.Marshal(map[string]string{"path": root, "name": projectName(root)})
+	if err != nil {
+		return ""
+	}
+	// log has just been started, not necessarily listening yet: retry briefly
+	// rather than print a failure the user cannot act on.
+	var lastErr error = fmt.Errorf("log not reachable")
+	for attempt := 0; attempt < 30; attempt++ {
+		res, err := http.Post(logURL+"/log/project/add", "application/yaml", bytes.NewReader(body))
+		if err != nil {
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		status := res.StatusCode
+		res.Body.Close()
+		if status != http.StatusOK {
+			lastErr = fmt.Errorf("HTTP %d", status)
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		return projectName(root)
+	}
+	fmt.Fprintf(os.Stderr, "engineer: could not register %s: %v\n", root, lastErr)
+	return ""
+}
+
+// projectName is the display name out of the project marker, or the folder name.
+func projectName(dir string) string {
+	if data, err := os.ReadFile(filepath.Join(dir, "engineer.yaml")); err == nil {
+		var doc struct {
+			Project string `yaml:"project"`
+		}
+		if yaml.Unmarshal(data, &doc) == nil {
+			if name := strings.TrimSpace(doc.Project); name != "" {
+				return name
+			}
+		}
+	}
+	return filepath.Base(dir)
 }
 
 func isTTY(f *os.File) bool {

@@ -87,3 +87,19 @@ edges:
     channel: network
     protocol: http
     description: main-new / main-resume (main's tools) move log's main-session pointer, writing the open list back untouched
+  - id: ai-to-log-project-get
+    from: ai
+    from_interface: log-project-get
+    to: log
+    to_interface: log-project-get
+    channel: network
+    protocol: http
+    description: a new or resumed sub session resolves its project to the folder the agent runs in and reads its page from
+  - id: ai-to-log-project-list
+    from: ai
+    from_interface: log-project-list
+    to: log
+    to_interface: log-project-list
+    channel: network
+    protocol: http
+    description: main's project-list tool shows the board, so session-new can name the project an agent belongs to

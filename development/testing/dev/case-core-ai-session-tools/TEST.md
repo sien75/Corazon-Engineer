@@ -15,14 +15,16 @@ main 的会话工具端到端：`session-new` / `session-close` / `session-open`
 ```bash
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.session-tools"
+# log's database and the project board live in the engineer home.
+HOME_DIR="$ROOT/home"
 
-: "${ROOT:?this case must set ROOT before reclaiming}"
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+: "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+for p in 9060 9061 9062; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$ROOT/.agents/blueprints/probe"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
 printf 'project: session-tools\n' > "$ROOT/engineer.yaml"
 cat > "$ROOT/.agents/blueprints/probe/index.html" <<'HTML'
 <!doctype html>
@@ -34,9 +36,16 @@ HTML
 printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 9061 >/tmp/session-tools-log.log 2>&1 &
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 9062 >/tmp/session-tools-static.log 2>&1 &
-(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 9060 \
+/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9061 >/tmp/session-tools-log.log 2>&1 &
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:9061/log/project/list -d '{}' && break
+  sleep 1
+done
+curl -s -X POST http://localhost:9061/log/project/add -H 'Content-Type: application/yaml' \
+  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
+PROJECT=$(cat "$ROOT/.project")
+/tmp/engineer serve-static --log http://localhost:9061 --bind 127.0.0.1 --port 9062 >/tmp/session-tools-static.log 2>&1 &
+(cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9060 \
   --log http://localhost:9061 --static http://localhost:9062 \
   --agents "$ROOTDIR/agents" >/tmp/session-tools-ai.log 2>&1 &)
 
@@ -69,7 +78,7 @@ Expected: the ai service logs its address on `:9060` and does **not** print
 ## 1. session-new makes an agent and opens its tab
 
 ```bash
-ask $MAIN 'Call the session-new tool with blueprint "probe" right now. Do not use bash or curl, do not ask me anything — just call the tool and report its exact reply.'
+ask $MAIN "Call the session-new tool with project \"$PROJECT\" and blueprint \"probe\" right now. Do not use bash or curl, do not ask me anything — just call the tool and report its exact reply."
 SUB=$(open_ids | head -1)
 echo "sub=$SUB"
 curl -s -X POST $LOG/log/session/detail -d "sessionId: $SUB"
@@ -78,9 +87,9 @@ curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN" | grep -c 'name:
 ```
 
 Expected: `sub` is a non-empty `s_…`; its `session/detail` says `kind: sub`,
-`blueprint: probe`, `title: Probe Page` (the page's `<title>`); `name: session-new`
-appears **once** and `name: bash` **zero** times — the tab came from the tool, not
-from a `curl` in the shell.
+`projectId: $PROJECT`, `blueprint: probe`, `title: Probe Page` (the page's
+`<title>`); `name: session-new` appears **once** and `name: bash` **zero** times —
+the tab came from the tool, not from a `curl` in the shell.
 
 ## 2. session-close keeps the conversation, session-open brings it back
 
@@ -99,8 +108,7 @@ made.
 ## Teardown
 
 ```bash
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 rm -rf "$ROOT"
 ```

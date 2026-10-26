@@ -106,6 +106,104 @@ body {
   color: var(--fg);
 }
 
+/* ---------- titlebar groups ----------
+   Chrome's tab groups, but grouped by project instead of by the user's choice: one
+   chip per project on the board, its tabs inside. A collapsed group is only the
+   chip, which is what keeps a titlebar with many projects readable. */
+.tab-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  border-radius: 8px;
+}
+
+/* An expanded group reads as one container: a faint surface behind the chip and
+   its tabs, so the group is visibly one thing rather than a run of tabs. */
+.tab-group.expanded {
+  background: var(--surface-3);
+  /* A hairline instead of a border: the group must not move the tabs it holds. */
+  box-shadow: inset 0 0 0 1px var(--border);
+  padding-right: 4px;
+}
+
+.group-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.group-label {
+  max-width: 170px;
+  padding: 3px 9px;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.group-label:hover {
+  color: var(--accent);
+}
+
+.row-btn.eye svg,
+.tab .tab-label svg {
+  display: block;
+}
+
+/* The project launcher, at the end of its group: the same icon whether its page is
+   open (then it is a real tab, with the active underline and a close) or not. */
+#tabs .tab.launcher {
+  gap: 4px;
+}
+
+#tabs .tab.launcher .tab-label {
+  color: inherit;
+}
+
+#tabs .tab.launcher-entry {
+  padding: 4px 6px;
+  color: var(--fg-muted);
+}
+
+#tabs .tab.launcher-entry:hover {
+  color: var(--fg);
+}
+
+/* A project's launcher page lives in a tab of its group, so it is a scrollable
+   view rather than the full-page overlay the Engineer launcher is. */
+.view-launcher {
+  overflow-y: auto;
+  padding: 32px 24px 48px;
+  background: var(--surface);
+}
+
+/* The eye in the Engineer launcher: on draws the group, off (crossed, dimmed)
+   hides it. Hiding never closes anything, which is why the row stays. */
+.row-btn.eye {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 7px;
+  line-height: 1;
+}
+
+.row-btn.eye.off {
+  opacity: .45;
+}
+
+.project-row.hidden-group .launcher-item .name {
+  color: var(--fg-muted);
+}
+
 #theme-toggle {
   background: none;
   border: none;
@@ -343,6 +441,121 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The add-a-project field: a folder path, and one button that hands it to the web
+   server (which is what checks that the folder is an engineer project). */
+.launcher-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 8px 8px;
+}
+
+.launcher-form input {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.launcher-form input:focus-visible {
+  outline: 2px solid var(--accent, var(--border-strong));
+  outline-offset: 1px;
+}
+
+.launcher-form button {
+  flex: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.launcher-form button:disabled {
+  opacity: .6;
+  cursor: progress;
+}
+
+/* The form's own error sits on its own line under the field, not beside it. */
+.launcher-form .launcher-error {
+  flex: 1 1 100%;
+  margin: 2px 0 0;
+}
+
+/* One project on the board: the row that opens its launcher, and the quiet
+   actions beside it. */
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px;
+}
+
+.project-row + .project-row {
+  margin-top: 2px;
+}
+
+.project-row .launcher-item {
+  width: auto;
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.project-actions {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding-right: 8px;
+}
+
+/* A small text button: the project launcher's way back, and `remove`. */
+.row-btn {
+  padding: 5px 9px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.row-btn:hover {
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+/* The project launcher's head: back to the board, the project's name, its path. */
+.launcher-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-width: 760px;
+  margin: 0 auto 14px;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.launcher-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.launcher-path {
+  color: var(--fg-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .launcher-empty {

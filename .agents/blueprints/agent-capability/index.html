@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Capability</title>
+  <!-- Theme before first paint. The shell keeps data-theme in sync afterwards. -->
+  <script>
+    (function () {
+      var t = "light";
+      try {
+        var stored = localStorage.getItem("engineer.theme");
+        if (stored === "solarized") {
+          stored = "warm";
+          localStorage.setItem("engineer.theme", stored);
+        }
+        if (["light", "dark", "warm", "cold", "slate"].includes(stored)) t = stored;
+      } catch (e) {}
+      document.documentElement.setAttribute("data-theme", t);
+      document.documentElement.style.colorScheme = t === "dark" ? "dark" : "light";
+    })();
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="./agent.css">
+</head>
+<body>
+  <div class="layout">
+    <main class="board">
+      <header class="head">
+        <h1>Agent Capability</h1>
+        <p class="lede">
+          main 与 sub 各自能用什么。工具矩阵来自 Corazon Engineer 自己的白名单
+          （<code>workspace/ai/src/registry.ts</code>）；skill 一栏由本项目的文件实时读出。
+        </p>
+      </header>
+
+      <section class="stats">
+        <div class="stat"><b>17</b><span>main 的工具</span></div>
+        <div class="stat"><b>8</b><span>sub 的工具</span></div>
+        <div class="stat"><b id="skill-count">—</b><span>本项目 skill</span></div>
+        <div class="stat"><b>9</b><span>main 独有的工具</span></div>
+      </section>
+
+      <section class="block">
+        <div class="block-head">
+          <h2>工具</h2>
+          <div class="seg" id="filter">
+            <button data-filter="all" class="on">全部</button>
+            <button data-filter="main">仅 main</button>
+            <button data-filter="both">两者都有</button>
+          </div>
+        </div>
+        <table class="tools" id="tools" data-filter="all">
+          <thead>
+            <tr><th>工具</th><th>作用</th><th class="mark">main</th><th class="mark">sub</th></tr>
+          </thead>
+          <tbody id="tool-rows"></tbody>
+        </table>
+        <p class="hint">sub 的工具集是 main 的子集 —— 没有任何工具只有 sub 有。差别只有一行：<code>registry.ts</code> 给 main 追加了 9 个工作区工具。</p>
+      </section>
+
+      <section class="block">
+        <div class="block-head"><h2>Skill</h2></div>
+        <p class="lede">
+          skill 不是工具：它是一个 <code>SKILL.md</code> 文件。pi 按目录约定自动发现，把名字和描述列进系统提示，
+          agent 需要时用 <code>read</code> 读它。
+        </p>
+        <div class="roots">
+          <div class="root">
+            <h3>项目级</h3>
+            <code>&lt;cwd&gt;/.agents/skills/&lt;slug&gt;/SKILL.md</code>
+            <p>从 cwd 逐级向上到 git 根，每一级都看 <code>.agents/skills</code>。</p>
+          </div>
+          <div class="root">
+            <h3>用户级</h3>
+            <code>~/.agents/skills/&lt;slug&gt;/SKILL.md</code>
+            <p>还有旧的 <code>~/.pi/agent/skills</code>。两个角色都看得见，和项目无关。</p>
+          </div>
+          <div class="root">
+            <h3>cwd 在哪</h3>
+            <code>sub → 项目目录<br>main → ai --home</code>
+            <p>main 不属于任何项目；home 恰好落在某个仓库里时，向上回溯就会命中那一级的项目 skill。</p>
+          </div>
+        </div>
+
+        <div class="live">
+          <div class="live-head">
+            <h3>本项目的 skill</h3>
+            <span class="tag" id="live-tag">读取中…</span>
+          </div>
+          <div class="chips" id="live-body"></div>
+          <p class="hint" id="live-note"></p>
+        </div>
+      </section>
+
+      <footer class="foot">
+        来源：<code>workspace/ai/src/registry.ts</code>（工具白名单）· <code>workspace/ai/src/workspace.ts</code>（工作区工具）·
+        pi 的 <code>resource-loader</code> / <code>package-manager</code>（skill 发现）。
+      </footer>
+    </main>
+
+    <aside class="chatpane">
+      <engineer-chat autofocus></engineer-chat>
+    </aside>
+  </div>
+
+  <script type="module" src="/components/chat.js"></script>
+  <script type="module" src="./agent.js"></script>
+</body>
+</html>

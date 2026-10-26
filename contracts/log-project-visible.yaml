@@ -1,0 +1,28 @@
+id: log-project-visible
+description: Show or hide one project's group in the titlebar. Hiding changes nothing about the project — it stays on the board, its sessions stay open, and showing it again brings back exactly the tabs it had; this is the stored answer to the eye button in the Engineer launcher
+
+request:
+  body:
+    projectId: string  # p_<12 hex>
+    visible: boolean  # true = draw the group in the titlebar, false = leave it off
+
+response:
+  status: 200
+  body:
+    projectId: string
+    path: string
+    name: string
+    createdAt: string
+    updatedAt: string
+    visible: boolean  # the stored state after this call
+
+errors:
+  - status: 400
+    code: bad_request
+    description: visible missing
+  - status: 404
+    code: not_found
+    description: no such project
+  - status: 500
+    code: internal
+    description: server internal error

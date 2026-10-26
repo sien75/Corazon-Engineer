@@ -118,10 +118,3 @@ function readBlueprint(root: string, slug: string): { readme: string; dir: strin
 export function blueprintReadme(root: string, slug: string): string {
   return readBlueprint(root, slug).readme;
 }
-
-// legacyAgentDir is the per-agent copy older projects still have on disk. Nothing
-// writes it any more; it exists so a session created before blueprints stopped
-// being copied keeps working (its page and its README).
-export function legacyAgentDir(root: string, sessionId: string): string {
-  return path.join(root, ".engineer", "agents", sessionId);
-}

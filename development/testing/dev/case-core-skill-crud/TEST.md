@@ -15,34 +15,41 @@ ROOTDIR="$PWD"
 # Isolated scratch project root: the test must never touch the real .agents/skills
 # or .engineer.
 ROOT="$ROOTDIR/.engineer/.skill-crud"
-rm -rf "$ROOT" && mkdir -p "$ROOT"
+HOME_DIR="$ROOT/home"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: skill-crud\n' > "$ROOT/engineer.yaml"
 
 # A scratch log service (ai refuses to start without --log) and a scratch static
 # service rooted at $ROOT, so the read side reads this scratch tree and not the
 # real project.
-# Guard first: with an empty $ROOT the pattern below degrades to
-# "serve-log --root " and kills every service on the machine —
+# Guard first: with an empty $HOME_DIR the pattern below degrades to
+# "serve-log --home " and kills every service on the machine —
 # including the one running the agent. Fail loudly instead.
-: "${ROOT:?this case must set ROOT before reclaiming}"
+: "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 # Reclaim a previous run of this case. A leftover service keeps serving its
 # old database (or silently stops this run's from binding, so the frontend
 # talks to the other case's services) — and the failure that causes looks
 # like a wrong answer, not a dead service. This happens before, not after.
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
-for p in 8850 8851 8852; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+for p in 8850 8851 8852; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8851 \
+/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8851 \
   >/tmp/skill-crud-log.log 2>&1 &
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8852 \
+for i in $(seq 1 60); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8851/log/project/list -d '{}' && break
+  sleep 1
+done
+curl -s -X POST http://localhost:8851/log/project/add -H 'Content-Type: application/yaml' \
+  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
+PROJECT=$(cat "$ROOT/.project")
+/tmp/engineer serve-static --log http://localhost:8851 --bind 127.0.0.1 --port 8852 \
   >/tmp/skill-crud-static.log 2>&1 &
 
 (cd workspace/ai && bun install && bun run src/main.ts \
-  --bind 127.0.0.1 --port 8850 --root "$ROOT" --stub \
+  --bind 127.0.0.1 --port 8850 --home "$HOME_DIR" --stub \
   --log http://localhost:8851 --static http://localhost:8852 \
   --agents "$ROOTDIR/agents" \
   >/tmp/skill-crud-ai.log 2>&1 &)
@@ -54,8 +61,9 @@ SUGGESTED="$ROOT/.engineer/suggested-skills"
 
 # wait for static and ai before asking: the blocks below run back to back
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST $STATIC/static/query -d '{}' &&
-    curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST $STATIC/static/query \
+    -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" &&
+    curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d 'kind: main' && break
   sleep 1
 done
 ```
@@ -69,9 +77,12 @@ mkdir -p "$SKILLS/payment-logs"
 printf -- '---\nname: Payment logs\ndescription: check payment-service logs in dev for the last 30 minutes\n---\ncheck payment-service logs in dev for the last 30 minutes\n' \
   > "$SKILLS/payment-logs/SKILL.md"
 
-curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^skills:'
-curl -s -X POST $STATIC/static/query-detail -d 'type: skill
-id: .agents/skills/payment-logs/SKILL.md'
+curl -s -X POST $STATIC/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A3 '^skills:'
+curl -s -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
+projectId: $PROJECT
+type: skill
+id: .agents/skills/payment-logs/SKILL.md
+YAML
 ```
 
 Expected: `skills` holds `.agents/skills/payment-logs/SKILL.md`; the detail call
@@ -86,9 +97,12 @@ mkdir -p "$SUGGESTED"
 printf -- '---\nname: Payment logs\ndescription: check payment-service logs in dev\n---\ncheck payment-service logs in dev\n' \
   > "$SUGGESTED/payment-logs.md"
 
-curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^suggested-skills:'
-curl -s -X POST $STATIC/static/query-detail -d 'type: suggested-skill
-id: .engineer/suggested-skills/payment-logs.md'
+curl -s -X POST $STATIC/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A3 '^suggested-skills:'
+curl -s -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
+projectId: $PROJECT
+type: suggested-skill
+id: .engineer/suggested-skills/payment-logs.md
+YAML
 ```
 
 Expected: the candidate is listed under `suggested-skills` (and not under
@@ -100,8 +114,8 @@ Promotion is the mv the agent runs when the user says to keep it:
 mkdir -p "$SKILLS/dev-logs"
 mv "$SUGGESTED/payment-logs.md" "$SKILLS/dev-logs/SKILL.md"
 
-curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^skills:'
-curl -s -X POST $STATIC/static/query -d '{}' | grep -A2 '^suggested-skills:'
+curl -s -X POST $STATIC/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A3 '^skills:'
+curl -s -X POST $STATIC/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A2 '^suggested-skills:'
 ```
 
 Expected: `skills` now holds both `payment-logs/SKILL.md` and
@@ -111,7 +125,7 @@ Expected: `skills` now holds both `payment-logs/SKILL.md` and
 
 ```bash
 rm -rf "$SKILLS/payment-logs"
-curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^skills:'
+curl -s -X POST $STATIC/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A3 '^skills:'
 ```
 
 Expected: `payment-logs` is gone from the listing; `dev-logs` remains.
@@ -122,11 +136,17 @@ Expected: `payment-logs` is gone from the listing; `dev-logs` remains.
 # no delete interface exists at all
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $STATIC/static/delete -d '{}'
 # the whole .engineer dir is private: only the registered type dir is readable
-curl -s -X POST $STATIC/static/query-detail -d 'type: suggested-skill
-id: .engineer/engineer.db'
+curl -s -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
+projectId: $PROJECT
+type: suggested-skill
+id: .engineer/engineer.db
+YAML
 # an escape inside the registered dir cleans out of it and is refused
-curl -s -X POST $STATIC/static/query-detail -d 'type: suggested-skill
-id: .engineer/suggested-skills/../engineer.db'
+curl -s -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
+projectId: $PROJECT
+type: suggested-skill
+id: .engineer/suggested-skills/../engineer.db
+YAML
 ```
 
 Expected: 404 `unknown endpoint`; then 400 `bad_request` twice (the id is not
@@ -153,7 +173,7 @@ service keeps no skill database.
 pkill -f 'main.ts.*--port 8850'
 
 (cd workspace/ai && bun run src/main.ts \
-  --bind 127.0.0.1 --port 8850 --root "$ROOT" --stub \
+  --bind 127.0.0.1 --port 8850 --home "$HOME_DIR" --stub \
   --log http://localhost:8851 --static http://localhost:8852 \
   --agents "$ROOTDIR/agents" \
   >/tmp/skill-crud-ai.log 2>&1 &)
@@ -162,7 +182,7 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-curl -s -X POST $STATIC/static/query -d '{}' | grep -A3 '^skills:'
+curl -s -X POST $STATIC/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A3 '^skills:'
 ```
 
 Expected: `dev-logs/SKILL.md` is still listed — skills live in the project files,
@@ -172,6 +192,6 @@ not in process memory.
 
 ```bash
 pkill -f 'main.ts.*--port 8850'
-pkill -f '/tmp/engineer serve-log --root .*skill-crud'
-pkill -f '/tmp/engineer serve-static --root .*skill-crud'
+pkill -f 'serve-log --home .*skill-crud'
+pkill -f 'serve-static --log http://localhost:8851'
 ```

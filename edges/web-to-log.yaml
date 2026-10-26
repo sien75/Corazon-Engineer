@@ -55,3 +55,43 @@ edges:
     channel: network
     protocol: http
     description: the shell replays a conversation into its chat view on load
+  - id: web-to-log-project-add
+    from: web
+    from_interface: log-project-add
+    to: log
+    to_interface: log-project-add
+    channel: network
+    protocol: http
+    description: after checking that a folder the user typed is an engineer project (engineer.yaml), web hands it to log to be remembered
+  - id: web-to-log-project-list
+    from: web
+    from_interface: log-project-list
+    to: log
+    to_interface: log-project-list
+    channel: network
+    protocol: http
+    description: the Engineer launcher draws the board the program remembers
+  - id: web-to-log-project-get
+    from: web
+    from_interface: log-project-get
+    to: log
+    to_interface: log-project-get
+    channel: network
+    protocol: http
+    description: /agent/<sessionId>/ resolves the session's project to its folder before serving the page
+  - id: web-to-log-project-remove
+    from: web
+    from_interface: log-project-remove
+    to: log
+    to_interface: log-project-remove
+    channel: network
+    protocol: http
+    description: the Engineer launcher takes a project off the board — soft, so the folder and the conversations stay
+  - id: web-to-log-project-visible
+    from: web
+    from_interface: log-project-visible
+    to: log
+    to_interface: log-project-visible
+    channel: network
+    protocol: http
+    description: the eye button in the Engineer launcher hides or shows a project's titlebar group; the state is stored so it survives a reload

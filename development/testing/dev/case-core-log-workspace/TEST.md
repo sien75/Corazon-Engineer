@@ -20,22 +20,24 @@ This case is HTTP-level: no browser and no model.
 
 ```bash
 ROOT="$PWD/.engineer/.workspace-test"
+# log stores in the engineer home now; the home is not a project.
+HOME_DIR="$ROOT/home"
 
-# Guard first: with an empty $ROOT the pattern below degrades to
-# "serve-log --root " and kills every service on the machine — including the one
+# Guard first: with an empty $HOME_DIR the pattern below degrades to
+# "serve-log --home " and kills every service on the machine — including the one
 # running the agent. Fail loudly instead.
-: "${ROOT:?this case must set ROOT before reclaiming}"
+: "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 # Reclaim a previous run of this case: a leftover service keeps serving its old
 # database, and the failure it causes looks like a wrong answer, not a dead
 # service.
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$ROOT"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: workspace-test\n' > "$ROOT/engineer.yaml"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8830 \
+/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8830 \
   >/tmp/ego-simple/ws-log.log 2>&1 &
 LOG=http://localhost:8830
 for i in $(seq 1 60); do
@@ -174,8 +176,8 @@ curl -s -X POST $LOG/log/session/upsert --data-binary $'sessionId: s_sub01
 blueprint: pure-chat
 title: Pure Chat'
 curl -s -X POST $LOG/log/session/on --data-binary 'sessionIds: [s_sub01]'
-pkill -f "serve-log --root $ROOT" ; sleep 1
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8830 \
+pkill -f "serve-log --home $HOME_DIR" ; sleep 1
+/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8830 \
   >/tmp/ego-simple/ws-log.log 2>&1 &
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $LOG/log/current/get -d '{}' && break
@@ -191,6 +193,6 @@ state, not memory.
 ## Teardown
 
 ```bash
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
 rm -rf "$ROOT"
 ```

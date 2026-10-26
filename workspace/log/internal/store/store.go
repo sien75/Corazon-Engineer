@@ -54,8 +54,12 @@ type Store struct {
 // either the session's own row (kind / blueprint / title) or the open list in
 // current (see workspace.go).
 
-func Open(root string) (*Store, error) {
-	dir := filepath.Join(root, ".engineer")
+// Open opens the database under the engineer home directory. The home is the
+// program's own data directory (not a project): sessions of every project, the
+// project registry and the workspace row all live here, so which folder the
+// program was started from says nothing about what it serves.
+func Open(home string) (*Store, error) {
+	dir := home
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -241,9 +245,18 @@ func (s *Store) Get(id string) (Record, error) {
 // ListSessions returns one page (pageSize=100) of ai conversation sessions,
 // most recently active first, with message count and a preview of each
 // session's latest message.
-func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error) {
+// ListSessions lists conversation sessions. projectID narrows it to one
+// project's sessions ("" means every project, main included) — that is what a
+// project launcher's recents are.
+func (s *Store) ListSessions(pageNum int, projectID string) ([]map[string]interface{}, bool, error) {
 	if pageNum < 1 {
 		pageNum = 1
+	}
+	where := "1=1"
+	args := []interface{}{}
+	if p := strings.TrimSpace(projectID); p != "" {
+		where = "s.project_id = ?"
+		args = append(args, p)
 	}
 	rows, err := s.db.Query(`SELECT
 		s.session_id,
@@ -253,6 +266,7 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 		s.kind,
 		s.blueprint,
 		s.title,
+		s.project_id,
 		COALESCE(
 			(SELECT r2.payload FROM records r2
 				WHERE r2.kind = 'conversation' AND r2.session_id = s.session_id
@@ -264,20 +278,21 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 		) AS preview_payload
 		FROM sessions s
 		LEFT JOIN records r ON r.kind = 'conversation' AND r.session_id = s.session_id
+		WHERE `+where+`
 		GROUP BY s.session_id
 		ORDER BY last_at DESC, s.session_id DESC
 		LIMIT ? OFFSET ?`,
-		PageSize+1, (pageNum-1)*PageSize)
+		append(args, PageSize+1, (pageNum-1)*PageSize)...)
 	if err != nil {
 		return nil, false, err
 	}
 	defer rows.Close()
 	sessions := []map[string]interface{}{}
 	for rows.Next() {
-		var sessionID, firstAt, lastAt, kind, blueprint, title string
+		var sessionID, firstAt, lastAt, kind, blueprint, title, projectID string
 		var count int
 		var previewPayload sql.NullString
-		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &kind, &blueprint, &title, &previewPayload); err != nil {
+		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &kind, &blueprint, &title, &projectID, &previewPayload); err != nil {
 			return nil, false, err
 		}
 		preview := ""
@@ -292,6 +307,7 @@ func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error
 		sessions = append(sessions, map[string]interface{}{
 			"sessionId": sessionID,
 			"kind":      kind,
+			"projectId": projectID,
 			"blueprint": blueprint,
 			"title":     title,
 			"createdAt": firstAt,

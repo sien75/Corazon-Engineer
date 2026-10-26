@@ -38,13 +38,15 @@ Run from the project root (the directory holding `engineer.yaml`).
 
 ```bash
 ROOT="$PWD/.engineer/.session-delete"
-: "${ROOT:?this case must set ROOT before reclaiming}"
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
+# log's database and the project board live in the engineer home.
+HOME_DIR="$ROOT/home"
+: "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+for p in 8840 8841 8842; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$ROOT"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: session-delete\n' > "$ROOT/engineer.yaml"
 # One blueprint to instantiate: the tool deletes a real session, so the case needs one.
 mkdir -p "$ROOT/.agents/blueprints/demo"
@@ -52,11 +54,18 @@ printf '# Demo\n\na page\n' > "$ROOT/.agents/blueprints/demo/README.md"
 printf '<!doctype html><title>Demo</title>demo<engineer-chat></engineer-chat>\n' > "$ROOT/.agents/blueprints/demo/index.html"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log    --root "$ROOT" --bind 127.0.0.1 --port 8840 >/tmp/sd-log.log 2>&1 &
-/tmp/engineer serve-static --root "$ROOT" --bind 127.0.0.1 --port 8842 >/tmp/sd-static.log 2>&1 &
+/tmp/engineer serve-log    --home "$HOME_DIR" --bind 127.0.0.1 --port 8840 >/tmp/sd-log.log 2>&1 &
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8840/log/project/list -d '{}' && break
+  sleep 1
+done
+curl -s -X POST http://localhost:8840/log/project/add -H 'Content-Type: application/yaml' \
+  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
+PROJECT=$(cat "$ROOT/.project")
+/tmp/engineer serve-static --log http://localhost:8840 --bind 127.0.0.1 --port 8842 >/tmp/sd-static.log 2>&1 &
 
 cd workspace/ai && bun run src/main.ts \
-  --bind 127.0.0.1 --port 8841 --root "$ROOT" \
+  --bind 127.0.0.1 --port 8841 --home "$HOME_DIR" \
   --log http://localhost:8840 --static http://localhost:8842 \
   --agents ../../agents >/tmp/sd-ai.log 2>&1 &
 cd - >/dev/null
@@ -85,7 +94,8 @@ sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"]
 
 ```bash
 MAIN=$(curl -s -X POST $AI/ai/new -d 'kind: main' | sid)
-SUB=$(curl -s -X POST $AI/ai/new -d 'blueprint: demo' | sid)
+SUB=$(curl -s -X POST $AI/ai/new -H 'Content-Type: application/yaml' \
+  --data-binary "$(printf 'projectId: %s\nblueprint: demo' "$PROJECT")" | sid)
 echo $MAIN $SUB
 curl -s -X POST $LOG/log/session/detail -d "sessionId: $SUB"
 ls "$ROOT/.engineer/agents" 2>/dev/null || echo "no per-agent copies"
@@ -167,7 +177,8 @@ removed for that id.
 ## 5. a sub agent does not have the tool
 
 ```bash
-SUB2=$(curl -s -X POST $AI/ai/new -d 'blueprint: demo' | sid)
+SUB2=$(curl -s -X POST $AI/ai/new -H 'Content-Type: application/yaml' \
+  --data-binary "$(printf 'projectId: %s\nblueprint: demo' "$PROJECT")" | sid)
 curl -s -o /dev/null -X POST $AI/ai/ask -d "id: $SUB2
 blocks:
   - type: text
@@ -185,13 +196,12 @@ prose, the deletion cannot happen.
 ## Teardown
 
 ```bash
-pkill -f "serve-log --root $ROOT"
-pkill -f "serve-static --root $ROOT"
-pkill -f "main.ts.*--root $ROOT"
+pkill -f "serve-log --home $HOME_DIR"
+pkill -f "main.ts.*--home $HOME_DIR"
 rm -rf "$ROOT"
 ```
 
-The agent's tools run with `--root $ROOT`, so `bash` inside the case sees the
+The agent's tools run with that project as their cwd (`session.projectId` → the folder), so `bash` inside the case sees the
 scratch project as its working directory — expect the model to poke around there
 (`.engineer/agents/<id>/`, the blueprint template) while it works. That is the
 right picture: at test time the tool *is* the project root.

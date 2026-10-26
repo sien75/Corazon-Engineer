@@ -22,15 +22,19 @@ function withLocalNoProxy(value: string | undefined): string {
 process.env.no_proxy = withLocalNoProxy(process.env.no_proxy);
 process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 
-// usage: bun run src/main.ts --bind <host> --port <n> --root <project dir>
+// usage: bun run src/main.ts --bind <host> --port <n> --home <data dir>
 //        --log <url> --static <url> --agents <spec dir>
 //        [--model provider/model-id] [--stub]
 //
 // Every flag above is required and there is no fallback. The launcher owns the
-// addresses, the project root and the spec file, and passes them all down; a
+// addresses, the home directory and the spec file, and passes them all down; a
 // service that invents a default silently talks to a port nobody chose.
+//
+// There is no project root any more: a conversation belongs to a project, and
+// that project's folder (a row in log's home database) is where its agent runs.
+// The home is only this service's own data — uploaded images.
 const USAGE =
-  "usage: engineer-ai --bind <host> --port <n> --root <project dir> " +
+  "usage: engineer-ai --bind <host> --port <n> --home <data dir> " +
   "--log <url> --static <url> --agents <spec dir> " +
   "[--model provider/model-id] [--stub]";
 
@@ -51,7 +55,7 @@ function parseFlags(argv: string[]): Record<string, string> {
 
 const flags = parseFlags(process.argv.slice(2));
 
-const REQUIRED = ["bind", "port", "root", "log", "static", "agents"];
+const REQUIRED = ["bind", "port", "home", "log", "static", "agents"];
 const missing = REQUIRED.filter((k) => !flags[k]);
 if (missing.length || !/^\d+$/.test(flags.port ?? "")) {
   if (missing.length) {
@@ -66,7 +70,7 @@ if (missing.length || !/^\d+$/.test(flags.port ?? "")) {
 }
 
 const forceStub = flags.stub === "1";
-const root = flags.root;
+const home = flags.home;
 const addr = `${flags.bind}:${flags.port}`;
 const logBase = flags.log;
 const staticBase = flags.static;
@@ -111,7 +115,7 @@ const runtimeEndpoints =
   `- log (records): ${logBase}\n` +
   `- ai (this service): ${aiBaseURL(addr)}\n`;
 const registry = new Registry({
-  root,
+  home,
   logBase,
   specs: {
     main: specs.main + runtimeEndpoints,

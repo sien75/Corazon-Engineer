@@ -3,8 +3,9 @@ description: Fetch content of a single leaf file
 
 request:
   body:
+    projectId: string  # p_<12 hex> — whose tree to read
     type: how-to | development | contract | docs | notes | skill | blueprint  # leaf file type
-    id: string  # relative path (directory entry from static-query), e.g. "contracts/ai-ask.yaml"
+    id: string  # relative path inside that project (directory entry from static-query), e.g. "contracts/ai-ask.yaml"
 
 response:
   status: 200
@@ -35,10 +36,10 @@ response:
 errors:
   - status: 400
     code: bad_request
-    description: invalid type or id
+    description: projectId missing, or invalid type or id
   - status: 404
     code: not_found
-    description: file not found
+    description: no such project, or file not found
   - status: 500
     code: internal
     description: server error

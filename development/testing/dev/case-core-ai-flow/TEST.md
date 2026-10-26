@@ -5,50 +5,58 @@ AI session flow: new → ask → stream → delete.
 ## Setup
 
 ```bash
-# Ai is stateless, but it has no defaults: it must be told the project root (it
-# keeps its own skill db there) and the log address. Both are local to this case.
+# ai has no defaults: it must be told the engineer home (its own data) and the
+# log address. Both are local to this case.
 ROOT="$PWD/.engineer/.ai-flow"
-rm -rf "$ROOT" && mkdir -p "$ROOT"
+HOME_DIR="$ROOT/home"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: ai-flow\n' > "$ROOT/engineer.yaml"
 
-# Guard first: with an empty $ROOT the pattern below degrades to
-# "serve-log --root " and kills every service on the machine —
+# Guard first: with an empty $HOME_DIR the pattern below degrades to
+# "serve-log --home " and kills every service on the machine —
 # including the one running the agent. Fail loudly instead.
-: "${ROOT:?this case must set ROOT before reclaiming}"
+: "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 # Reclaim a previous run of this case. A leftover service keeps serving its
 # old database (or silently stops this run's from binding, so the frontend
 # talks to the other case's services) — and the failure that causes looks
 # like a wrong answer, not a dead service. This happens before, not after.
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
-for p in 8800 8801; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+for p in 8800 8801 8802; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8800 >/tmp/ai-flow-log.log 2>&1 &
+/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8800 >/tmp/ai-flow-log.log 2>&1 &
+for i in $(seq 1 60); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8800/log/project/list -d '{}' && break
+  sleep 1
+done
+curl -s -X POST http://localhost:8800/log/project/add -H 'Content-Type: application/yaml' \
+  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
+PROJECT=$(cat "$ROOT/.project")
+/tmp/engineer serve-static --log http://localhost:8800 --bind 127.0.0.1 --port 8802 >/tmp/ai-flow-static.log 2>&1 &
 
 cd workspace/ai && bun install && bun run src/main.ts \
-  --bind 127.0.0.1 --port 8801 --root "$ROOT" \
-  --log http://localhost:8800 --static http://localhost:8502 \
+  --bind 127.0.0.1 --port 8801 --home "$HOME_DIR" \
+  --log http://localhost:8800 --static http://localhost:8802 \
   --agents ../../agents &
 
 # wait for it before asking: the blocks below run back to back
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8801/ai/skill/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8801/ai/new -d 'kind: main' && break
   sleep 1
 done
 ```
 
 ## 1. ai-new creates a conversation
 
-A conversation belongs to no tab. Where it is shown is the tab's business: a tab
-references conversations (its layout), and several tabs may reference the same
-one. So this call says nothing about tabs — see `case-core-tab-layout` and
-`case-core-web-tab-records` for the tab side.
+A conversation belongs to no tab. Whether it is shown is the shell's business, and
+this case does not touch the shell. It creates a **main** conversation: a
+blueprint agent would need a `projectId`, which is the launcher's business (see
+`case-core-agent-instantiate`).
 
 ```bash
-SID=$(curl -s -X POST http://localhost:8801/ai/new | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+SID=$(curl -s -X POST http://localhost:8801/ai/new -d 'kind: main' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
 echo $SID
 ```
 

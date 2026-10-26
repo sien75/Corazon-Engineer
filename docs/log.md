@@ -2,7 +2,7 @@
 
 # log
 
-Corazon Engineer log service — owns the project's sqlite state — records (call / observe / conversation), sessions (each conversation's kind, main or sub, the blueprint it drives and its display name) and current (which sessions are open — the shell's tab bar — and which one is main); a tab is not stored: it is one open session, so the open list is all the workspace needs; exposes log query/detail/search/mutation/stream/list/delete APIs plus the session and current ones
+Corazon Engineer log service — owns the engineer home's sqlite state — records (call / observe / conversation), projects (the board of folders the program works on — path, name, and whether it is still on the board, since removal is soft), sessions (each conversation's kind, main or sub, the project it belongs to, the blueprint it drives and its display name) and current (which sessions are open — the shell's tab bar — and which one is main); a tab is not stored: it is one open session, so the open list is all the workspace needs; the home is the program's own data directory, not a project — the program runs anywhere and the folders it serves are rows in projects; exposes log query/detail/search/mutation/stream/list/delete APIs plus the session, project and current ones
 
 - runtime: go 1.22
 
@@ -204,7 +204,8 @@ List conversation sessions, most recently active first — one entry per session
 ### Request body
 
 ```yaml
-pageNum?: number
+pageNum?: number  # page number, 1-based, default 1
+projectId?: string  # only this project's sessions; empty = every session, main included
 ```
 
 ### Response (status 200)
@@ -220,6 +221,7 @@ sessions:
       kind: main | sub
       lastAt: string
       preview: string
+      projectId: string  # the project it belongs to, "" for main
       sessionId: string
       title: string
 ```
@@ -425,7 +427,7 @@ YAML
 
 - `POST /log/session/upsert` (network / http)
 
-Store a conversation's role (main / sub), the blueprint it was made from and its display name; an existing row keeps its createdAt and takes the new values (an empty one keeps the stored value)
+Store a conversation's role (main / sub), the project it belongs to, the blueprint it was made from and its display name; an existing row keeps its createdAt and takes the new values (an empty one keeps the stored value)
 
 ### Request body
 
@@ -567,3 +569,146 @@ openSessions: [s_1a2b3c]
 mainSession: s_2d3e4f
 YAML
 ```
+
+## log-project-list
+
+- `POST /log/project/list` (network / http)
+
+The project board — every folder the user added in Engineer, in the order it was added; a project that was removed is not listed (its row and its conversations stay in the database)
+
+### Request body
+
+```yaml
+{}
+```
+
+### Response (status 200)
+
+```yaml
+projects:
+    - projectId: string  # p_<12 hex>; the id every other service resolves a project folder by
+      path: string  # absolute folder path on this machine
+      name: string  # display name (engineer.yaml `project:`, else the folder name)
+      createdAt: string
+      updatedAt: string
+```
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/project/list -d '{}'
+```
+
+## log-project-get
+
+- `POST /log/project/get` (network / http)
+
+Read one project by id, removed or not — static, ai and web turn a projectId into the folder they serve / run in
+
+### Request body
+
+```yaml
+projectId: string  # p_<12 hex>
+```
+
+### Response (status 200)
+
+```yaml
+projectId: string
+path: string
+name: string
+createdAt: string
+updatedAt: string
+removedAt?: string  # set when the project is off the board
+```
+
+### Errors
+
+- 400 `bad_request` — projectId missing
+- 404 `not_found` — no such project
+- 500 `internal` — server internal error
+
+## log-project-add
+
+- `POST /log/project/add` (network / http)
+
+Put a folder on the project board. The store does not look at the filesystem — web checks that the path really is an engineer project first. A path already on record keeps its projectId
+
+### Request body
+
+```yaml
+path: string  # absolute folder path; a relative one is refused
+name?: string  # display name; "" keeps the stored one
+```
+
+### Response (status 200)
+
+```yaml
+projectId: string
+path: string
+name: string
+createdAt: string
+updatedAt: string
+```
+
+### Errors
+
+- 400 `bad_request` — path missing or not absolute
+- 500 `internal` — server internal error
+
+## log-project-remove
+
+- `POST /log/project/remove` (network / http)
+
+Take a project off the board (soft: the row, its sessions and the folder all stay). Re-adding the same path clears removedAt
+
+### Request body
+
+```yaml
+projectId: string  # p_<12 hex>
+```
+
+### Response (status 200)
+
+```yaml
+projectId: string
+path: string
+name: string
+removedAt: string
+```
+
+### Errors
+
+- 400 `bad_request` — projectId missing
+- 404 `not_found` — no such project
+- 500 `internal` — server internal error
+
+## log-project-visible
+
+- `POST /log/project/visible` (network / http)
+
+Show or hide one project's group in the titlebar. Hiding changes nothing about the project — it stays on the board, its sessions stay open, and showing it again brings back exactly the tabs it had
+
+### Request body
+
+```yaml
+projectId: string  # p_<12 hex>
+visible: boolean
+```
+
+### Response (status 200)
+
+```yaml
+projectId: string
+path: string
+name: string
+createdAt: string
+updatedAt: string
+visible: boolean
+```
+
+### Errors
+
+- 400 `bad_request` — visible missing
+- 404 `not_found` — no such project
+- 500 `internal` — server internal error

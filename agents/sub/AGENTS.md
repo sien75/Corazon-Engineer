@@ -26,7 +26,8 @@ Corazon Engineer is the running system. Its schema is a plain file tree and its 
   own relative files, the shell's `/vendor` libraries, and a library the shell does not ship going
   into the blueprint directory — never a CDN.
 - A new blueprint is a directory with `README.md` + `index.html` (copy `pure-chat` for the shape). You
-  cannot open a tab yourself: build it, then tell the user to ask main for `session-new` with its slug.
+  cannot open a tab yourself: build it, then tell the user to open it from the launcher (their project
+  → its blueprints) or to ask main for `session-new` with its slug.
 
 ### When to propose a page — new, or an existing one
 

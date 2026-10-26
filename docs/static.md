@@ -2,7 +2,7 @@
 
 # static
 
-Corazon Engineer static service — watches the schema file tree and serves the read-only views (query / query-detail / stream) to the web frontend; it does not validate the tree — a malformed atom or a dangling edge is not its business; the views cover every file type — atoms, edges, contracts, how-to, development, docs, notes, and the dot-directory resources skills (.agents/skills) and blueprints (.agents/blueprints); writes go through the ai shell
+Corazon Engineer static service — watches the schema file tree of every project on the board and serves the read-only views (query / query-detail / stream) to the web frontend; it does not validate the tree — a malformed atom or a dangling edge is not its business; it has no root of its own any more: each request names a projectId, which it resolves to a folder through log (remembered for a few seconds), so the program is not tied to the folder it was started in; the views cover every file type — atoms, edges, contracts, how-to, development, docs, notes, and the dot-directory resources skills (.agents/skills) and blueprints (.agents/blueprints); writes go through the ai shell
 
 - runtime: go 1.22
 
@@ -15,7 +15,7 @@ Return full schema data for rendering the architecture graph and atom/edge detai
 ### Request body
 
 ```yaml
-env?: string
+projectId: string  # p_<12 hex> — whose tree to read
 ```
 
 ### Response (status 200)

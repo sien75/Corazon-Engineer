@@ -1,13 +1,55 @@
 atoms:
   - name: web
-    description: Corazon Engineer web shell — one conversation (main) plus the open sessions main puts on screen (or the launcher does, via the + button). every session is one view — main and a blueprint agent whose page is an iframe onto its own /agent/<sessionId>/, and the shell draws them with the <engineer-chat> custom element under components/ (one implementation, shadow DOM, /components/chat.css) or that iframe. There is no tab record — a tab is one open session, so the workspace (which sessions are open, in display order, and which one is main) is read from log's current row, and the shell resumes each open session before drawing it; main's workspace tools open, close, create and delete sessions, and their tool frames make the shell re-read the workspace. The launcher lists blueprints (static) and recent sessions (log's session list). The shell restores its visible page from the URL on load and history navigation — / for main, /new for the launcher, /session/<id> for a session. The file server (workspace/web/server) is multi-root — /config.js (an ES module whose ENGINEER export holds the static / ai / log addresses) and the app assets come from --assets, while /agent/<sessionId>/ serves a blueprint directory from --blueprints (the session is resolved to its slug through log, so one page is shared by every agent made from it; --agents, optional, holds the per-agent copies older sessions still have). It owns the page theme — /theme.css is the palette both the shell and blueprints link, and the shell writes the current data-theme into a page's document
+    description: Corazon Engineer web shell — one conversation — main, which is global and belongs to no project — plus the open sessions on screen. The titlebar is grouped by project, Chrome-style — one chip per project on the board carrying the project's name, expanding to that project's open session tabs followed by the project's launcher — an icon that opens the launcher page and, once open, is that group's launcher tab (icon label, the active underline, and no close — the page a group opens its tabs from cannot be closed); a group survives its last closed tab. Hiding a group (the eye in the Engineer launcher) keeps it on the board and keeps its sessions open — it only stops drawing them. main is global and sits outside every group. The + button opens the Engineer launcher — the board of projects, where a folder is added, removed, hidden or opened — and a project opens its own launcher (that project's blueprints and recents); both are routes, so a reload comes back to the same page. A project is a folder added from that page, not the folder the program was started in — this service is also where a folder is admitted (POST /project/add checks for engineer.yaml and hands it to log), because it is the service that reads the disk. every session is one view — main and a blueprint agent whose page is an iframe onto its own /agent/<sessionId>/, and the shell draws them with the <engineer-chat> custom element under components/ (one implementation, shadow DOM, /components/chat.css) or that iframe. There is no tab record — a tab is one open session, so the workspace (which sessions are open, in display order, and which one is main) is read from log's current row, and the shell resumes each open session before drawing it; main's workspace tools open, close, create and delete sessions, and their tool frames make the shell re-read the workspace. Routes are / for main, /new for the Engineer launcher, /project/<projectId>/new for one project's launcher and /session/<id> for a session, so a reload and history land back on the same page. The file server (workspace/web/server) serves /config.js (an ES module whose ENGINEER export holds the static / ai / log addresses) and the app assets from --assets, /agent/<sessionId>/ from the blueprint directory of the project the session belongs to (session → project and blueprint through log, blueprint tree under that project's folder — so one page is shared by every agent made from it), and POST /project/add as the one door a folder comes in by. It owns the page theme — /theme.css is the palette both the shell and blueprints link, and the shell writes the current data-theme into a page's document
     path: ./workspace/web
     runtime_type: browser
     role: service
 
     interfaces:
-      provides: []
+      provides:
+        - id: web-project-add
+          channel: network
+          protocol: http
+          contract: ./contracts/web-project-add.yaml
+          extend:
+            path: /project/add
+            method: POST
       consumes:
+        - id: log-project-list
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-list.yaml
+          extend:
+            path: /log/project/list
+            method: POST
+        - id: log-project-get
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-get.yaml
+          extend:
+            path: /log/project/get
+            method: POST
+        - id: log-project-add
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-add.yaml
+          extend:
+            path: /log/project/add
+            method: POST
+        - id: log-project-remove
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-remove.yaml
+          extend:
+            path: /log/project/remove
+            method: POST
+        - id: log-project-visible
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-visible.yaml
+          extend:
+            path: /log/project/visible
+            method: POST
         - id: static-query
           channel: network
           protocol: http

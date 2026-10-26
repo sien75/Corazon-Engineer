@@ -21,9 +21,10 @@ import YAML from "yaml";
 
 export interface WorkspaceDeps {
   logBase: string;
-  // Open a new conversation from a blueprint slug (the session row, its blueprint
-  // and its title are written by the registry); returns its id.
-  newSession: (blueprint: string) => Promise<string>;
+  // Open a new conversation from a blueprint slug inside a project (the session
+  // row, its project, its blueprint and its title are written by the registry);
+  // returns its id.
+  newSession: (blueprint: string, project: string) => Promise<string>;
   // Open a new main conversation (kind "main": the same role and tools as the
   // one these tools run inside); returns its id. The pointer is moved by the
   // tool itself — the registry only makes the session.
@@ -121,12 +122,13 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
         rows.push({
           sessionId,
           title: rec.title ?? "",
+          projectId: rec.projectId ?? "",
           blueprint: rec.blueprint ?? "",
           lastAt: rec.lastAt ?? "",
         });
         lines.push(
           `session ${sessionId}  ${oneLine(rec.title || "(untitled)", 40)}  ` +
-            `${rec.blueprint || "-"}  ${rec.lastAt ?? ""}`,
+            `project ${rec.projectId || "-"}  ${rec.blueprint || "-"}  ${rec.lastAt ?? ""}`,
         );
       }
       const body = [
@@ -231,20 +233,25 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
     name: "session-new",
     label: "New agent in a new tab",
     description:
-      "Make a new agent from a blueprint and put it on screen as a tab of its own. " +
-      "The session id is assigned here — you never pass one, and an existing " +
-      "conversation cannot be moved into a new tab (reopen it with session-open " +
-      "instead). The tab shows that agent and nothing else.",
+      "Make a new agent from a blueprint inside a project and put it on screen as " +
+      "a tab of its own. The agent runs in that project's folder and its page is " +
+      "read from that project's .agents/blueprints/ — so the project is required " +
+      "(project-list has the ids). The session id is assigned here — you never " +
+      "pass one, and an existing conversation cannot be moved into a new tab " +
+      "(reopen it with session-open instead).",
     promptSnippet: "session-new: a new agent in a new tab",
     parameters: Type.Object({
+      project: Type.String({ description: "project id (from project-list)" }),
       blueprint: Type.String({ description: "blueprint slug to instantiate" }),
     }),
     execute: async (_id, params) => {
       const slug = String(params.blueprint ?? "").trim();
-      if (!slug) return fail("session-new needs `blueprint`.");
+      const project = String(params.project ?? "").trim();
+      if (!slug) return fail("session-new needs `blueprint` — project-list lists the projects, and a project's .agents/blueprints/ has the slugs.");
+      if (!project) return fail("session-new needs `project` (a project id from project-list).");
       let sessionId = "";
       try {
-        sessionId = await deps.newSession(slug);
+        sessionId = await deps.newSession(slug, project);
       } catch (err) {
         return fail(
           `Could not instantiate ${slug}: ${err instanceof Error ? err.message : String(err)}`,
@@ -272,8 +279,41 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       return ok(`Tab for ${sessionId} — ${title || slug}, agent ${sessionId}.`, {
         sessionId,
         title,
+        project,
         blueprint: slug,
       });
+    },
+  });
+
+  // project-list is how main knows which folders it is working across: an agent
+  // belongs to one project, and its id is what session-new takes.
+  const projectList = defineTool({
+    name: "project-list",
+    label: "List projects",
+    description:
+      "The project board: every folder the user opened in Engineer, with its " +
+      "projectId, name and path. This is the board — a project taken off it does " +
+      "not appear, though its conversations keep their records.",
+    promptSnippet: "project-list: the projects on the board",
+    parameters: Type.Object({}),
+    execute: async () => {
+      let data;
+      try {
+        data = await logCall<{ projects?: any[] }>(deps.logBase, "/log/project/list", {});
+      } catch (err) {
+        return fail(`Could not read the projects: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      const rows = (data.projects ?? []).map((p) => ({
+        projectId: String(p.projectId ?? ""),
+        name: String(p.name ?? ""),
+        path: String(p.path ?? ""),
+      }));
+      const body = rows.length
+        ? rows
+            .map((r) => `project ${r.projectId}  ${oneLine(r.name || "(unnamed)", 40)}  ${r.path}`)
+            .join("\n")
+        : "no projects on the board";
+      return ok(body, { projects: rows });
     },
   });
 
@@ -526,6 +566,7 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
   });
 
   return [
+    projectList,
     sessionList,
     sessionOpen,
     sessionClose,

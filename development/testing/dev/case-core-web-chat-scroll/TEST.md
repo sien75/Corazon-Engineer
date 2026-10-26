@@ -1,5 +1,10 @@
 # Test: core-web-chat-scroll
 
+> ⚠️ 这个用例的外壳交互写的是旧外壳（`#ai-scroll` / `#ai-messages` / `/chat/<id>`，都是 chat 搬进
+> `<engineer-chat>` shadow DOM 之前的形状）。P1/P2 只改了它的启动参数（`--home` / 项目注册），
+> 断言部分**尚未**跟上当前外壳，跑起来会在选择器上先失败；重写它属于另一件事，记在
+> `development/iterations/2610-50-多项目工作区.md` 的已知缺口里。
+
 A conversation is read as a column: the messages and the composer are capped at
 1000px and centred. The *scrolling*, though, belongs to the whole pane — the
 scroll container spans the full width of the chat page, so the wheel scrolls the
@@ -16,39 +21,46 @@ behaviour, so this case runs through a real browser (`ego-browser`).
 Prerequisite: `ego-browser` on `PATH` (`ego-browser --version`).
 
 ```bash
-# A scratch project root: the case must not touch the real .engineer/ or log
+# A scratch project root: the case must not touch the real .engineer/ or log.
+# log's database lives in the engineer home.
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.chat-scroll-test"
-rm -rf "$ROOT" && mkdir -p "$ROOT"
+HOME_DIR="$ROOT/home"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: chat-scroll-test\n' > "$ROOT/engineer.yaml"
 
 # log + ai on their own ports; ai in stub mode, so the run is deterministic and
 # offline. The conversation itself is seeded from the test (see Run).
-# Guard first: with an empty $ROOT the pattern below degrades to
-# "serve-log --root " and kills every service on the machine —
+# Guard first: with an empty $HOME_DIR the pattern below degrades to
+# "serve-log --home " and kills every service on the machine —
 # including the one running the agent. Fail loudly instead.
-: "${ROOT:?this case must set ROOT before reclaiming}"
+: "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 # Reclaim a previous run of this case. A leftover service keeps serving its
 # old database (or silently stops this run's from binding, so the frontend
 # talks to the other case's services) — and the failure that causes looks
 # like a wrong answer, not a dead service. This happens before, not after.
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
-pkill -f "serve-static --root $ROOT" 2>/dev/null || true
-pkill -f "main.ts.*--root $ROOT" 2>/dev/null || true
-for p in 8910 8911 8912; do pkill -f "serve-web.*--port $p" 2>/dev/null || true; done
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+for p in 8910 8911 8912; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8911 >/tmp/chat-scroll-log.log 2>&1 &
+/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8911 >/tmp/chat-scroll-log.log 2>&1 &
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8911/log/project/list -d '{}' && break
+  sleep 1
+done
+curl -s -o /dev/null -X POST http://localhost:8911/log/project/add \
+  -H 'Content-Type: application/yaml' --data-binary "path: $ROOT"
+PROJECT=$(curl -s -X POST http://localhost:8911/log/project/list | awk '$1=="projectId:" {print $2}' | head -1)
 
-(cd workspace/ai && bun run src/main.ts --root "$ROOT" --bind 127.0.0.1 --port 8910 --stub \
+(cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 8910 --stub \
   --log http://localhost:8911 --static http://localhost:8502 \
   --agents "$ROOTDIR/agents" \
   >/tmp/chat-scroll-ai.log 2>&1 &)
 
 # web assets
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8912 --assets "$ROOTDIR/workspace/web" \
-  --pages /tmp/engineer-pages-unused \
   --static http://localhost:8502 --ai http://localhost:8910 --log http://localhost:8911 \
   >/tmp/chat-scroll-web.log 2>&1 &
 
@@ -219,6 +231,6 @@ code `0`.
 
 ```bash
 pkill -f 'serve-web.*--port 8912'
-pkill -f '/tmp/engineer serve-log --root .*chat-scroll-test'
+pkill -f 'serve-log --home .*chat-scroll-test'
 pkill -f 'main.ts.*--port 8910'
 ```

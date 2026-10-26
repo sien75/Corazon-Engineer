@@ -1,0 +1,17 @@
+edges:
+  - id: static-to-log-project-get
+    from: static
+    from_interface: log-project-get
+    to: log
+    to_interface: log-project-get
+    channel: network
+    protocol: http
+    description: static turns the projectId a request carries into the folder to read (remembered for a few seconds, so a page's burst of reads costs one lookup)
+  - id: static-to-log-project-list
+    from: static
+    from_interface: log-project-list
+    to: log
+    to_interface: log-project-list
+    channel: network
+    protocol: http
+    description: the file watcher polls the project board so that adding or removing a project needs no restart of the service

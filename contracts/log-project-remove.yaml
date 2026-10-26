@@ -1,0 +1,26 @@
+id: log-project-remove
+description: Take a project off the board — soft, so the row, its sessions and the folder all stay; re-adding the same path later clears removedAt and the project comes back with its history. Removing one that is already off the board is a no-op
+
+request:
+  body:
+    projectId: string  # p_<12 hex>
+
+response:
+  status: 200
+  body:
+    projectId: string
+    path: string
+    name: string
+    removedAt: string  # when it was taken off the board, RFC3339
+    visible: boolean  # unchanged by a removal
+
+errors:
+  - status: 400
+    code: bad_request
+    description: projectId missing
+  - status: 404
+    code: not_found
+    description: no such project
+  - status: 500
+    code: internal
+    description: server internal error

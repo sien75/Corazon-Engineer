@@ -23,12 +23,17 @@ below are YAML. Run with proxies off (`NO_PROXY='*' no_proxy='*'`).
 ```bash
 # Reclaim a previous run of this case (a leftover service is what makes a wrong
 # answer look like a dead one).
+HOME_DIR="$PWD/.engineer/.agent-test/home"
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 for p in 8970 8971 8972; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 # A scratch project: one blueprint with its own assets, one missing index.html.
 ROOT="$PWD/.engineer/.agent-test"
-rm -rf "$ROOT" && mkdir -p "$ROOT/.agents/blueprints/demo/assets" "$ROOT/.agents/blueprints/broken"
+# The engineer home (log's database, the project board). Not a project.
+HOME_DIR="$ROOT/home"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/demo/assets" "$ROOT/.agents/blueprints/broken"
 printf 'project: agent-test\n' > "$ROOT/engineer.yaml"
 cat > "$ROOT/.agents/blueprints/demo/README.md" <<'MD'
 # Demo agent
@@ -56,17 +61,25 @@ printf '<!doctype html><h1>two</h1><engineer-chat></engineer-chat><engineer-chat
   > "$ROOT/.agents/blueprints/twochats/index.html"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 8970 &
+/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8970 &
+# The scratch project goes on the board, and every ai/new below names it.
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8970/log/project/list -d '{}' && break
+  sleep 1
+done
+curl -s -X POST http://localhost:8970/log/project/add -H 'Content-Type: application/yaml' \
+  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
+PROJECT=$(cat "$ROOT/.project")
 # ai is the Bun service, not a subcommand of the Go binary (--stub: no model calls)
-(cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 8971 --root "$ROOT" \
-  --log http://localhost:8970 --static http://localhost:8972 --agents "$PWD/agents" --stub &)
+(cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 8971 --home "$HOME_DIR" \
+  --log http://localhost:8970 --static http://localhost:8972 --agents "$(cd ../../agents && pwd)" --stub &)
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8972 \
   --assets "$(cd workspace/web && pwd)" \
-  --blueprints "$ROOT/.agents/blueprints" --agents "$ROOT/.engineer/agents" \
   --static http://localhost:8972 --ai http://localhost:8971 --log http://localhost:8970 &
 
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8971/ai/new -d 'blueprint: demo' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8971/ai/new \
+    -H 'Content-Type: application/yaml' --data-binary "$(printf 'projectId: %s\nblueprint: demo' "$PROJECT")" && break
   sleep 1
 done
 ```
@@ -78,15 +91,16 @@ Expected: three startup lines (`engineer log: …`, `engineer ai: serving on …
 
 ```bash
 SESSION=$(curl -s -X POST http://localhost:8971/ai/new \
-  -H 'Content-Type: application/yaml' --data-binary $'blueprint: demo' | sed -n 's/^sessionId: //p')
+  -H 'Content-Type: application/yaml' --data-binary "$(printf 'projectId: %s\nblueprint: demo' "$PROJECT")" | sed -n 's/^sessionId: //p')
 echo "session=$SESSION"
 curl -s -X POST http://localhost:8970/log/session/detail \
   -H 'Content-Type: application/yaml' --data-binary $"sessionId: $SESSION"
 ls "$ROOT/.engineer/agents" 2>/dev/null || echo "no per-agent copies"
 ```
 
-Expected: `session=s_<hex>`; the session row carries `kind: sub` and
-`blueprint: demo`; `no per-agent copies` — the page is never copied.
+Expected: `session=s_<hex>`; the session row carries `kind: sub`, `blueprint: demo`
+and the scratch project's `projectId`; `no per-agent copies` — the page is never
+copied.
 
 ## 2. /agent/<sessionId>/ serves the blueprint directory
 
@@ -125,7 +139,7 @@ in step.
 
 ```bash
 SESSION2=$(curl -s -X POST http://localhost:8971/ai/new \
-  -H 'Content-Type: application/yaml' --data-binary $'blueprint: demo' | sed -n 's/^sessionId: //p')
+  -H 'Content-Type: application/yaml' --data-binary "$(printf 'projectId: %s\nblueprint: demo' "$PROJECT")" | sed -n 's/^sessionId: //p')
 curl -s "http://localhost:8972/agent/$SESSION2/" | grep -c '<h1>demo</h1>'
 ls "$ROOT/.engineer/agents" 2>/dev/null || echo "still no copies"
 ```
@@ -136,13 +150,13 @@ Expected: `1` and `still no copies` — two sessions, one page, two URLs.
 
 ```bash
 curl -s -o /tmp/broken.out -w '%{http_code}\n' -X POST http://localhost:8971/ai/new \
-  -H 'Content-Type: application/yaml' --data-binary $'blueprint: broken'
+  -H 'Content-Type: application/yaml' --data-binary "$(printf 'projectId: %s\nblueprint: broken' "$PROJECT")"
 cat /tmp/broken.out
 curl -s -o /tmp/nochat.out -w '%{http_code}\n' -X POST http://localhost:8971/ai/new \
-  -H 'Content-Type: application/yaml' --data-binary $'blueprint: nochat'
+  -H 'Content-Type: application/yaml' --data-binary "$(printf 'projectId: %s\nblueprint: nochat' "$PROJECT")"
 grep -o 'exactly one <engineer-chat>, found 0' /tmp/nochat.out
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8971/ai/new \
-  -H 'Content-Type: application/yaml' --data-binary $'blueprint: twochats'
+  -H 'Content-Type: application/yaml' --data-binary "$(printf 'projectId: %s\nblueprint: twochats' "$PROJECT")"
 ```
 
 Expected: `400`, `error.code: bad_request`, a message naming `index.html`; then
@@ -153,9 +167,9 @@ Nothing is created in any case: no session row, no page.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8971/ai/new \
-  -H 'Content-Type: application/yaml' --data-binary $'blueprint: nope'
+  -H 'Content-Type: application/yaml' --data-binary "$(printf 'projectId: %s\nblueprint: nope' "$PROJECT")"
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8971/ai/new \
-  -H 'Content-Type: application/yaml' --data-binary $'blueprint: ../etc'
+  -H 'Content-Type: application/yaml' --data-binary "$(printf 'projectId: %s\nblueprint: ../etc' "$PROJECT")"
 ```
 
 Expected: `400` and `400` — a bad slug never reaches the filesystem.

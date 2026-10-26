@@ -67,7 +67,7 @@ export function serve(registry: Registry, addr: string): void {
       // Content-addressed image bytes; immutable so the browser can cache hard.
       if (req.method === "GET" && url.pathname.startsWith("/blobs/")) {
         const blob = readBlob(
-          registry.rootDir,
+          registry.homeDir,
           url.pathname.slice("/blobs/".length),
         );
         if (!blob) return errRes(404, "not_found", "blob not found");
@@ -91,11 +91,11 @@ export function serve(registry: Registry, addr: string): void {
 
       switch (url.pathname) {
         case "/ai/new": {
-          // An agent is made from a blueprint: the prototype's two files are
-          // checked, its slug is recorded on the session row in log, and its
-          // README plus its path become the tail of the system prompt. A bad
-          // slug / a prototype that breaks the two-file rule is the caller's
-          // mistake (400), not a server failure.
+          // An agent is made from a blueprint inside a project: the prototype's
+          // two files are checked, its slug and the project are recorded on the
+          // session row in log, and its README plus its path become the tail of
+          // the system prompt. A bad slug / a prototype that breaks the two-file
+          // rule is the caller's mistake (400), not a server failure.
           let blueprint = "";
           if (body.blueprint !== undefined && body.blueprint !== null) {
             try {
@@ -114,9 +114,15 @@ export function serve(registry: Registry, addr: string): void {
           if (kind !== "main" && kind !== "sub") {
             return errRes(400, "bad_request", `kind must be main | sub, got ${JSON.stringify(kind)}`);
           }
+          // The project a sub agent belongs to: its folder is the agent's cwd and
+          // the blueprint tree its page comes from. main belongs to none.
+          const projectId = String(body.projectId ?? "").trim();
+          if (kind === "sub" && !projectId) {
+            return errRes(400, "bad_request", "projectId required for kind=sub");
+          }
           let sess;
           try {
-            sess = await registry.new(blueprint || undefined, kind);
+            sess = await registry.new(blueprint || undefined, kind, kind === "sub" ? projectId : "");
           } catch (err) {
             if (err instanceof BlueprintError) {
               return errRes(400, "bad_request", err.message);

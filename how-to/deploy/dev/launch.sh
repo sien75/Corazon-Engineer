@@ -1,9 +1,16 @@
 #!/bin/sh
 # dev launcher — builds sources and starts all four services, choosing free ports.
 #
-# Run from the project root (the directory holding engineer.yaml):
-#   how-to/deploy/dev/launch.sh
+# Run it from anywhere; it works from the checkout it lives in, not from the
+# current directory:
+#   <checkout>/how-to/deploy/dev/launch.sh
 # Stop with how-to/deploy/dev/stop.sh
+#
+# The program is not tied to a project folder any more: projects are added on the
+# web page and remembered in the data home ($ENGINEER_DATA, default
+# <checkout>/.engineer/home — dev keeps its own data so it never touches a real
+# install's). ENGINEER_INSTANCE names a second instance from the same checkout:
+# different ports, its own pids/logs, no interference.
 #
 # Ports have defaults (8500 web / 8501 ai / 8502 static / 8503 log); if a
 # default is already in use the launcher advances to the next free port. The
@@ -14,13 +21,17 @@
 # up — 0.0.0.0 for the whole network, or this machine's IP for one interface
 # (the latter is what makes the printed addresses usable from another machine).
 set -e
-ROOT="$PWD"
-[ -f "$ROOT/engineer.yaml" ] || {
-  echo "run from the project root (no engineer.yaml in $ROOT)" >&2
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+[ -f "$ROOT/how-to/deploy/dev/launch.sh" ] || {
+  echo "cannot locate the checkout from $0" >&2
   exit 1
 }
 
-D="$ROOT/.engineer/dev"
+# The data home: engineer.db, the project board, uploads. Not a project.
+DATA=${ENGINEER_DATA:-$ROOT/.engineer/home}
+# One instance per suffix; the binary path is per instance too, so the reclaim
+# below only ever kills this instance's services.
+D="$ROOT/.engineer/dev${ENGINEER_INSTANCE:+-$ENGINEER_INSTANCE}"
 BIN="$D/bin"
 mkdir -p "$BIN"
 
@@ -85,23 +96,32 @@ BASE=http://$URLHOST
 rm -f "$BIN/engineer-log" "$BIN/engineer-static" "$BIN/engineer-web"
 
 # --- start (order: log → static → ai → web) -------------------------------
-nohup "$BIN/engineer" serve-log --root "$ROOT" --bind "$BIND" --port "$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
+# --- one-time move of this checkout's old project-local database ------------
+# Engineer's own data predates the home; another project's does not, by design.
+# The subcommand is idempotent: it copies only when the home has no database yet.
+mkdir -p "$DATA"
+if [ -f "$ROOT/.engineer/engineer.db" ]; then
+  "$BIN/engineer" migrate --home "$DATA" --from "$ROOT/.engineer" --project "$ROOT" || \
+    echo "warning: migrating $ROOT/.engineer/engineer.db failed" >&2
+fi
+
+nohup "$BIN/engineer" serve-log --home "$DATA" --bind "$BIND" --port "$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
 echo $! >"$D/log.pid"
-nohup "$BIN/engineer" serve-static --root "$ROOT" --bind "$BIND" --port "$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
+nohup "$BIN/engineer" serve-static --log "$BASE:$PORT_LOG" --bind "$BIND" --port "$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
 echo $! >"$D/static.pid"
 # exec so the recorded pid IS the server process (not a wrapper that outlives kill)
 ( cd "$ROOT/workspace/ai" && exec nohup bun src/main.ts \
-    --root "$ROOT" --agents "$ROOT/agents" \
+    --home "$DATA" --agents "$ROOT/agents" \
     --bind "$BIND" --port "$PORT_AI" \
     --log "$BASE:$PORT_LOG" --static "$BASE:$PORT_STATIC" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
 nohup "$BIN/engineer" serve-web --bind "$BIND" --port "$PORT_WEB" \
-    --assets "$ROOT/workspace/web" --blueprints "$ROOT/.agents/blueprints" \
-    --agents "$ROOT/.engineer/agents" \
+    --assets "$ROOT/workspace/web" \
     --static "$BASE:$PORT_STATIC" --ai "$BASE:$PORT_AI" --log "$BASE:$PORT_LOG" >"$D/web.log" 2>&1 </dev/null &
 echo $! >"$D/web.pid"
 
-echo "engineer dev up — project: $ROOT"
+echo "engineer dev up — checkout: $ROOT"
+printf '  data    %s\n' "$DATA"
 printf '  web     %s\n' "$BASE:$PORT_WEB"
 printf '  ai      %s\n' "$BASE:$PORT_AI"
 printf '  static  %s\n' "$BASE:$PORT_STATIC"

@@ -15,17 +15,20 @@ it starts, it shows one tab per old tab, and nothing else is lost.
 
 ```bash
 ROOT="$PWD/.engineer/.log-session"
+# The database lives in the engineer home now, not in a project's .engineer/.
+HOME_DIR="$ROOT/home"
 
 : "${ROOT:?this case must set ROOT before reclaiming}"
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+: "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$ROOT/.engineer"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: log-session\n' > "$ROOT/engineer.yaml"
 
 # A pre-change database, built by hand: the tab table, the tab binding on
 # sessions, and an open list made of tab ids.
-DB="$ROOT/.engineer/engineer.db"
+DB="$HOME_DIR/engineer.db"
 sqlite3 "$DB" <<'SQL'
 CREATE TABLE tabs (
   tab_id TEXT PRIMARY KEY,
@@ -56,7 +59,7 @@ INSERT INTO sessions VALUES ('s_main', 'main', '',        '',        '2024-01-01
 SQL
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 9050 \
+/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9050 \
   >/tmp/ego-simple/log-session.log 2>&1 &
 LOG=http://localhost:9050
 for i in $(seq 1 60); do
@@ -77,13 +80,14 @@ tab with no session) contributed nothing, and `mainSession: s_main` is unchanged
 ## 2. the old tables and columns are gone
 
 ```bash
-sqlite3 "$ROOT/.engineer/engineer.db" ".tables"
-sqlite3 "$ROOT/.engineer/engineer.db" "PRAGMA table_info(current);" | cut -d'|' -f2 | tr '\n' ' '; echo
-sqlite3 "$ROOT/.engineer/engineer.db" "PRAGMA table_info(sessions);" | cut -d'|' -f2 | tr '\n' ' '; echo
+sqlite3 "$HOME_DIR/engineer.db" ".tables"
+sqlite3 "$HOME_DIR/engineer.db" "PRAGMA table_info(current);" | cut -d'|' -f2 | tr '\n' ' '; echo
+sqlite3 "$HOME_DIR/engineer.db" "PRAGMA table_info(sessions);" | cut -d'|' -f2 | tr '\n' ' '; echo
 ```
 
-Expected: `.tables` lists no `tabs`; `current` has `open_sessions` (not
-`open_tabs`); `sessions` has `title` and no `tab_id`.
+Expected: `.tables` lists no `tabs` and a `projects` table; `current` has
+`open_sessions` (not `open_tabs`); `sessions` has `title` and `project_id`, and no
+`tab_id`.
 
 ## 3. the sessions themselves survived
 
@@ -112,8 +116,8 @@ sessions, not read-only leftovers — and `off` leaves `[s_b]`.
 ## 5. a second start migrates nothing
 
 ```bash
-pkill -f "serve-log --root $ROOT" ; sleep 1
-/tmp/engineer serve-log --root "$ROOT" --bind 127.0.0.1 --port 9050 \
+pkill -f "serve-log --home $HOME_DIR" ; sleep 1
+/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9050 \
   >/tmp/ego-simple/log-session.log 2>&1 &
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $LOG/log/current/get -d '{}' && break
@@ -128,6 +132,6 @@ does not reset the list.
 ## Teardown
 
 ```bash
-pkill -f "serve-log --root $ROOT" 2>/dev/null || true
+pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
 rm -rf "$ROOT"
 ```

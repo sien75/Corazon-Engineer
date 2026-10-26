@@ -1,6 +1,6 @@
 atoms:
   - name: log
-    description: Corazon Engineer log service — owns the project's sqlite state — records (call / observe / conversation), sessions (each conversation's kind, main or sub, the blueprint it drives and its display name) and current (which sessions are open — the shell's tab bar — and which one is main); a tab is not stored — it is one open session, so the open list is all the workspace needs; exposes log query/detail/search/mutation/stream/list/delete APIs plus the session and current ones
+    description: Corazon Engineer log service — owns the engineer home's sqlite state — records (call / observe / conversation), projects (the board of folders the program works on — path, name, whether it is still on the board (removal is soft) and whether its group is drawn in the titlebar (hiding is not removal)), sessions (each conversation's kind, main or sub, the project it belongs to, the blueprint it drives and its display name) and current (which sessions are open — the shell's tab bar — and which one is main); a tab is not stored — it is one open session, so the open list is all the workspace needs; the home is the program's own data directory, not a project — the program runs anywhere and the folders it serves are rows in projects; exposes log query/detail/search/mutation/stream/list/delete APIs plus the session, project and current ones
     path: ./workspace/log
     runtime_type: go
     runtime_version: "1.22"
@@ -8,6 +8,41 @@ atoms:
 
     interfaces:
       provides:
+        - id: log-project-list
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-list.yaml
+          extend:
+            path: /log/project/list
+            method: POST
+        - id: log-project-get
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-get.yaml
+          extend:
+            path: /log/project/get
+            method: POST
+        - id: log-project-add
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-add.yaml
+          extend:
+            path: /log/project/add
+            method: POST
+        - id: log-project-remove
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-remove.yaml
+          extend:
+            path: /log/project/remove
+            method: POST
+        - id: log-project-visible
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-visible.yaml
+          extend:
+            path: /log/project/visible
+            method: POST
         - id: log-query
           channel: network
           protocol: http

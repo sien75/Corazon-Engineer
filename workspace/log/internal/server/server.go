@@ -36,6 +36,11 @@ func New(st *store.Store) *Server {
 	s.mux.HandleFunc("POST /log/session/off", s.handleSessionOff)
 	s.mux.HandleFunc("POST /log/session/upsert", s.handleSessionUpsert)
 	s.mux.HandleFunc("POST /log/session/detail", s.handleSessionGet)
+	s.mux.HandleFunc("POST /log/project/list", s.handleProjectList)
+	s.mux.HandleFunc("POST /log/project/get", s.handleProjectGet)
+	s.mux.HandleFunc("POST /log/project/add", s.handleProjectAdd)
+	s.mux.HandleFunc("POST /log/project/remove", s.handleProjectRemove)
+	s.mux.HandleFunc("POST /log/project/visible", s.handleProjectVisible)
 	s.mux.HandleFunc("POST /log/current/get", s.handleCurrentGet)
 	s.mux.HandleFunc("POST /log/current/put", s.handleCurrentPut)
 	s.mux.HandleFunc("POST /log/stream", s.handleStream)
@@ -246,6 +251,7 @@ func (s *Server) handleSessionUpsert(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `yaml:"sessionId"`
 		Kind      string `yaml:"kind"`
+		ProjectID string `yaml:"projectId"`
 		Blueprint string `yaml:"blueprint"`
 		Title     string `yaml:"title"`
 	}
@@ -256,7 +262,13 @@ func (s *Server) handleSessionUpsert(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "sessionId missing")
 		return
 	}
-	sess, err := s.store.UpsertSession(req.SessionID, req.Kind, req.Blueprint, req.Title)
+	// A project id becomes a lookup key for a folder in two other services, so a
+	// malformed one is refused here rather than stored.
+	if p := strings.TrimSpace(req.ProjectID); p != "" && !store.ValidProjectID(p) {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid projectId: "+p)
+		return
+	}
+	sess, err := s.store.UpsertSession(req.SessionID, req.Kind, req.ProjectID, req.Blueprint, req.Title)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -285,6 +297,115 @@ func (s *Server) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeYAMLResp(w, http.StatusOK, sess)
+}
+
+// ---------- projects ----------
+//
+// The board of folders this engineer works on. It lives here because it is data:
+// the program runs anywhere, and which projects it serves is a list it remembers,
+// not the folder it was started in. The store does not touch the filesystem — the
+// web server checks that a path really is an engineer project before it is added.
+
+func (s *Server) handleProjectList(w http.ResponseWriter, r *http.Request) {
+	var req struct{}
+	if !decode(w, r, &req) {
+		return
+	}
+	list, err := s.store.ListProjects()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	projects := make([]map[string]interface{}, 0, len(list))
+	for _, p := range list {
+		projects = append(projects, p.Body())
+	}
+	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"projects": projects})
+}
+
+func (s *Server) handleProjectGet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ProjectID string `yaml:"projectId"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	p, err := s.store.GetProject(req.ProjectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "not_found", "no project "+req.ProjectID)
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, p)
+}
+
+func (s *Server) handleProjectAdd(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `yaml:"path"`
+		Name string `yaml:"name"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "path missing")
+		return
+	}
+	p, err := s.store.AddProject(req.Path, req.Name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, p)
+}
+
+func (s *Server) handleProjectRemove(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ProjectID string `yaml:"projectId"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	p, err := s.store.RemoveProject(req.ProjectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "not_found", "no project "+req.ProjectID)
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, p)
+}
+
+// handleProjectVisible shows or hides one project's group in the titlebar. It is
+// the only thing hiding does: no session is opened or closed, so showing the
+// group again brings back exactly the tabs it had.
+func (s *Server) handleProjectVisible(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ProjectID string `yaml:"projectId"`
+		Visible   *bool  `yaml:"visible"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Visible == nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "visible missing")
+		return
+	}
+	p, err := s.store.SetProjectVisible(req.ProjectID, *req.Visible)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "not_found", "no project "+req.ProjectID)
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeYAMLResp(w, http.StatusOK, p)
 }
 
 // ---------- current ----------
@@ -326,12 +447,13 @@ func (s *Server) handleCurrentPut(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PageNum interface{} `yaml:"pageNum"`
+		PageNum   interface{} `yaml:"pageNum"`
+		ProjectID string      `yaml:"projectId"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	sessions, hasMore, err := s.store.ListSessions(pageNum(req.PageNum))
+	sessions, hasMore, err := s.store.ListSessions(pageNum(req.PageNum), req.ProjectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return

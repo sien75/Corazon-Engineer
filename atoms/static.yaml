@@ -1,6 +1,6 @@
 atoms:
   - name: static
-    description: Corazon Engineer static service — watches the schema file tree and serves the read-only views (query / query-detail / stream) to the web frontend; it does not validate the tree — a malformed atom or a dangling edge is not its business; the views cover every file type — atoms, edges, contracts, how-to, development, docs, notes, and the dot-directory resources skills (.agents/skills) and blueprints (.agents/blueprints); writes go through the ai shell
+    description: Corazon Engineer static service — watches the schema file tree of every project on the board and serves the read-only views (query / query-detail / stream) to the web frontend; it does not validate the tree — a malformed atom or a dangling edge is not its business; it has no root of its own any more — each request names a projectId, which it resolves to a folder through log (log-project-get), so the program is not tied to the folder it was started in; the views cover every file type — atoms, edges, contracts, how-to, development, docs, notes, and the dot-directory resources skills (.agents/skills) and blueprints (.agents/blueprints); writes go through the ai shell
     path: ./workspace/static
     runtime_type: go
     runtime_version: "1.22"
@@ -30,4 +30,18 @@ atoms:
             path: /static/stream
             method: POST
 
-      consumes: []
+      consumes:
+        - id: log-project-get
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-get.yaml
+          extend:
+            path: /log/project/get
+            method: POST
+        - id: log-project-list
+          channel: network
+          protocol: http
+          contract: ./contracts/log-project-list.yaml
+          extend:
+            path: /log/project/list
+            method: POST

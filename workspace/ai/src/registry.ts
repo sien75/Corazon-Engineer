@@ -1,6 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import path from "node:path";
 import YAML from "yaml";
 import { Type } from "typebox";
 import {
@@ -22,7 +20,7 @@ import {
   projectText,
   type StoredRecord,
 } from "./recorder.ts";
-import { blueprintTitle, blueprintReadme, legacyAgentDir } from "./blueprint.ts";
+import { blueprintTitle, blueprintReadme } from "./blueprint.ts";
 import { makeWorkspaceTools } from "./workspace.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
@@ -30,6 +28,7 @@ import { dbg } from "./debug.ts";
 // The workspace tools main alone may call. Names are listed here because pi's
 // allowlist is by name, not by tool object.
 const WORKSPACE_TOOLS = [
+  "project-list",
   "session-list",
   "session-open",
   "session-close",
@@ -40,23 +39,11 @@ const WORKSPACE_TOOLS = [
   "session-delete",
 ];
 
-// legacyReadme reads a session's old per-agent copy, if the project still has
-// one. Blueprints are no longer copied, but a session created before that keeps
-// its page and its README.
-function legacyReadme(root: string, id: string): string | undefined {
-  const file = path.join(legacyAgentDir(root, id), "README.md");
-  if (!existsSync(file)) return undefined;
-  return readFileSync(file, "utf8");
-}
-
 // pageLine is the last thing a sub agent is told: which directory its page lives
 // in. The prompt carries the README; the path is what makes "change the page" an
 // action rather than a wish.
-function pageLine(slug?: string, legacyId?: string): string {
-  if (slug) {
-    return `Your page: \`.agents/blueprints/${slug}/\` — that directory is what /agent/<sessionId>/ serves, for every agent made from this blueprint. Edit its files (index.html and anything beside it) and ask the user to reload; the change lands in the project's working tree.`;
-  }
-  return `Your page: \`.engineer/agents/${legacyId}/\` — this agent's own copy of an older blueprint. Edit its files and ask the user to reload.`;
+function pageLine(slug: string): string {
+  return `Your page: .agents/blueprints/${slug}/ — that directory is what /agent/<sessionId>/ serves, for every agent made from this blueprint. Edit its files (index.html and anything beside it) and ask the user to reload; the change lands in this project's working tree.`;
 }
 
 // A user turn as received on /ai/ask: ordered text/image blocks. Images carry
@@ -160,7 +147,9 @@ interface Sess {
 const DEFAULT_MODEL = "deepseek/deepseek-flash";
 
 export interface RegistryOptions {
-  root: string;
+  // The engineer home: this service's own data (uploaded images). Not a project
+  // — a session's project folder comes from log, per session.
+  home: string;
   logBase: string;
   // The two role specs, already carrying the runtime endpoints. main gets the
   // workspace tools; sub gets its blueprint's README appended after this.
@@ -208,10 +197,10 @@ export class Registry {
   // makeLoader builds the resource loader for one session's role. `tail` is
   // appended after everything else — a sub agent's blueprint README goes there,
   // so it reads as the last word on what this particular agent's UI is.
-  private makeLoader(kind: "main" | "sub", tail?: string): DefaultResourceLoader {
+  private makeLoader(kind: "main" | "sub", cwd: string, tail?: string): DefaultResourceLoader {
     const spec = this.opts.specs[kind];
     return new DefaultResourceLoader({
-      cwd: this.opts.root,
+      cwd,
       agentDir: getAgentDir(),
       // Append the spec instead of overriding the system prompt: pi only emits
       // its "Available tools" list (which is where custom tools like ask_user
@@ -225,8 +214,28 @@ export class Registry {
     return !this.model;
   }
 
-  get rootDir(): string {
-    return this.opts.root;
+  // homeDir is where this service keeps its own files (uploaded images). It is
+  // shared by every project: an image belongs to a conversation, not a folder.
+  get homeDir(): string {
+    return this.opts.home;
+  }
+
+  // projectDir resolves a project id to the folder that project lives in. The
+  // board is log's; this service only asks. Throws when the id names nothing —
+  // a blueprint agent with no project has no page and no place to run.
+  private async projectDir(projectID: unknown): Promise<string> {
+    const id = String(projectID ?? "").trim();
+    if (!id) throw new Error("projectId missing: a blueprint agent belongs to a project");
+    const res = await fetch(`${this.opts.logBase}/log/project/get`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: YAML.stringify({ projectId: id }),
+    });
+    if (!res.ok) throw new Error(`no project ${id} (log /log/project/get: HTTP ${res.status})`);
+    const data: any = YAML.parse(await res.text());
+    const dir = String(data?.path ?? "").trim();
+    if (!dir) throw new Error(`project ${id} has no folder on record`);
+    return dir;
   }
 
   get modelInfo(): string {
@@ -234,17 +243,23 @@ export class Registry {
   }
 
   // new opens a conversation. kind="main" is the shell's own chat (no blueprint,
-  // no page); kind="sub" is made from a blueprint: the prototype's README and the
-  // path of its directory are appended to this session's system prompt — last,
-  // after the role spec — so the model knows what its UI is and where it lives.
-  // Nothing is copied: the web server serves the prototype itself, so the page
-  // this agent edits is the page every agent of the same blueprint sees.
-  async new(blueprint?: string, kind: "main" | "sub" = "sub"): Promise<Sess> {
+  // no page, no project); kind="sub" is made from a blueprint inside one project:
+  // the prototype's README and the path of its directory are appended to this
+  // session's system prompt — last, after the role spec — so the model knows what
+  // its UI is and where it lives. Nothing is copied: the web server serves the
+  // prototype itself, so the page this agent edits is the page every agent of the
+  // same blueprint sees.
+  async new(
+    blueprint?: string,
+    kind: "main" | "sub" = "sub",
+    projectID = "",
+  ): Promise<Sess> {
     const id = `s_${randomBytes(8).toString("hex")}`;
-    const readme = blueprint ? blueprintReadme(this.opts.root, blueprint) : undefined;
+    const project = kind === "sub" ? await this.projectDir(projectID) : "";
+    const readme = blueprint ? blueprintReadme(project, blueprint) : undefined;
     const tail = blueprint ? `${readme ?? ""}\n\n${pageLine(blueprint)}` : undefined;
-    await this.writeSession(id, kind, blueprint ?? "");
-    return this.build(id, [], kind, tail);
+    await this.writeSession(id, kind, projectID, blueprint ?? "", project);
+    return this.build(id, [], kind, project, tail);
   }
 
   // writeSession records what a conversation is — its role, the blueprint its page
@@ -252,12 +267,18 @@ export class Registry {
   // (resolved here, not by the page at runtime), so the shell can draw a tab
   // before it loads anything; log owns the row, and it is the only place the
   // mapping lives.
-  private async writeSession(id: string, kind: "main" | "sub", blueprint: string): Promise<void> {
-    const title = blueprint ? blueprintTitle(this.opts.root, blueprint) : "main";
+  private async writeSession(
+    id: string,
+    kind: "main" | "sub",
+    projectID: string,
+    blueprint: string,
+    project: string,
+  ): Promise<void> {
+    const title = blueprint ? blueprintTitle(project, blueprint) : "main";
     const res = await fetch(`${this.opts.logBase}/log/session/upsert`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
-      body: YAML.stringify({ sessionId: id, kind, blueprint, title }),
+      body: YAML.stringify({ sessionId: id, kind, projectId: projectID, blueprint, title }),
     });
     if (!res.ok) {
       throw new Error(`log/session/upsert: HTTP ${res.status}`);
@@ -270,7 +291,7 @@ export class Registry {
   // which, unlike a conversation with no messages, can still be rebuilt.
   private async sessionMeta(
     id: string,
-  ): Promise<{ kind: "main" | "sub"; blueprint: string } | undefined> {
+  ): Promise<{ kind: "main" | "sub"; projectID: string; blueprint: string } | undefined> {
     try {
       const res = await fetch(`${this.opts.logBase}/log/session/detail`, {
         method: "POST",
@@ -281,6 +302,7 @@ export class Registry {
       const data: any = YAML.parse(await res.text());
       return {
         kind: data?.kind === "main" ? "main" : "sub",
+        projectID: String(data?.projectId ?? ""),
         blueprint: String(data?.blueprint ?? ""),
       };
     } catch {
@@ -292,8 +314,6 @@ export class Registry {
   // is the blueprint's, shared with every other agent of it, so it stays.
   async deleteSession(id: string): Promise<void> {
     this.delete(id);
-    // Older agents still have a copy of their own; delete it with the agent.
-    rmSync(legacyAgentDir(this.opts.root, id), { recursive: true, force: true });
     const res = await fetch(`${this.opts.logBase}/log/delete`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
@@ -329,32 +349,37 @@ export class Registry {
     // been asked would 404 for the rest of the process's life.
     if (!meta && !history.length) return undefined;
     const kind = meta?.kind ?? "sub";
+    // A sub session runs in the folder of the project it belongs to: that is its
+    // cwd, and where its page (the blueprint) is read from. A project taken off
+    // the board still has its row, so its conversations keep working; a row that
+    // is truly gone is the case where there is nothing to resume into.
+    let project = "";
+    if (kind === "sub") project = await this.projectDir(meta?.projectID);
     // The page is the blueprint's, so its README is read from the prototype —
-    // current, not frozen. A session with no blueprint (or one older than that
-    // rule) falls back to whatever per-agent copy it still has.
+    // current, not frozen.
     let tail: string | undefined;
-    if (kind === "sub") {
-      if (meta?.blueprint) {
-        let readme: string | undefined;
-        try {
-          readme = blueprintReadme(this.opts.root, meta.blueprint);
-        } catch {
-          readme = undefined; // the prototype was deleted: the page is gone too
-        }
-        tail = `${readme ?? ""}\n\n${pageLine(meta.blueprint)}`;
-      } else {
-        tail = `${legacyReadme(this.opts.root, id) ?? ""}\n\n${pageLine(undefined, id)}`;
+    if (kind === "sub" && meta?.blueprint) {
+      let readme: string | undefined;
+      try {
+        readme = blueprintReadme(project, meta.blueprint);
+      } catch {
+        readme = undefined; // the prototype was deleted: the page is gone too
       }
+      tail = `${readme ?? ""}\n\n${pageLine(meta.blueprint)}`;
     }
-    return this.build(id, history, kind, tail);
+    return this.build(id, history, kind, project, tail);
   }
 
   private async build(
     id: string,
     history: StoredRecord[] = [],
     kind: "main" | "sub" = "sub",
+    project = "",
     blueprintReadme?: string,
   ): Promise<Sess> {
+    // Where this conversation's agent works: the project folder it belongs to, or
+    // the home for main — main is the shell's own chat and belongs to no project.
+    const cwd = project || this.opts.home;
     const sess: Sess = {
       id,
       kind,
@@ -371,9 +396,9 @@ export class Registry {
     if (this.model) {
       // The role's spec, plus (for a sub agent) its blueprint's README as the
       // tail, so it knows its own UI from the first turn.
-      const loader = this.makeLoader(kind, blueprintReadme);
+      const loader = this.makeLoader(kind, cwd, blueprintReadme);
       await loader.reload();
-      const sessionManager = SessionManager.inMemory(this.opts.root);
+      const sessionManager = SessionManager.inMemory(cwd);
       // Rebuild context compaction-aware: the latest compaction summary plus the
       // records after it. Summarized history is not re-sent to the provider.
       // Repair runs *after* the slice: the cut is an index, so it can land
@@ -387,7 +412,7 @@ export class Registry {
         if (msg) sessionManager.appendMessage(msg);
       }
       const { session } = await createAgentSession({
-        cwd: this.opts.root,
+        cwd,
         model: this.model,
         modelRuntime: this.modelRuntime,
         resourceLoader: loader,
@@ -413,8 +438,8 @@ export class Registry {
           ...(kind === "main"
             ? makeWorkspaceTools({
                 logBase: this.opts.logBase,
-                newSession: async (blueprint?: string) =>
-                  (await this.new(blueprint, "sub")).id,
+                newSession: async (blueprint: string, project: string) =>
+                  (await this.new(blueprint, "sub", project)).id,
                 newMainSession: async () => (await this.new(undefined, "main")).id,
                 resumeSession: async (id: string) => {
                   if (!(await this.resume(id))) {
@@ -473,7 +498,7 @@ export class Registry {
           timestamp: Number(m.raw.timestamp ?? Date.now()),
         };
       }
-      return inlineImages(m.raw, (sha) => loadImage(this.opts.root, sha));
+      return inlineImages(m.raw, (sha) => loadImage(this.opts.home, sha));
     }
     const blocks: any[] =
       m.blocks && m.blocks.length
@@ -512,7 +537,7 @@ export class Registry {
       if (b.type === "text") {
         if (b.text) content.push({ type: "text", text: b.text });
       } else if (b.type === "image" && b.sha256) {
-        const img = loadImage(this.opts.root, b.sha256);
+        const img = loadImage(this.opts.home, b.sha256);
         if (img) content.push({ type: "image", data: img.data, mimeType: img.mimeType });
       }
     }
@@ -551,7 +576,7 @@ export class Registry {
       } else if (b.type === "image" && b.data && b.mimeType) {
         let ref: { sha256: string; size: number };
         try {
-          ref = saveImage(this.opts.root, b.data, b.mimeType);
+          ref = saveImage(this.opts.home, b.data, b.mimeType);
         } catch (err) {
           this.appendError(sess, "image_error", String(err));
           continue;
@@ -685,7 +710,7 @@ export class Registry {
     const role = String(message?.role ?? "");
     if (role !== "assistant" && role !== "toolResult") return;
     const stored = externalizeImages(message, (data, mime) =>
-      saveImage(this.opts.root, data, mime),
+      saveImage(this.opts.home, data, mime),
     );
     this.recordRaw(sess, role, projectText(role, stored), stored);
   }
