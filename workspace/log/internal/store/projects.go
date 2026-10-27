@@ -151,22 +151,6 @@ func (s *Store) RemoveProject(projectID string) (Project, error) {
 	return s.GetProject(projectID)
 }
 
-// AssignOrphanSessions gives every sub session that has no project to the given
-// one. It is the second half of the one-way move from a per-project database:
-// those conversations were made in this folder, and after the move nothing else
-// would claim them. main sessions are left alone — main belongs to no project.
-func (s *Store) AssignOrphanSessions(projectID string) (int64, error) {
-	if !ValidProjectID(projectID) {
-		return 0, fmt.Errorf("invalid project id %q", projectID)
-	}
-	res, err := s.db.Exec(`UPDATE sessions SET project_id = ?
-		WHERE kind <> 'main' AND project_id = ''`, projectID)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
-}
-
 // SetProjectVisible shows or hides a project's group in the titlebar. It changes
 // nothing about the project itself: the folder, the sessions and their open state
 // are untouched — a hidden group that comes back shows the same tabs it had.

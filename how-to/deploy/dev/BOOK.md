@@ -28,16 +28,13 @@ second one its own `ENGINEER_DATA` — sharing means one board and one set of op
 
 `launch.sh` owns port selection: defaults are 8500 web / 8501 ai / 8502 static / 8503 log, and a taken default advances to the next free port. It builds the Go side into `.engineer/dev${ENGINEER_INSTANCE:+-<name>}/bin/engineer` — one multi-call binary that also carries the three services, started as `engineer serve-log` / `serve-static` / `serve-web` (the same binary the prod launcher ships; `serve-web` serves the assets in `workspace/web/`) — starts all four, and hands each one everything it needs: every service gets `--bind` + `--port`; log gets `--home` (the data home); static gets `--log` (it has no root: each request carries a `projectId` that it resolves through log); ai gets `--home` / `--log` / `--static` / `--agents`; web gets `--assets` (the frontend files) / `--static` / `--ai` / `--log` (its `/agent/<sessionId>/` resolves the session's project and blueprint through log). It then prints the port table, the data home and the bind host. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file**.
 
-When the checkout still has a pre-home database (`<checkout>/.engineer/engineer.db`), the launcher runs
-`engineer migrate --home <data> --from <checkout>/.engineer --project <checkout>` first: it copies the
-database when the home has none and **merges whatever is new on every later run** (rows matched by id,
-nothing overwritten), then puts the checkout on the board and assigns its old conversations to it.
-The merge is what keeps the home current while a previously installed build is still writing to the
-old file; run the launcher (or the command above) again whenever you want to catch up. `current` —
-which tabs are open — is not merged: it belongs to whichever window is looking, and two instances
-sharing a home would drag it back and forth; the conversations are all there under a project's Recent.
+The data home is the **only** database the stack reads, and that is the whole rule: there is no
+migration step left to run. A `<checkout>/.engineer/engineer.db` from before the home existed is not
+looked at by the launcher or by any service — that file is not part of the program. (The one-way move
+it would have needed was done once, by hand, with code that no longer exists; a new data home simply
+starts empty and projects are added on the page.)
 
-Another project's old database is **not** migrated — a newly added project starts with an empty
+Another project's database is likewise never imported — a newly added project starts with an empty
 history.
 
 The launcher binds `127.0.0.1` by default — this is a local tool, not a service on the office network. A service started by hand has **no** default host: `--bind` is required, so nothing is exposed by accident. `ENGINEER_BIND` overrides the bind host: `ENGINEER_BIND=0.0.0.0 how-to/deploy/dev/launch.sh` opens the stack to the whole network, `ENGINEER_BIND=<this machine's IP>` binds one interface (that is also the form that makes the printed addresses usable from another machine).
@@ -48,8 +45,8 @@ To pin a model, pass it through: `AI_MODEL=... ` is not wired yet — run ai dir
 
 ## Verify
 
-`launch.sh` prints the addresses. The board starts empty (except for the checkout, which the launcher
-registered), so query it through a project's id:
+`launch.sh` prints the addresses. The board starts empty, so add the checkout on the page first (the
+`+` in the Engineer launcher) and then query it through its project id:
 
 ```bash
 curl -s -X POST http://localhost:<log port>/log/project/list -d '{}'

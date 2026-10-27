@@ -70,10 +70,6 @@ func main() {
 		staticsvc.Serve(os.Args[2:])
 	case "serve-web":
 		websrv.Serve(os.Args[2:])
-	// Internal too: the launchers run it to move a pre-home database into the
-	// data home (see log.Migrate). Idempotent, so running it again is harmless.
-	case "migrate":
-		logsvc.Migrate(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usageText)
 		os.Exit(1)
@@ -106,12 +102,9 @@ func launch() {
 
 	reclaim(runDir, self)
 
-	// A database from before the home existed: Engineer's own history moves over
-	// (once — the subcommand copies only when the home has no database). Another
-	// project starts from an empty history by design.
-	if _, err := os.Stat(filepath.Join(root, ".engineer", "engineer.db")); err == nil {
-		logsvc.Migrate([]string{"--home", data, "--from", filepath.Join(root, ".engineer"), "--project", root})
-	}
+	// Nothing is migrated here, because there is nothing to migrate: the data home
+	// is the only database this program reads. A `.engineer/engineer.db` left in
+	// the folder from before the home existed is simply not part of the program.
 
 	// Where the four services bind. Loopback by default, so a local tool is
 	// not a service on the office network; ENGINEER_BIND opens the stack

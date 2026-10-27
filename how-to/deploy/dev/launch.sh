@@ -96,14 +96,11 @@ BASE=http://$URLHOST
 rm -f "$BIN/engineer-log" "$BIN/engineer-static" "$BIN/engineer-web"
 
 # --- start (order: log → static → ai → web) -------------------------------
-# --- one-time move of this checkout's old project-local database ------------
-# Engineer's own data predates the home; another project's does not, by design.
-# The subcommand is idempotent: it copies only when the home has no database yet.
+# Nothing is migrated here: the data home is the only database this program
+# reads. A leftover `<checkout>/.engineer/engineer.db` from before the home
+# existed is not consulted at all — the migration code that would have moved it
+# is gone, and that file is no longer part of the program.
 mkdir -p "$DATA"
-if [ -f "$ROOT/.engineer/engineer.db" ]; then
-  "$BIN/engineer" migrate --home "$DATA" --from "$ROOT/.engineer" --project "$ROOT" || \
-    echo "warning: migrating $ROOT/.engineer/engineer.db failed" >&2
-fi
 
 nohup "$BIN/engineer" serve-log --home "$DATA" --bind "$BIND" --port "$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
 echo $! >"$D/log.pid"
