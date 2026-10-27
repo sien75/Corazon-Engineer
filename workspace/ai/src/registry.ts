@@ -22,6 +22,8 @@ import {
 import { blueprintTitle, blueprintReadme } from "./blueprint.ts";
 import { makeWorkspaceTools } from "./workspace.ts";
 import { makeModelTool } from "./model.ts";
+import { makeUsageTool } from "./usage.ts";
+import { makeCompactTool } from "./compact.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
 
@@ -122,6 +124,11 @@ interface Sess {
   recordSeq: number;
   sawSettled: boolean; // whether pi emitted agent_settled for the current run
   active: boolean; // a run is scheduled or in flight (used by resume/stream)
+  // A manual compaction has been scheduled by the `compact` tool and its
+  // compaction_end has not arrived yet. The run is over (agent_settled) but the
+  // session is not idle, so the SSE stream must stay open past agent_settled —
+  // otherwise the compaction happens with nobody watching.
+  compacting: boolean;
 }
 
 export interface RegistryOptions {
@@ -361,6 +368,7 @@ export class Registry {
       recordSeq: history.reduce((max, m) => Math.max(max, m.seq), 0),
       sawSettled: false,
       active: false,
+      compacting: false,
     };
     if (!this.stub) {
       // Settings are pi's own local config, read fresh per session: the global
@@ -409,6 +417,28 @@ export class Registry {
         runtime: this.modelRuntime,
         getAgent: () => sess.agent,
       });
+      const usageTool = makeUsageTool({ getAgent: () => sess.agent });
+      // compact() aborts and waits for idle, so it can never run inside the turn
+      // that asked for it — it goes on the tail and runs between turns.
+      const compactTool = makeCompactTool({
+        getAgent: () => sess.agent,
+        schedule: (run) => {
+          // The stream stays open on this flag (server.ts), so the compaction is
+          // visible in the page as it happens instead of on the next turn.
+          sess.compacting = true;
+          sess.tail = sess.tail
+            .then(run)
+            .catch((err) => {
+              dbg(sess.id, "compact error", String(err));
+              this.appendError(sess, "compact_error", String(err));
+            })
+            .finally(() => {
+              // Backstop: compaction_end clears it too. If pi ever throws before
+              // emitting one, the flag must not strand the stream open.
+              sess.compacting = false;
+            });
+        },
+      });
       const { session } = await createAgentSession({
         cwd,
         modelRuntime: this.modelRuntime,
@@ -429,11 +459,15 @@ export class Registry {
           "edit",
           "ask_user",
           "model",
+          "usage",
+          "compact",
           ...(kind === "main" ? WORKSPACE_TOOLS : []),
         ],
         customTools: [
           askUserTool,
           modelTool,
+          usageTool,
+          compactTool,
           ...(kind === "main"
             ? makeWorkspaceTools({
                 logBase: this.opts.logBase,
@@ -469,6 +503,9 @@ export class Registry {
           sess.sawSettled = true;
           sess.active = false;
         }
+        // Compaction is the one thing that can happen after the run settled;
+        // its end is what makes the session idle again.
+        if (ev.type === "compaction_end") sess.compacting = false;
         // Persist assistant / tool-result messages and compaction entries as
         // they complete. User messages are recorded by ask().
         if (ev.type === "message_end") this.recordMessage(sess, ev.message);

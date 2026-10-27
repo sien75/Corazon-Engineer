@@ -133,6 +133,12 @@ function wire(host, root, id, RT) {
   let bubble = null;       // 正在逐字追加的 assistant 气泡（markdown 渲染器）
   let thinking = null;     // 当前 thinking 芯片
   const tools = new Map(); // toolCallId → 工具芯片
+  // 手动压缩（compact 工具）已经排上，但还没收到 compaction_end。
+  // compact 在**这一轮收尾之后**才真正执行，所以 agent_settled 先到、
+  // compaction_* 后到：这期间收到 agent_settled 不能收工，
+  // 否则芯片会被当成旧块收掉，用户也就看不到压缩发生了什么。
+  let expectCompact = false;
+  let compactChip = null;  // 正在跑的压缩芯片
 
   // 粘贴进来的图片：压缩后进这个队列，文本里的 [image] 标记按顺序与它们配对。
   // 做法与外壳一致（app.js: aiAddPastedImage / aiBuildSendBlocks）。
@@ -512,6 +518,57 @@ function wire(host, root, id, RT) {
     return block;
   }
 
+  // 压缩不是工具调用，也不是它会话的一步，而是这一段上下文本身被整理：
+  // 画成 thinking 同款芯片（转圈 → ✓ / !），展开能看它是因何触发、
+  // 压缩前多少 token、摘要写了什么——重放出来的同一个芯片也能展开。
+  function compactionChip(summary) {
+    const block = chip("thinking", "compaction", "compaction", summary || "compaction");
+    const body = document.createElement("div");
+    body.className = "ai-thinking-body";
+    block.body.appendChild(body);
+    block.text = body;
+    block.summary = summary || "compaction";
+    return block;
+  }
+
+  // 一个压缩芯片的内容：什么时候触发、压缩前多少 token。
+  // 摘要本身不放在这里：压缩完的摘要就是这段对话现在真正带着的上下文，
+  // 折进芯片等于没给用户看见（见 compactionSummary）。
+  function fillCompaction(block, reason, tokensBefore) {
+    const lines = [`trigger: ${reason || "manual"} compaction`];
+    if (Number.isFinite(Number(tokensBefore)) && Number(tokensBefore) > 0) {
+      lines.push(`context before: ${size(Number(tokensBefore))} tokens`);
+    }
+    block.text.textContent = lines.join("\n");
+    block.summary = Number.isFinite(Number(tokensBefore)) && Number(tokensBefore) > 0
+      ? `compaction · ${size(Number(tokensBefore))} tokens`
+      : "compaction";
+  }
+
+  // 压缩摘要是正文：它就是压缩之后模型重新开始的那段上下文，
+  // 所以当一条普通消息画出来（markdown 渲染），只是用左侧一道竖线和一个小标
+  // 告诉你“这不是谁说的话，是上下文本身”。
+  function compactionSummary(text) {
+    if (!text || !String(text).trim()) return;
+    addMessage("ai-msg ai-compaction-summary", (el) => {
+      const label = document.createElement("div");
+      label.className = "ai-compaction-summary-label";
+      label.textContent = "context summary";
+      const body = document.createElement("div");
+      body.className = "ai-markdown";
+      body.innerHTML = renderMarkdown(String(text));
+      el.append(label, body);
+    });
+  }
+
+  // 1250 / 55.5k / 1.2M —— 卡片里写得下。
+  function size(n) {
+    if (!Number.isFinite(n)) return "?";
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1000) return `${(n / 1000).toFixed(n % 1000 >= 100 ? 1 : 0)}k`;
+    return String(Math.round(n));
+  }
+
   // 外壳的 aiAskUser：问题是一张卡，有 options 就画按钮，没有就输入框；
   // 回答就是一条普通的 /ai/ask 文本。
   // settled：从历史回放出来的卡 —— 当初问过、也答过了，画出来但不能点。
@@ -589,6 +646,9 @@ function wire(host, root, id, RT) {
   function finish() {
     closeBlock();
     tools.clear();
+    // 没等到 compaction_end 就收工（流断了、服务重启）：别让芯片一直转圈。
+    if (compactChip) { settle(compactChip, "done"); compactChip = null; }
+    expectCompact = false;
     if (running) setRunning(false);
   }
 
@@ -612,6 +672,9 @@ function wire(host, root, id, RT) {
       bubble = null;
       thinking = null;
       tools.clear();
+      // 新开一轮：上一轮的压缩标志不该留到这一轮来。
+      expectCompact = false;
+      compactChip = null;
       setRunning(true);
       await ready; // 加载时那次“只记水位”的读流先读完
     }
@@ -751,6 +814,9 @@ function wire(host, root, id, RT) {
         const block = tools.get(ev.toolCallId);
         if (block) settle(block, ev.isError ? "error" : "done");
         tools.delete(ev.toolCallId);
+        // compact 只是把压缩排上了队：它在这**一轮收尾之后**才跑，
+        // 所以接下来的 agent_settled 不能当成收工（否则压缩就被看不见了）。
+        if (ev.toolName === "compact" && !ev.isError) expectCompact = true;
         // The shell listens for this: main's session-* tools change the workspace,
         // and the element only reports what ran.
         host.dispatchEvent(
@@ -762,9 +828,45 @@ function wire(host, root, id, RT) {
         return;
       }
 
-      case "agent_settled": // 这一轮真的结束了，服务端也会在它之后关流
+      case "agent_settled": // 这一轮真的结束了；服务端也在它之后关流
+        // 压缩还排着：这一轮确实完了，但这段上下文还不是空的，等它跑完再收。
+        if (expectCompact) {
+          closeBlock();
+          return;
+        }
         finish();
         return;
+
+      case "compaction_start": // 上下文开始整理：和 thinking 一样占一个芯片位
+        compactChip = compactionChip("compaction");
+        compactChip.text.textContent =
+          `trigger: ${ev.reason || "manual"} compaction\nsummarizing older messages…`;
+        return;
+      case "compaction_end": {
+        expectCompact = false;
+        const block = compactChip;
+        compactChip = null;
+        const failed = !!ev.errorMessage || !ev.result;
+        if (block) {
+          if (failed) {
+            block.text.textContent =
+              `trigger: ${ev.reason || "manual"} compaction\n` +
+              (ev.errorMessage || (ev.aborted ? "compaction aborted" : "nothing was compacted"));
+            block.summary = "compaction · skipped";
+            settle(block, "error");
+          } else {
+            fillCompaction(block, ev.reason, ev.result?.tokensBefore);
+            settle(block, "done");
+          }
+        }
+        // 摘要接在芯片后面当正文展示（运行中发生也一样：它下面是这一轮继续说的话）。
+        if (!failed && ev.result?.summary) compactionSummary(ev.result.summary);
+        // 压缩期间用户可能又发了一条：那一轮排在压缩后面，流还开着，不能在这里收工。
+        resumeState().then((st) => {
+          if (!st || !st.active) finish();
+        });
+        return;
+      }
 
       case "error":
         fail(ev.error?.message || "出错了");
@@ -1093,6 +1195,15 @@ function wire(host, root, id, RT) {
           if (out && block.pre) block.pre.textContent += `\n${out}`;
           settle(block, raw.isError ? "error" : "done");
           toolBlocks.delete(raw.toolCallId);
+          continue;
+        }
+        // 压缩条目：重放也画成那个芯片（已落定）+ 摘要正文。
+        // 它的 raw 就是 registry 写下的 { role: "compaction", summary, tokensBefore }。
+        if (raw?.role === "compaction" || m.role === "compaction") {
+          const block = compactionChip("compaction");
+          fillCompaction(block, "manual", raw?.tokensBefore ?? m.tokensBefore);
+          settle(block, "done");
+          compactionSummary(raw?.summary ?? m.summary);
           continue;
         }
         if (m.role === "assistant" && m.content) {

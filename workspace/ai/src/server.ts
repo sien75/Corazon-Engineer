@@ -202,7 +202,12 @@ export function serve(registry: Registry, addr: string): void {
                 controller.enqueue(encodeSSE(ev));
                 // agent_settled is pi's real end-of-run marker; close the SSE
                 // stream on it. agent_end is unreliable (fires on retries).
-                if (ev.type === "agent_settled") close();
+                // Exception: a manual compaction runs *after* the run settles
+                // (the `compact` tool schedules it on the tail), so the stream
+                // stays open until its compaction_end — otherwise the user sees
+                // the compaction only on the next turn's replay.
+                if (ev.type === "compaction_end" && !sess.active) close();
+                else if (ev.type === "agent_settled" && !sess.compacting) close();
               };
               // Replay only events the client has not rendered yet; since=0
               // (or omitted) replays the full backlog.
@@ -212,11 +217,14 @@ export function serve(registry: Registry, addr: string): void {
               for (const ev of backlog) controller.enqueue(encodeSSE(ev));
               // Caught up and idle: nothing live will arrive until a new ask
               // starts a run (which opens its own stream). Close now instead of
-              // holding the connection open.
+              // holding the connection open. A scheduled compaction counts as
+              // not idle — its events are still coming.
               const lastSent = backlog.length
                 ? backlog[backlog.length - 1].seq
                 : since;
-              if (!sess.active && sess.events.length <= lastSent) close();
+              if (!sess.active && !sess.compacting && sess.events.length <= lastSent) {
+                close();
+              }
             },
             cancel() {
               if (listener) registry.unsubscribe(sess, listener);

@@ -112,6 +112,26 @@
   border-bottom: 1px dashed var(--border-strong);
 }
 
+/* 压缩摘要：不是谁说的话，是压缩之后这段对话真正带着的上下文。
+   所以按正文（markdown）排，只靠左边一道竖线和一个小标区分。 */
+.ai-compaction-summary {
+  align-self: stretch;
+  max-width: 100%;
+  border-left: 2px solid var(--border-strong);
+  padding: 2px 0 2px 10px;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+.ai-compaction-summary-label {
+  margin-bottom: 4px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 /* ---------- markdown (assistant replies) ---------- */
 
 .ai-markdown {
