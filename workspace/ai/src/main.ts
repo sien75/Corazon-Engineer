@@ -23,8 +23,7 @@ process.env.no_proxy = withLocalNoProxy(process.env.no_proxy);
 process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 
 // usage: bun run src/main.ts --bind <host> --port <n> --home <data dir>
-//        --log <url> --static <url> --agents <spec dir>
-//        [--model provider/model-id] [--stub]
+//        --log <url> --static <url> --agents <spec dir> [--stub]
 //
 // Every flag above is required and there is no fallback. The launcher owns the
 // addresses, the home directory and the spec file, and passes them all down; a
@@ -35,8 +34,7 @@ process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 // The home is only this service's own data — uploaded images.
 const USAGE =
   "usage: engineer-ai --bind <host> --port <n> --home <data dir> " +
-  "--log <url> --static <url> --agents <spec dir> " +
-  "[--model provider/model-id] [--stub]";
+  "--log <url> --static <url> --agents <spec dir> [--stub]";
 
 function parseFlags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -121,7 +119,6 @@ const registry = new Registry({
     main: specs.main + runtimeEndpoints,
     sub: specs.sub + runtimeEndpoints,
   },
-  model: flags.model, // e.g. "deepseek/deepseek-chat", "anthropic/claude-sonnet-4-6"
   forceStub,
 });
 await registry.init();
@@ -132,8 +129,6 @@ if (registry.stub) {
       : "warning: no authenticated LLM provider found (env vars or " +
           "pi's auth.json); ai falls back to echo stub",
   );
-} else {
-  console.log(`engineer ai: model=${registry.modelInfo}`);
 }
 console.log(`engineer ai: log=${logBase}`);
 console.log(`engineer ai: spec=${path.resolve(flags.agents)}`);

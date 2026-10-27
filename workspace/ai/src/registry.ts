@@ -9,7 +9,6 @@ import {
   SettingsManager,
   DefaultResourceLoader,
   getAgentDir,
-  resolveCliModel,
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -22,6 +21,7 @@ import {
 } from "./recorder.ts";
 import { blueprintTitle, blueprintReadme } from "./blueprint.ts";
 import { makeWorkspaceTools } from "./workspace.ts";
+import { makeModelTool } from "./model.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
 
@@ -106,25 +106,6 @@ const askUserTool = defineTool({
   },
 });
 
-// pi's bundled catalog under-declares some vision models, and its
-// openai-completions adapter silently strips images unless the model's declared
-// `input` includes "image" (pi-ai: openai-completions.js). DeepSeek Flash
-// supports vision (DeepSeek Vision guide). Only that exact provider/model is
-// touched, and a copy is returned so the shared catalog object stays intact.
-function withVisionCapability(model: Model | undefined): Model | undefined {
-  if (!model) return model;
-  const m = model as any;
-  if (
-    m.provider === "deepseek" &&
-    /^deepseek-flash$/.test(m.id) &&
-    Array.isArray(m.input) &&
-    !m.input.includes("image")
-  ) {
-    return { ...m, input: [...m.input, "image"] };
-  }
-  return model;
-}
-
 interface Sess {
   id: string;
   // "main" is the one conversation the shell hosts (workspace tools); "sub" is
@@ -143,9 +124,6 @@ interface Sess {
   active: boolean; // a run is scheduled or in flight (used by resume/stream)
 }
 
-// Default model when --model is not given: DeepSeek Flash.
-const DEFAULT_MODEL = "deepseek/deepseek-flash";
-
 export interface RegistryOptions {
   // The engineer home: this service's own data (uploaded images). Not a project
   // — a session's project folder comes from log, per session.
@@ -154,7 +132,6 @@ export interface RegistryOptions {
   // The two role specs, already carrying the runtime endpoints. main gets the
   // workspace tools; sub gets its blueprint's README appended after this.
   specs: { main: string; sub: string };
-  model?: string; // CLI model pattern, e.g. "deepseek/deepseek-chat" or "sonnet:high"
   forceStub?: boolean; // skip model resolution entirely (offline / tests)
 }
 
@@ -164,44 +141,40 @@ export interface RegistryOptions {
 export class Registry {
   private sessions = new Map<string, Sess>();
   private modelRuntime?: ModelRuntime;
-  private model?: Model;
-  private settings = SettingsManager.inMemory();
+  // What pi's own config makes available right now. Nothing here chooses a
+  // model for a session — pi does that — it only answers "is there any model at
+  // all?", which is the difference between a real session and the echo stub.
+  private available: Model[] = [];
 
   constructor(private opts: RegistryOptions) {}
 
-  // init resolves the model. Any pi-supported provider works; without any
-  // authenticated provider it falls back to the dev echo stub.
+  // init opens pi's model runtime (its catalog + auth, i.e. pi's own config). No
+  // model is picked here: which model a session runs is pi's decision, from
+  // settings' defaultProvider/defaultModel or, failing that, the first model it
+  // has. Without any authenticated provider it falls back to the dev echo stub.
   async init(): Promise<void> {
     if (this.opts.forceStub) return; // dev stub forced (offline / tests)
     this.modelRuntime = await ModelRuntime.create();
-    const requested = this.opts.model ?? DEFAULT_MODEL;
-    const r = resolveCliModel({
-      cliModel: requested,
-      modelRuntime: this.modelRuntime,
-    });
-    if (r.warning) console.error(`warning: ${r.warning}`);
-    if (r.error) {
-      console.error(`warning: ${r.error}; falling back to auto selection`);
-    } else {
-      this.model = r.model;
-    }
-    if (!this.model) {
-      const available = await this.modelRuntime.getAvailable();
-      // Prefer any deepseek provider, otherwise take whatever is available.
-      this.model =
-        available.find((m) => m.provider === "deepseek") ?? available[0];
-    }
-    this.model = withVisionCapability(this.model);
+    this.available = [...(await this.modelRuntime.getAvailable())];
   }
 
   // makeLoader builds the resource loader for one session's role. `tail` is
   // appended after everything else — a sub agent's blueprint README goes there,
-  // so it reads as the last word on what this particular agent's UI is.
-  private makeLoader(kind: "main" | "sub", cwd: string, tail?: string): DefaultResourceLoader {
+  // so it reads as the last word on what this particular agent's UI is. The
+  // session's settings manager goes in, so the trust decision the loader makes
+  // (and everything else it reads from settings) is the one the session runs
+  // under — pi's own wiring, one instance per session.
+  private makeLoader(
+    kind: "main" | "sub",
+    cwd: string,
+    settings: SettingsManager,
+    tail?: string,
+  ): DefaultResourceLoader {
     const spec = this.opts.specs[kind];
     return new DefaultResourceLoader({
       cwd,
       agentDir: getAgentDir(),
+      settingsManager: settings,
       // Append the spec instead of overriding the system prompt: pi only emits
       // its "Available tools" list (which is where custom tools like ask_user
       // surface) when the system prompt is not fully replaced.
@@ -211,7 +184,7 @@ export class Registry {
   }
 
   get stub(): boolean {
-    return !this.model;
+    return !this.modelRuntime || this.available.length === 0;
   }
 
   // homeDir is where this service keeps its own files (uploaded images). It is
@@ -236,10 +209,6 @@ export class Registry {
     const dir = String(data?.path ?? "").trim();
     if (!dir) throw new Error(`project ${id} has no folder on record`);
     return dir;
-  }
-
-  get modelInfo(): string {
-    return this.model ? `${this.model.provider}/${this.model.id}` : "stub";
   }
 
   // new opens a conversation. kind="main" is the shell's own chat (no blueprint,
@@ -393,10 +362,20 @@ export class Registry {
       sawSettled: false,
       active: false,
     };
-    if (this.model) {
+    if (!this.stub) {
+      // Settings are pi's own local config, read fresh per session: the global
+      // ~/.pi/agent/settings.json (or PI_CODING_AGENT_DIR), plus the project's
+      // .pi/settings.json once the project is trusted. Nothing is held in memory
+      // or duplicated here — an edit in pi applies to the next session built, and
+      // the loader and the session share the one instance, as they do in pi's CLI.
+      const settings = SettingsManager.create(cwd, getAgentDir());
+      for (const err of settings.drainErrors()) {
+        const where = err.path ? ` (${err.path})` : "";
+        console.error(`warning: ${err.scope} settings${where}: ${err.error.message}`);
+      }
       // The role's spec, plus (for a sub agent) its blueprint's README as the
       // tail, so it knows its own UI from the first turn.
-      const loader = this.makeLoader(kind, cwd, blueprintReadme);
+      const loader = this.makeLoader(kind, cwd, settings, blueprintReadme);
       await loader.reload();
       const sessionManager = SessionManager.inMemory(cwd);
       // Rebuild context compaction-aware: the latest compaction summary plus the
@@ -407,17 +386,35 @@ export class Registry {
       // that is replayed as-is is fatal rather than cosmetic — the provider
       // rejects the whole request, and every later prompt replays it again.
       const context = sanitizeHistory(id, history.slice(lastCompactionIndex(history)));
+      // Legacy rows (written before records carried pi's raw message) name no
+      // api/provider/model, and there is no process-wide model to borrow: it is
+      // pi's choice per session. Borrow the last shape this session really used
+      // so replayed context keeps the form the provider sent it in.
+      const last = [...history]
+        .reverse()
+        .find((m) => m.raw && m.role === "assistant")?.raw as any;
+      const legacy = {
+        api: last?.api,
+        provider: last?.provider,
+        model: last?.model,
+      };
       for (const m of context) {
-        const msg = this.toAgentMessage(m);
+        const msg = this.toAgentMessage(m, legacy);
         if (msg) sessionManager.appendMessage(msg);
       }
+      // The model is deliberately not passed: pi resolves it from its own
+      // settings, exactly as its CLI does. The model tool can override that for
+      // this session afterwards.
+      const modelTool = makeModelTool({
+        runtime: this.modelRuntime,
+        getAgent: () => sess.agent,
+      });
       const { session } = await createAgentSession({
         cwd,
-        model: this.model,
         modelRuntime: this.modelRuntime,
         resourceLoader: loader,
         sessionManager,
-        settingsManager: this.settings,
+        settingsManager: settings,
         // Capability surface: read/grep/find/ls + bash (execution, including
         // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
         // is every session's custom tool; the workspace tools belong to main
@@ -431,10 +428,12 @@ export class Registry {
           "write",
           "edit",
           "ask_user",
+          "model",
           ...(kind === "main" ? WORKSPACE_TOOLS : []),
         ],
         customTools: [
           askUserTool,
+          modelTool,
           ...(kind === "main"
             ? makeWorkspaceTools({
                 logBase: this.opts.logBase,
@@ -487,8 +486,12 @@ export class Registry {
   // toAgentMessage converts a stored record back into a pi AgentMessage so a
   // resumed session carries the prior conversation as LLM context. New rows
   // carry the raw pi message (images externalized as refs, re-inlined here);
-  // legacy rows carry only text/image blocks and are reconstructed.
-  private toAgentMessage(m: StoredRecord): any {
+  // legacy rows carry only text/image blocks and are reconstructed — `legacy` is
+  // the last api/provider/model this session really used.
+  private toAgentMessage(
+    m: StoredRecord,
+    legacy: { api?: string; provider?: string; model?: string } = {},
+  ): any {
     if (m.raw) {
       if (m.role === "compaction") {
         return {
@@ -513,13 +516,12 @@ export class Registry {
         .map((b) => b.text)
         .join("\n");
       if (!text.trim()) return undefined;
-      const model = this.model as any;
       return {
         role: "assistant",
         content: [{ type: "text", text }],
-        api: model?.api ?? "openai-completions",
-        provider: model?.provider ?? "unknown",
-        model: model?.id ?? "unknown",
+        api: legacy.api ?? "openai-completions",
+        provider: legacy.provider ?? "unknown",
+        model: legacy.model ?? "unknown",
         usage: {
           input: 0,
           output: 0,

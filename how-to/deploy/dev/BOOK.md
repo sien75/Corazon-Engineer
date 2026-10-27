@@ -41,7 +41,9 @@ The launcher binds `127.0.0.1` by default — this is a local tool, not a servic
 
 Logs and pids live under `.engineer/dev/`.
 
-To pin a model, pass it through: `AI_MODEL=... ` is not wired yet — run ai directly if needed: `cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 7501 --home <data home> --log <log url> --static <static url> --agents ../../agents --model anthropic/claude-sonnet-4-6`. **Every one of those flags is required**: ai has no default host, port, home, log address, static address or spec file, so a hand-run must state all six (`--model` and `--stub` are the only optional ones). `--home` is the program's data directory (uploaded images), not a project; `--agents` is the directory holding the two role specs (`main/AGENTS.md`, `sub/AGENTS.md`).
+Which model a conversation runs is **pi's own decision** — there is no model flag on any service. pi reads its config (`~/.pi/agent/settings.json` → `defaultProvider` / `defaultModel`, overridable with `PI_CODING_AGENT_DIR`), falls back to the first model it has credentials for, and every other setting (shell, compaction, retry, thinking level) comes from the same place. The ai service only opens pi's runtime; to switch one conversation, ask that agent — it has the `model` tool (`list` / `set` with a `provider/model-id`), which overrides pi's default for that session and writes nothing back.
+
+A hand-run: `cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 7501 --home <data home> --log <log url> --static <static url> --agents ../../agents`. **Every one of those flags is required**: ai has no default host, port, home, log address, static address or spec file, so a hand-run must state all six (`--stub` is the only optional one). `--home` is the program's data directory (uploaded images), not a project; `--agents` is the directory holding the two role specs (`main/AGENTS.md`, `sub/AGENTS.md`).
 
 ## Verify
 
