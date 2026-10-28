@@ -256,11 +256,22 @@ function viewOf(tab) {
   // only pushed on load.
   frame.addEventListener("load", () => {
     pushPageTheme();
-    const title = frame.contentDocument?.title;
+    const doc = frame.contentDocument;
+    const title = doc?.title;
     if (title && !tab.name) {
       tab.name = title;
       renderTabs();
     }
+    // The page tells us when ai renames its conversation (1st, 11th, 21st …
+    // turn): <engineer-chat> forwards the `session_title` event on its own
+    // document, and the frame is same-origin, so this is the whole channel. It
+    // is a push, not a poll — the name lands in the same second it is made.
+    doc?.addEventListener("engineer-title", (event) => {
+      const renamed = String(event.detail?.title ?? "").trim();
+      if (!renamed || renamed === tab.name) return;
+      tab.name = renamed;
+      renderTabs();
+    });
   });
   frame.src = agentFrameSrc(tab.sessionId);
   tab.frameEl = frame;
@@ -554,6 +565,35 @@ function refreshWorkspace() {
   const run = refreshChain.then(doRefreshWorkspace, doRefreshWorkspace);
   refreshChain = run.catch(() => {});
   return run;
+}
+
+// A name can change without the shell being told. The conversation's own rename
+// is pushed (see the frame's `engineer-title` listener in viewOf); what is left
+// for this tick is the case that has no push — an agent that edits its own page's
+// <title> — so it is slow, read-only, and only runs while there is a tab whose
+// name can change (main's is fixed).
+const NAME_TICK_MS = 60000;
+let nameTick = 0;
+function startNameTick() {
+  if (nameTick) return;
+  nameTick = setInterval(() => {
+    const watches = openTabs.some((t) => !t.main && t.kind !== "launcher");
+    if (!watches) return;
+    void sessionsById()
+      .then((byId) => {
+        let changed = false;
+        for (const tab of openTabs) {
+          if (tab.main || tab.kind === "launcher") continue;
+          const rec = byId.get(tab.sessionId);
+          if (rec?.title && rec.title !== tab.name) {
+            tab.name = rec.title;
+            changed = true;
+          }
+        }
+        if (changed) renderTabs();
+      })
+      .catch(() => {}); // a list that cannot be read changes nothing
+  }, NAME_TICK_MS);
 }
 
 // sessionsById reads the session list once: it is where a tab's name and page
@@ -1305,6 +1345,7 @@ async function boot() {
   }
   mainTab = makeMainTab(mainSession);
   openTabs.push(mainTab);
+  startNameTick();
 
   // The bar is drawn group by group, so the board has to be known first. A board
   // that cannot be read still leaves main usable — the groups are simply absent,

@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   record,
+  drainRecords,
   fetchRecords,
   externalizeImages,
   inlineImages,
@@ -24,6 +25,14 @@ import { makeWorkspaceTools } from "./workspace.ts";
 import { makeModelTool } from "./model.ts";
 import { makeUsageTool } from "./usage.ts";
 import { makeCompactTool } from "./compact.ts";
+import {
+  cleanTitle,
+  titleMaterial,
+  TITLE_EVERY,
+  TITLE_SYSTEM_PROMPT,
+  TITLE_TEMPERATURE,
+  TITLE_TIMEOUT_MS,
+} from "./title.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
 
@@ -129,6 +138,16 @@ interface Sess {
   // session is not idle, so the SSE stream must stay open past agent_settled —
   // otherwise the compaction happens with nobody watching.
   compacting: boolean;
+  // How many user turns this conversation has seen. Recovered from the records
+  // at build (a user record is a turn), so the title schedule — 1, 11, 21, … —
+  // survives a restart in the middle of it.
+  turns: number;
+  // A title call is in flight. It is out of band, so it must not stack: two
+  // triggers arriving together would write two names for one conversation.
+  titling: boolean;
+  // The name last written for this conversation, so an unchanged summary is not
+  // written again.
+  title: string;
 }
 
 export interface RegistryOptions {
@@ -194,6 +213,18 @@ export class Registry {
     return !this.modelRuntime || this.available.length === 0;
   }
 
+  // modelFor resolves a provider/model-id (or a bare id that names exactly one
+  // model) against what pi can use right now. undefined means "not usable here":
+  // a name pi has no catalog entry for, or a provider without credentials.
+  modelFor(ref: string): Model | undefined {
+    const want = String(ref ?? "").trim();
+    if (!want) return undefined;
+    const exact = this.available.find((m) => `${m.provider}/${m.id}` === want);
+    if (exact) return exact;
+    const byId = this.available.filter((m) => m.id === want);
+    return byId.length === 1 ? byId[0] : undefined;
+  }
+
   // homeDir is where this service keeps its own files (uploaded images). It is
   // shared by every project: an image belongs to a conversation, not a folder.
   get homeDir(): string {
@@ -229,32 +260,43 @@ export class Registry {
     blueprint?: string,
     kind: "main" | "sub" = "sub",
     projectID = "",
+    model = "",
   ): Promise<Sess> {
     const id = `s_${randomBytes(8).toString("hex")}`;
     const project = kind === "sub" ? await this.projectDir(projectID) : "";
     const readme = blueprint ? blueprintReadme(project, blueprint) : undefined;
     const tail = blueprint ? `${readme ?? ""}\n\n${pageLine(blueprint)}` : undefined;
-    await this.writeSession(id, kind, projectID, blueprint ?? "", project);
-    return this.build(id, [], kind, project, tail);
+    // The name the tab bar draws before a word has been said; the conversation
+    // itself replaces it on its 1st, 11th, 21st … turn (see maybeTitle).
+    const title = blueprint ? blueprintTitle(project, blueprint) : "main";
+    await this.writeSession(id, kind, projectID, blueprint ?? "", title, model);
+    return this.build(id, [], kind, project, tail, title, model);
   }
 
   // writeSession records what a conversation is — its role, the blueprint its page
-  // comes from, and the name the tab bar shows. The name is the page's <title>
-  // (resolved here, not by the page at runtime), so the shell can draw a tab
-  // before it loads anything; log owns the row, and it is the only place the
-  // mapping lives.
+  // comes from, the name the tab bar shows and the model it runs. The name is the
+  // page's <title> (resolved here, not by the page at runtime), so the shell can
+  // draw a tab before it loads anything; log owns the row, and it is the only
+  // place the mapping lives.
   private async writeSession(
     id: string,
     kind: "main" | "sub",
     projectID: string,
     blueprint: string,
-    project: string,
+    title: string,
+    model: string,
   ): Promise<void> {
-    const title = blueprint ? blueprintTitle(project, blueprint) : "main";
+    await this.upsertSession({ sessionId: id, kind, projectId: projectID, blueprint, title, model });
+  }
+
+  // upsertSession is the one writer of a session row. An empty field keeps the
+  // stored value (see the contract), so a patch only sends what it changes —
+  // plus kind, which the store does not treat as optional.
+  private async upsertSession(patch: Record<string, unknown>): Promise<void> {
     const res = await fetch(`${this.opts.logBase}/log/session/upsert`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
-      body: YAML.stringify({ sessionId: id, kind, projectId: projectID, blueprint, title }),
+      body: YAML.stringify(patch),
     });
     if (!res.ok) {
       throw new Error(`log/session/upsert: HTTP ${res.status}`);
@@ -267,7 +309,10 @@ export class Registry {
   // which, unlike a conversation with no messages, can still be rebuilt.
   private async sessionMeta(
     id: string,
-  ): Promise<{ kind: "main" | "sub"; projectID: string; blueprint: string } | undefined> {
+  ): Promise<
+    | { kind: "main" | "sub"; projectID: string; blueprint: string; title: string; model: string }
+    | undefined
+  > {
     try {
       const res = await fetch(`${this.opts.logBase}/log/session/detail`, {
         method: "POST",
@@ -280,6 +325,8 @@ export class Registry {
         kind: data?.kind === "main" ? "main" : "sub",
         projectID: String(data?.projectId ?? ""),
         blueprint: String(data?.blueprint ?? ""),
+        title: String(data?.title ?? ""),
+        model: String(data?.model ?? ""),
       };
     } catch {
       return undefined;
@@ -343,7 +390,7 @@ export class Registry {
       }
       tail = `${readme ?? ""}\n\n${pageLine(meta.blueprint)}`;
     }
-    return this.build(id, history, kind, project, tail);
+    return this.build(id, history, kind, project, tail, meta?.title ?? "", meta?.model ?? "");
   }
 
   private async build(
@@ -352,6 +399,8 @@ export class Registry {
     kind: "main" | "sub" = "sub",
     project = "",
     blueprintReadme?: string,
+    title = "",
+    modelChoice = "",
   ): Promise<Sess> {
     // Where this conversation's agent works: the project folder it belongs to, or
     // the home for main — main is the shell's own chat and belongs to no project.
@@ -369,6 +418,9 @@ export class Registry {
       sawSettled: false,
       active: false,
       compacting: false,
+      turns: history.filter((m) => m.role === "user").length,
+      titling: false,
+      title,
     };
     if (!this.stub) {
       // Settings are pi's own local config, read fresh per session: the global
@@ -410,12 +462,25 @@ export class Registry {
         const msg = this.toAgentMessage(m, legacy);
         if (msg) sessionManager.appendMessage(msg);
       }
-      // The model is deliberately not passed: pi resolves it from its own
-      // settings, exactly as its CLI does. The model tool can override that for
-      // this session afterwards.
+      // Which model this session runs, strongest claim first: the last `model`
+      // switch recorded in its own conversation (so a restart does not undo it),
+      // then the model it was created with, then nothing at all — pi resolves
+      // that from its own settings, exactly as its CLI does. A ref pi can no
+      // longer use (a retired model, a provider without credentials) falls back
+      // rather than failing the session: the conversation is worth more than the
+      // model it was on.
+      const recorded = lastModelChoice(history);
+      const wanted = recorded?.model || modelChoice;
+      const model = wanted ? this.modelFor(wanted) : undefined;
+      if (wanted && !model) {
+        console.warn(
+          `engineer ai: session ${id} was on ${wanted}, which pi cannot use now; falling back`,
+        );
+      }
       const modelTool = makeModelTool({
         runtime: this.modelRuntime,
         getAgent: () => sess.agent,
+        persist: (choice) => this.persistModel(sess, choice),
       });
       const usageTool = makeUsageTool({ getAgent: () => sess.agent });
       // compact() aborts and waits for idle, so it can never run inside the turn
@@ -445,6 +510,16 @@ export class Registry {
         resourceLoader: loader,
         sessionManager,
         settingsManager: settings,
+        // Omitted entirely when nothing chose one: not passing it is what makes
+        // pi's settings the decision.
+        ...(model
+          ? {
+              model,
+              ...(recorded?.thinkingLevel
+                ? { thinkingLevel: recorded.thinkingLevel as any }
+                : {}),
+            }
+          : {}),
         // Capability surface: read/grep/find/ls + bash (execution, including
         // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
         // is every session's custom tool; the workspace tools belong to main
@@ -471,8 +546,8 @@ export class Registry {
           ...(kind === "main"
             ? makeWorkspaceTools({
                 logBase: this.opts.logBase,
-                newSession: async (blueprint: string, project: string) =>
-                  (await this.new(blueprint, "sub", project)).id,
+                newSession: async (blueprint: string, project: string, model?: string) =>
+                  (await this.new(blueprint, "sub", project, model ?? "")).id,
                 newMainSession: async () => (await this.new(undefined, "main")).id,
                 resumeSession: async (id: string) => {
                   if (!(await this.resume(id))) {
@@ -502,6 +577,10 @@ export class Registry {
         if (ev.type === "agent_settled") {
           sess.sawSettled = true;
           sess.active = false;
+          // Decided here, before the event is forwarded: the stream keeps itself
+          // open past agent_settled when more of this turn is still coming, and
+          // the name is one of those things.
+          if (this.titleDue(sess)) sess.titling = true;
         }
         // Compaction is the one thing that can happen after the run settled;
         // its end is what makes the session idle again.
@@ -529,6 +608,9 @@ export class Registry {
     m: StoredRecord,
     legacy: { api?: string; provider?: string; model?: string } = {},
   ): any {
+    // A model switch is stored where a rebuild can find it, not replayed as
+    // something the model said.
+    if (m.role === "model") return undefined;
     if (m.raw) {
       if (m.role === "compaction") {
         return {
@@ -596,6 +678,102 @@ export class Registry {
     return true;
   }
 
+  // titleDue is the schedule: the 1st, 11th, 21st … user turn of a blueprint
+  // agent. main is skipped — the shell draws its tab as "main" whatever the row
+  // says. Asked at settle, so the flag is already up when the stream decides
+  // whether agent_settled is the last thing it will send.
+  private titleDue(sess: Sess): boolean {
+    if (sess.kind !== "sub") return false;
+    if (this.stub || !sess.agent) return false;
+    return sess.turns >= 1 && (sess.turns - 1) % TITLE_EVERY === 0;
+  }
+
+  // maybeTitle runs the title call the schedule asked for. The work is out of
+  // band: not on the tail chain (a name must never be what makes the next answer
+  // late), one at a time per session, and its result goes out as one event —
+  // `session_title` — which is also what lets the run's stream close, since it
+  // was kept open for exactly this.
+  private maybeTitle(sess: Sess): void {
+    if (!sess.titling) return;
+    const turns = sess.turns;
+    void this.generateTitle(sess, turns)
+      .catch((err) => dbg(sess.id, "title error", String(err)))
+      .finally(() => {
+        sess.titling = false;
+        // Always: an unchanged name (or a failed call) still has to tell the
+        // stream — and the tab bar — that this turn is over.
+        this.append(sess, { type: "session_title", title: sess.title });
+      });
+  }
+
+  // generateTitle asks this session's own model for a name, from the prose of the
+  // conversation. The call is out of band in every direction: pi's session is not
+  // prompted, no record is written, no event is emitted, and the run that just
+  // settled is over. Only the session row learns anything.
+  private async generateTitle(sess: Sess, turns: number): Promise<void> {
+    const model = sess.agent?.model;
+    if (!model || !this.modelRuntime) return;
+    const startedAt = Date.now();
+    // This turn's records are still queued for writing; the answer to name is
+    // the last row of them.
+    await drainRecords();
+    const material = titleMaterial(await fetchRecords(this.opts.logBase, sess.id), turns);
+    if (material.trim().length < 8) return; // nothing worth naming
+    const reply = await this.modelRuntime.completeSimple(
+      model,
+      {
+        systemPrompt: TITLE_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: material, timestamp: Date.now() }],
+      },
+      {
+        // A name is not a reasoning task, and this call is on the clock (the
+        // turn's stream is open until it returns): no thinking budget is
+        // requested at all — `reasoning` omitted is the "off" position at this
+        // layer, since every level above it only *adds* a budget — the answer
+        // ceiling is small enough that a thinking model cannot ruminate inside
+        // it, and there is one attempt, not a retry ladder.
+        maxTokens: 64,
+        // Same conversation, same name: this is not a creative task.
+        temperature: TITLE_TEMPERATURE,
+        maxRetries: 1,
+        // Bounded anyway: a provider that never answers must not hold a page
+        // hostage. A timed-out name is no name.
+        signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
+      },
+    );
+    const text = Array.isArray(reply?.content)
+      ? reply.content
+          .filter((b: any) => b?.type === "text" && b.text)
+          .map((b: any) => String(b.text))
+          .join(" ")
+      : "";
+    const title = cleanTitle(text);
+    if (!title || title === sess.title) return;
+    await this.upsertSession({ sessionId: sess.id, kind: sess.kind, title });
+    sess.title = title;
+    dbg(sess.id, "title", `${Date.now() - startedAt}ms`, title);
+  }
+
+  // persistModel remembers a `model` tool switch where a rebuild will find it: a
+  // `model` record in this conversation (the source of truth — build reads the
+  // last one) and the session row's mirror (what a list shows without reading
+  // records). A failed row write is not worth failing the switch itself.
+  private persistModel(sess: Sess, choice: { model: string; thinkingLevel: string }): void {
+    this.recordRaw(sess, "model", "", {
+      role: "model",
+      model: choice.model,
+      thinkingLevel: choice.thinkingLevel,
+      timestamp: Date.now(),
+    });
+    void this.upsertSession({ sessionId: sess.id, kind: sess.kind, model: choice.model }).catch(
+      (err) => {
+        console.error(
+          `engineer ai: session row model write failed sessionId=${sess.id}: ${String(err)}`,
+        );
+      },
+    );
+  }
+
   // ask feeds a prompt to the session. If a run is already streaming, the
   // prompt is steered into it (delivered after the current turn's tools finish,
   // before the next LLM call) and the in-flight run stays the sole owner of the
@@ -633,6 +811,9 @@ export class Registry {
     const projection = content
       .map((b) => (b.type === "image" ? "[image]" : b.text))
       .join("");
+    // A user turn is what the title schedule counts, and every recorded user
+    // message is one — including a steered prompt, which is also a message.
+    sess.turns++;
     this.recordRaw(sess, "user", projection, {
       role: "user",
       content,
@@ -715,6 +896,9 @@ export class Registry {
       // run never started (e.g. preflight threw) so the SSE stream still closes.
       if (!sess.sawSettled) this.append(sess, { type: "agent_settled" });
       sess.active = false;
+      // Naming the conversation is scheduled here, after the run: this turn's
+      // answer has to be part of the material.
+      this.maybeTitle(sess);
     }
   }
 
@@ -826,17 +1010,27 @@ function sanitizeHistory(
   // 1. Keep the first row per seq (a retried write can insert the same seq
   // twice), and collect the seq numbers actually present. Rows with no seq are
   // legacy and carry no ordering information to de-duplicate on.
+  //
+  // `model` rows are metadata, not messages: they say which model the session was
+  // switched to, they are read before this runs (lastModelChoice), and they are
+  // dropped here. They are written *during* a tool call — between the assistant
+  // message that asked for it and the result that answers it — so keeping them
+  // would break the pairing below and turn a real tool result into an orphan.
+  // Their seq still counts as present, so a dropped write is still reported.
   const deduped: StoredRecord[] = [];
   const seqs = new Set<number>();
+  const seen = new Set<number>();
   for (const r of history) {
     if (r.seq > 0) {
-      if (seqs.has(r.seq)) {
+      seqs.add(r.seq);
+      if (seen.has(r.seq)) {
         duplicates++;
         dbg(sessionId, "repair", "drop-duplicate", `seq=${r.seq}`);
         continue;
       }
-      seqs.add(r.seq);
+      seen.add(r.seq);
     }
+    if (r.role === "model") continue;
     deduped.push(r);
   }
   // A hole is a number no row ever claimed: a write that was lost for good.
@@ -919,6 +1113,24 @@ function toolCallsOf(r: StoredRecord): { id: string; name: string }[] {
   return r.raw.content
     .filter((b: any) => b?.type === "toolCall" && b.id)
     .map((b: any) => ({ id: String(b.id), name: String(b.name ?? "") }));
+}
+
+// lastModelChoice is the model a conversation was last switched to: the newest
+// `model` record in its history. Those rows are the persisted side of the
+// `model` tool — not messages, so they are never replayed to the model, only
+// read back to decide what the rebuilt session runs.
+function lastModelChoice(
+  records: StoredRecord[],
+): { model: string; thinkingLevel?: string } | undefined {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const r = records[i];
+    if (r.role !== "model") continue;
+    const model = String(r.raw?.model ?? "").trim();
+    if (!model) continue;
+    const thinkingLevel = String(r.raw?.thinkingLevel ?? "").trim();
+    return thinkingLevel ? { model, thinkingLevel } : { model };
+  }
+  return undefined;
 }
 
 // lastCompactionIndex returns the index of the latest compaction record, or 0

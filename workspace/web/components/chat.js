@@ -837,6 +837,17 @@ function wire(host, root, id, RT) {
         finish();
         return;
 
+      case "session_title":
+        // 1/11/21 轮之后服务端会给这个会话起个新名字，并把它随这一轮的流送下来
+        // （流为此一直开到名字生成完）。页面不改自己：tab 上的名字是外壳的事，
+        // 这里只把它交出去。
+        if (ev.title) {
+          document.dispatchEvent(
+            new CustomEvent("engineer-title", { detail: { title: String(ev.title) } }),
+          );
+        }
+        return;
+
       case "compaction_start": // 上下文开始整理：和 thinking 一样占一个芯片位
         compactChip = compactionChip("compaction");
         compactChip.text.textContent =

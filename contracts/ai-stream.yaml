@@ -29,6 +29,15 @@ response:
     #   type: agent_start | agent_settled | turn_start | turn_end
     #         | message_start | message_end | ...
     #
+    # non-pi events (this service's own):
+    #   type: session_title            # the conversation was renamed from itself,
+    #                                 # on its 1st, 11th, 21st … user turn. Sent after
+    #                                 # that turn's agent_settled — which is why the
+    #                                 # stream stays open past it — and sent even when
+    #                                 # the name did not change, so a client knows the
+    #                                 # turn is finally over.
+    #     title: string               # the name now on the session row
+    #
     # error event (non-pi), reuses pi's assistant-error shape:
     #   type: error
     #   reason: error | aborted

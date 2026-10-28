@@ -13,6 +13,7 @@ response:
     projectId: string  # the project this session belongs to, "" for main; static / ai / web resolve the folder through it
     blueprint: string  # slug of the page this session drives, "" when it has none; the web server resolves /agent/<sessionId>/ through this
     title: string  # display name, "" when none was ever written
+    model: string  # provider/model-id chosen for this session, "" when pi's settings decide
     createdAt: string
 
 errors:

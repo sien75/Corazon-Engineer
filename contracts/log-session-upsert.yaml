@@ -1,5 +1,5 @@
 id: log-session-upsert
-description: Store a conversation's role (main / sub), the project it belongs to, the blueprint it was made from and its display name; an existing row keeps its createdAt and takes the new values (an empty one keeps the stored value)
+description: Store a conversation's role (main / sub), the project it belongs to, the blueprint it was made from, its display name and the model it runs; an existing row keeps its createdAt and takes the new values (an empty one keeps the stored value)
 
 request:
   body:
@@ -7,7 +7,8 @@ request:
     kind?: main | sub  # the role; omitted or unknown reads as "sub"
     projectId?: string  # p_<12 hex> the session belongs to; "" for main, and "" on a later write keeps the stored project
     blueprint?: string  # slug of the page this session drives; "" for main
-    title?: string  # display name shown in the tab bar; "" for main, the blueprint page's <title> otherwise
+    title?: string  # display name shown in the tab bar; "" for main, the blueprint page's <title> otherwise, replaced by the title ai summarizes from the conversation
+    model?: string  # provider/model-id this session runs, or "" when pi's own settings decide; written at creation and again on every `model` tool switch
 
 response:
   status: 200
@@ -17,6 +18,7 @@ response:
     projectId: string  # the project it belongs to, "" for main
     blueprint: string  # blueprint slug, "" when this session has no page
     title: string  # display name, "" when none was ever written
+    model: string  # provider/model-id chosen for this session, "" when pi's settings decide
     createdAt: string  # first write time, RFC3339
 
 errors:

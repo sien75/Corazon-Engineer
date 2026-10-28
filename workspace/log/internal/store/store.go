@@ -266,6 +266,7 @@ func (s *Store) ListSessions(pageNum int, projectID string) ([]map[string]interf
 		s.kind,
 		s.blueprint,
 		s.title,
+		s.model,
 		s.project_id,
 		COALESCE(
 			(SELECT r2.payload FROM records r2
@@ -289,10 +290,10 @@ func (s *Store) ListSessions(pageNum int, projectID string) ([]map[string]interf
 	defer rows.Close()
 	sessions := []map[string]interface{}{}
 	for rows.Next() {
-		var sessionID, firstAt, lastAt, kind, blueprint, title, projectID string
+		var sessionID, firstAt, lastAt, kind, blueprint, title, model, projectID string
 		var count int
 		var previewPayload sql.NullString
-		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &kind, &blueprint, &title, &projectID, &previewPayload); err != nil {
+		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &kind, &blueprint, &title, &model, &projectID, &previewPayload); err != nil {
 			return nil, false, err
 		}
 		preview := ""
@@ -310,6 +311,7 @@ func (s *Store) ListSessions(pageNum int, projectID string) ([]map[string]interf
 			"projectId": projectID,
 			"blueprint": blueprint,
 			"title":     title,
+			"model":     model,
 			"createdAt": firstAt,
 			"lastAt":    lastAt,
 			"count":     count,

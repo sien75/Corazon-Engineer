@@ -1,0 +1,3 @@
+id: core-ai-session-model
+description: 按会话的模型——ai/new 带 model 时落到 sessions 行，会话内 model 工具切换写一条 model 记录并改写该行，杀掉 ai 重启后 resume 仍然回到最后切换的那个模型
+atoms: [ai, log]

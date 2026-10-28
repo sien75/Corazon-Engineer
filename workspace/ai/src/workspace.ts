@@ -22,9 +22,10 @@ import YAML from "yaml";
 export interface WorkspaceDeps {
   logBase: string;
   // Open a new conversation from a blueprint slug inside a project (the session
-  // row, its project, its blueprint and its title are written by the registry);
-  // returns its id.
-  newSession: (blueprint: string, project: string) => Promise<string>;
+  // row, its project, its blueprint, its title and its model are written by the
+  // registry); returns its id. `model` is a provider/model-id or "" — empty
+  // leaves the choice to pi's own settings.
+  newSession: (blueprint: string, project: string, model?: string) => Promise<string>;
   // Open a new main conversation (kind "main": the same role and tools as the
   // one these tools run inside); returns its id. The pointer is moved by the
   // tool itself — the registry only makes the session.
@@ -94,9 +95,9 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
     label: "List open sessions",
     description:
       "What is on screen right now: main, and every open session (each is one tab) " +
-      "in display order, with its sessionId, title, blueprint and when it was last " +
-      "active. A closed session keeps its records and stays reachable from the " +
-      "launcher — put it back with session-open.",
+      "in display order, with its sessionId, title, blueprint, the model it runs " +
+      "and when it was last active. A closed session keeps its records and stays " +
+      "reachable from the launcher — put it back with session-open.",
     promptSnippet: "session-list: the sessions on screen",
     parameters: Type.Object({}),
     execute: async () => {
@@ -124,11 +125,13 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
           title: rec.title ?? "",
           projectId: rec.projectId ?? "",
           blueprint: rec.blueprint ?? "",
+          model: rec.model ?? "",
           lastAt: rec.lastAt ?? "",
         });
         lines.push(
           `session ${sessionId}  ${oneLine(rec.title || "(untitled)", 40)}  ` +
-            `project ${rec.projectId || "-"}  ${rec.blueprint || "-"}  ${rec.lastAt ?? ""}`,
+            `project ${rec.projectId || "-"}  ${rec.blueprint || "-"}  ` +
+            `model ${rec.model || "pi default"}  ${rec.lastAt ?? ""}`,
         );
       }
       const body = [
@@ -238,20 +241,30 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       "read from that project's .agents/blueprints/ — so the project is required " +
       "(project-list has the ids). The session id is assigned here — you never " +
       "pass one, and an existing conversation cannot be moved into a new tab " +
-      "(reopen it with session-open instead).",
+      "(reopen it with session-open instead). `model` (a provider/model-id) names " +
+      "the model the new agent runs; omit it and pi's own settings decide. The " +
+      "agent itself can still switch with the model tool, and that switch wins " +
+      "from then on — including after a restart.",
     promptSnippet: "session-new: a new agent in a new tab",
     parameters: Type.Object({
       project: Type.String({ description: "project id (from project-list)" }),
       blueprint: Type.String({ description: "blueprint slug to instantiate" }),
+      model: Type.Optional(
+        Type.String({
+          description:
+            "provider/model-id this agent runs, from the model tool's list; omit for pi's default",
+        }),
+      ),
     }),
     execute: async (_id, params) => {
       const slug = String(params.blueprint ?? "").trim();
       const project = String(params.project ?? "").trim();
       if (!slug) return fail("session-new needs `blueprint` — project-list lists the projects, and a project's .agents/blueprints/ has the slugs.");
       if (!project) return fail("session-new needs `project` (a project id from project-list).");
+      const model = String(params.model ?? "").trim();
       let sessionId = "";
       try {
-        sessionId = await deps.newSession(slug, project);
+        sessionId = await deps.newSession(slug, project, model);
       } catch (err) {
         return fail(
           `Could not instantiate ${slug}: ${err instanceof Error ? err.message : String(err)}`,
@@ -276,12 +289,11 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       } catch {
         title = ""; // the row is written; a missing name is not worth failing on
       }
-      return ok(`Tab for ${sessionId} — ${title || slug}, agent ${sessionId}.`, {
-        sessionId,
-        title,
-        project,
-        blueprint: slug,
-      });
+      return ok(
+        `Tab for ${sessionId} — ${title || slug}, agent ${sessionId}` +
+          `${model ? `, model ${model}` : ""}.`,
+        { sessionId, title, project, blueprint: slug, model },
+      );
     },
   });
 

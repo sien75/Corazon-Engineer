@@ -120,16 +120,30 @@ export function serve(registry: Registry, addr: string): void {
           if (kind === "sub" && !projectId) {
             return errRes(400, "bad_request", "projectId required for kind=sub");
           }
+          // The model this agent runs, if the caller wants to choose it instead of
+          // leaving it to pi's settings. It is checked against what pi can use
+          // right now — a name nothing can serve would make a session that fails
+          // on its first turn, which is worse than a rejected request. In stub
+          // mode there is no catalog to check against, and nothing runs anyway.
+          const model = String(body.model ?? "").trim();
+          if (model && !registry.stub && !registry.modelFor(model)) {
+            return errRes(400, "bad_request", `model not available: ${model}`);
+          }
           let sess;
           try {
-            sess = await registry.new(blueprint || undefined, kind, kind === "sub" ? projectId : "");
+            sess = await registry.new(
+              blueprint || undefined,
+              kind,
+              kind === "sub" ? projectId : "",
+              model,
+            );
           } catch (err) {
             if (err instanceof BlueprintError) {
               return errRes(400, "bad_request", err.message);
             }
             throw err;
           }
-          return yamlRes({ sessionId: sess.id, kind });
+          return yamlRes({ sessionId: sess.id, kind, model });
         }
 
         case "/ai/resume": {
@@ -202,12 +216,14 @@ export function serve(registry: Registry, addr: string): void {
                 controller.enqueue(encodeSSE(ev));
                 // agent_settled is pi's real end-of-run marker; close the SSE
                 // stream on it. agent_end is unreliable (fires on retries).
-                // Exception: a manual compaction runs *after* the run settles
-                // (the `compact` tool schedules it on the tail), so the stream
-                // stays open until its compaction_end — otherwise the user sees
-                // the compaction only on the next turn's replay.
+                // Exceptions, both of them work scheduled *after* the run
+                // settles: a manual compaction (the `compact` tool schedules it
+                // on the tail) and the conversation's new name (the 1st, 11th,
+                // 21st … turn). The stream stays open for those, so the user sees
+                // them as they happen instead of on the next turn's replay.
                 if (ev.type === "compaction_end" && !sess.active) close();
-                else if (ev.type === "agent_settled" && !sess.compacting) close();
+                else if (ev.type === "session_title" && !sess.active && !sess.compacting) close();
+                else if (ev.type === "agent_settled" && !sess.compacting && !sess.titling) close();
               };
               // Replay only events the client has not rendered yet; since=0
               // (or omitted) replays the full backlog.
@@ -217,12 +233,17 @@ export function serve(registry: Registry, addr: string): void {
               for (const ev of backlog) controller.enqueue(encodeSSE(ev));
               // Caught up and idle: nothing live will arrive until a new ask
               // starts a run (which opens its own stream). Close now instead of
-              // holding the connection open. A scheduled compaction counts as
-              // not idle — its events are still coming.
+              // holding the connection open. A scheduled compaction or a title
+              // call counts as not idle — its events are still coming.
               const lastSent = backlog.length
                 ? backlog[backlog.length - 1].seq
                 : since;
-              if (!sess.active && !sess.compacting && sess.events.length <= lastSent) {
+              if (
+                !sess.active &&
+                !sess.compacting &&
+                !sess.titling &&
+                sess.events.length <= lastSent
+              ) {
                 close();
               }
             },

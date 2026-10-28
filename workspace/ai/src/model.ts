@@ -5,9 +5,12 @@
 //
 // pi stays the only source of model config: the list is what its own catalog +
 // auth make available, and a session with no explicit choice runs whatever pi
-// resolved from its settings. This tool overrides that for one live session
-// only; after a restart the conversation resumes on pi's default again, because
-// history is rebuilt from log records and a pi model-change entry is not one.
+// resolved from its settings. A switch overrides that for one session only — it
+// is written nowhere near pi's settings, and no other conversation is touched.
+// What makes it survive a restart is the `model` entry written into this
+// conversation's own records (plus the session row's mirror): history is rebuilt
+// from those records, so a resumed session comes back on the model it was last
+// switched to, not on pi's default.
 
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
@@ -20,6 +23,10 @@ export interface ModelToolDeps {
   // This session's agent. It is undefined for the same reason: a stub session
   // has no pi session behind it, so there is nothing to switch.
   getAgent: () => AgentSession | undefined;
+  // persist records the choice: a `model` entry in this conversation's records
+  // (which is what a resumed session is rebuilt from) plus the session row's
+  // mirror. Absent only where there is nothing to persist into.
+  persist?: (choice: { model: string; thinkingLevel: string }) => void;
 }
 
 // ref is how a model is named everywhere: provider/model-id, the same string
@@ -72,8 +79,10 @@ export function makeModelTool(deps: ModelToolDeps) {
       "one this session runs; `set` switches this session to one of them by " +
       "provider/model-id. `set` overrides pi's configured default for this " +
       "conversation only — it writes nothing to pi's settings and leaves every " +
-      "other conversation alone. Use it when the user asks which model is " +
-      "running or asks to switch; do not switch on your own initiative.",
+      "other conversation alone; the choice is recorded with this conversation, " +
+      "so it is still the one it runs after a restart. Use it when the user asks " +
+      "which model is running or asks to switch; do not switch on your own " +
+      "initiative.",
     promptSnippet: "model: list pi's available models, or switch this session's model",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("list"), Type.Literal("set")], {
@@ -152,13 +161,16 @@ export function makeModelTool(deps: ModelToolDeps) {
       try {
         await agent.setModel(target);
       } catch (err) {
-        // pi refuses when the provider has no credentials; say it as it is.
+        // pi refused when the provider has no credentials; say it as it is.
         return fail(`pi refused the switch: ${String(err)}`);
       }
+      const choice = { model: ref(target), thinkingLevel: String(agent.thinkingLevel) };
+      deps.persist?.(choice);
       return ok(
         `switched to ${ref(target)} (thinking ${agent.thinkingLevel}). This ` +
           `conversation only: pi's settings still say what they said, and other ` +
-          `conversations are untouched.`,
+          `conversations are untouched. The choice is recorded with this ` +
+          `conversation, so it is still the model after a restart.`,
         { model: ref(target), thinkingLevel: agent.thinkingLevel },
       );
     },

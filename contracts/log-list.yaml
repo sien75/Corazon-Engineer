@@ -14,7 +14,8 @@ response:
         kind: main | sub  # the session's role; "sub" when it has no row in sessions
         projectId: string  # the project it belongs to, "" for main
         blueprint: string  # slug of the page it drives, "" when it has none
-        title: string  # display name (the blueprint page's <title>); "" when none was written
+        title: string  # display name: the blueprint page's <title>, or the title ai summarized from the conversation; "" when none was written
+        model: string  # provider/model-id this session runs, "" when pi's settings decide
         createdAt: string  # first message time, or the session row's creation time when nothing was said yet, RFC3339
         lastAt: string  # latest message time, or createdAt when nothing was said yet, RFC3339
         count: number  # number of messages in the session

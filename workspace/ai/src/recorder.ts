@@ -1,7 +1,9 @@
 import YAML from "yaml";
 
 // A persisted conversation record. `role` is the pi message role (user /
-// assistant / toolResult) or "compaction" for a context-compaction entry.
+// assistant / toolResult), "compaction" for a context-compaction entry, or
+// "model" for a model choice made inside the session — a `model` record is not
+// a message: it is replayed for its value, never shown to the model.
 // `content` is a derived plain-text projection used by the session list preview
 // and search. `raw` is the pi message (or compaction entry) verbatim — the
 // source of truth for replay and context rebuild — except that image bytes are
@@ -109,6 +111,14 @@ export function record(
       );
     }
   });
+}
+
+// drainRecords resolves once every record written so far has reached log (or
+// been given up on). The title summarization reads the records back, so it has
+// to wait for the writes this very turn just queued — otherwise the assistant's
+// answer it should be naming is the one row missing.
+export function drainRecords(): Promise<void> {
+  return writeTail.then(() => undefined);
 }
 
 // fetchRecords reads a session's conversation records in order. New rows carry

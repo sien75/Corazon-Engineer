@@ -6,6 +6,7 @@ request:
     projectId?: string  # p_<12 hex> — the project the agent belongs to: its folder is the agent's cwd and the blueprint tree its page comes from. Required for kind=sub, absent for kind=main (main is global and belongs to no project)
     blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required for kind=sub, absent for kind=main. README.md and index.html are required; every other file (css / js / images / subdirectories) is served from the same directory by relative URL. The directory is not copied — /agent/<sessionId>/ serves it directly — and its README plus its path are appended to this session's system prompt; the slug and the page's <title> are recorded on the session row in log
     kind?: main | sub  # the role: "main" is the shell's own conversation (no blueprint, workspace tools), "sub" is a blueprint agent (default)
+    model?: string  # provider/model-id this agent runs, chosen here instead of by pi's settings; omitted means pi decides. It is recorded on the session row, and a `model` tool switch inside the session overrides it from then on (that choice is persisted too, so it survives a restart)
 
 response:
   status: 200
@@ -16,7 +17,7 @@ response:
 errors:
   - status: 400
     code: bad_request
-    description: blueprint missing, unknown, or lacking one of its two required files (README.md, index.html); projectId missing for kind=sub, or naming no known project; kind not main | sub
+    description: blueprint missing, unknown, or lacking one of its two required files (README.md, index.html); projectId missing for kind=sub, or naming no known project; kind not main | sub; model naming one pi cannot use right now
   - status: 500
     code: internal
     description: server error
