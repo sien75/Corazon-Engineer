@@ -18,6 +18,9 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* The image overlay is positioned against this box, not the viewport: a tab's
+     conversation is what it covers, nothing outside it. */
+  position: relative;
 }
 
 /* The conversation scrolls over the whole element, not just over the centred
@@ -242,10 +245,6 @@
   border: none;
   border-top: 1px solid var(--border-strong);
   margin: 0.8em 0;
-}
-
-.ai-markdown img {
-  max-width: 100%;
 }
 
 .ai-collapse {
@@ -539,9 +538,20 @@
   cursor: text;
 }
 
+/* Every image the conversation draws — a pasted one, a generated one, a
+   markdown one — is capped at 300×300 and keeps its ratio; a smaller picture
+   stays at its own size. Clicking opens it in the overlay below. */
+.ai-user-img,
+.ai-gen-img,
+.ai-markdown img {
+  max-width: min(300px, 100%);
+  max-height: 300px;
+  height: auto;
+  cursor: zoom-in;
+}
+
 .ai-user-img {
   display: block;
-  max-width: 100%;
   margin-top: 6px;
   border-radius: 4px;
 }
@@ -554,13 +564,43 @@
 
 .ai-gen-img {
   display: block;
-  max-width: 100%;
-  height: auto;
   border-radius: 6px;
 }
 
 .ai-gen-img + .ai-gen-img {
   margin-top: 10px;
+}
+
+/* The preview overlay. It sits inside .pane and is positioned against it, so it
+   covers this conversation's box — the tab's content — and nothing else: the
+   tab bar, the other panes and the rest of the page stay uncovered (this is why
+   the host must stay position:relative and this must not be position:fixed). */
+.ai-lightbox {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  cursor: zoom-out;
+  outline: none;
+}
+
+.ai-lightbox[hidden] {
+  display: none;
+}
+
+.ai-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  border-radius: 6px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  cursor: zoom-out;
 }
 
 

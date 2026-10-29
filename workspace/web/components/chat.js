@@ -33,6 +33,8 @@ const TEMPLATE = `
     <button type="button" class="ai-stop" hidden>stop</button>
     <button type="button" class="ai-send">send</button>
   </div>
+  <!-- 图片预览：贴着 .pane 定位，只盖这个会话面板（这个 tab），不是整个窗口。 -->
+  <div class="ai-lightbox" hidden tabindex="-1"><img alt=""></div>
 </div>
 `;
 
@@ -105,6 +107,45 @@ function wire(host, root, id, RT) {
   const sendEl = root.querySelector(".ai-send");
   const stopEl = root.querySelector(".ai-stop");
   const composerEl = root.querySelector(".ai-input");
+
+  // ---------- 图片预览蒙层 ----------
+  //
+  // 信息流里的图（粘贴的、生图的结果、正文里的 markdown 图）尺寸由 chat.css 限在
+  // 300×300；点一下在蒙层里看原图（装得下就按原尺寸，装不下就按面板等比缩）。
+  // 蒙层是 .pane 的绝对定位子元素，所以它盖住的是这个会话面板——也就是这个 tab
+  // 的内容——而不是整个窗口。
+  const lightboxEl = root.querySelector(".ai-lightbox");
+  const lightboxImg = lightboxEl.querySelector("img");
+
+  function openLightbox(img) {
+    lightboxImg.src = img.currentSrc || img.src;
+    lightboxImg.alt = img.alt || "";
+    lightboxEl.hidden = false;
+    lightboxEl.focus({ preventScroll: true });
+  }
+
+  function closeLightbox() {
+    if (lightboxEl.hidden) return;
+    lightboxEl.hidden = true;
+    lightboxImg.removeAttribute("src"); // 别让大图在关闭后继续占着解码内存
+    lightboxEl.blur();
+  }
+
+  // 委派到消息列：历史回放、实时渲染、以后新加的图画法都自动带上，不用每处挂一遍。
+  messagesEl.addEventListener("click", (event) => {
+    const img = event.target instanceof Element ? event.target.closest("img") : null;
+    if (!img) return;
+    event.preventDefault();
+    openLightbox(img);
+  });
+
+  lightboxEl.addEventListener("click", closeLightbox);
+  lightboxEl.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    // Esc 是全窗口的「停掉这一轮」；在预览里它只关预览。
+    event.stopPropagation();
+    closeLightbox();
+  });
   // 外壳把它的前端库放在 /vendor/ 下（同源可取）：用同一份 markdown-it /
   // DOMPurify / highlight.js / js-yaml，渲染结果和外壳一模一样。
 
@@ -312,7 +353,9 @@ function wire(host, root, id, RT) {
       } else if (b.type === "image") {
         const img = document.createElement("img");
         img.className = "ai-user-img";
-        img.src = `data:${b.mimeType};base64,${b.data}`;
+        // 刚发的这一条带的是压缩后的 base64；回放 log 历史带的是 blob 地址
+        // （`src`），两条路都要能出图 —— 只认 data 会把回放画成坏图。
+        img.src = b.src || `data:${b.mimeType};base64,${b.data}`;
         el.appendChild(img);
       }
     }
