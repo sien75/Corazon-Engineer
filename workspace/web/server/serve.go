@@ -344,6 +344,15 @@ func handler(assets string, rt runtimeConfig) http.Handler {
 			return
 		}
 
+		// The ai service's image store, read through this origin. A page can use
+		// `${ai}/blobs/…` because it reads /config.js; a markdown image written by
+		// an agent cannot (it is text), and a dead host:port in a conversation
+		// would rot the moment the launcher picked another port.
+		if strings.HasPrefix(urlPath, blobsPrefix) {
+			handleBlob(w, r, rt.AI)
+			return
+		}
+
 		if urlPath == "/project/add" {
 			if r.Method != http.MethodPost {
 				// The route is a write, not a page: a GET must not look like a
@@ -427,6 +436,63 @@ func handler(assets string, rt runtimeConfig) http.Handler {
 		w.Header().Set("Content-Type", types[".html"])
 		w.Write(html)
 	})
+}
+
+// ---------- blobs ----------
+
+// blobsPrefix mirrors the ai service's image store on this origin.
+const blobsPrefix = "/blobs/"
+
+// blobName is the only shape a blob request may have: one content address,
+// exactly as ai-blobs defines it — 64 hex, no extension, no second segment. The
+// path arrives from a URL, so it must not become a way of reaching another
+// endpoint of the ai service; and a shape the ai service would answer 404 must
+// not look accepted here.
+var blobName = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+var blobsClient = &http.Client{Timeout: 15 * time.Second}
+
+// handleBlob proxies one blob read to the ai service. It is a read only: storing
+// a blob stays the ai service's business, and this server has no write route.
+func handleBlob(w http.ResponseWriter, r *http.Request, aiBase string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !blobName.MatchString(strings.TrimPrefix(r.URL.Path, blobsPrefix)) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	target := strings.TrimSuffix(aiBase, "/") + r.URL.Path
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, nil)
+	if err != nil {
+		http.Error(w, "engineer web: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	res, err := blobsClient.Do(req)
+	if err != nil {
+		http.Error(w, "engineer web: ai unreachable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer res.Body.Close()
+
+	// The bytes are the ai service's answer, so how to decode them is its call.
+	// A blob is content addressed and never changes, which is why its cache
+	// header outlives this server's blanket no-store.
+	for _, h := range []string{"Content-Type", "Cache-Control"} {
+		if v := res.Header.Get(h); v != "" {
+			w.Header().Set(h, v)
+		}
+	}
+	if res.ContentLength >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(res.ContentLength, 10))
+	}
+	w.WriteHeader(res.StatusCode)
+	if r.Method == http.MethodHead {
+		return
+	}
+	io.Copy(w, res.Body)
 }
 
 func contentType(file string) string {

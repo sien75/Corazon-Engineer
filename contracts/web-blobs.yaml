@@ -1,0 +1,21 @@
+id: web-blobs
+description: Read a stored image through this origin. Same bytes as ai-blobs, same address shape — /blobs/{sha256} on the web server instead of the ai service, so a page can draw a picture with an origin-relative URL. A markdown image an agent writes (`![](/blobs/<sha256>)`) is text and cannot read /config.js, so it must not have to carry a host and port; and the address survives whatever port the launcher picked. A read, not a write: nothing here stores a blob
+
+request:
+  body:
+    sha256: string  # content address — it is the path segment of /blobs/{sha256}
+
+response:
+  status: 200
+  body: bytes  # the raw image itself, not yaml; Content-Type, Content-Length and Cache-Control (public, max-age=31536000, immutable) are the ai service's, passed through untouched
+
+errors:
+  - status: 404
+    code: not_found
+    description: no blob is stored under that address, or the path is not one content address
+  - status: 405
+    code: method_not_allowed
+    description: only GET and HEAD are proxied
+  - status: 502
+    code: bad_gateway
+    description: the ai service could not be reached

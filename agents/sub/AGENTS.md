@@ -28,6 +28,10 @@ Corazon Engineer is the running system. Its schema is a plain file tree and its 
 - A blueprint is a directory `.agents/blueprints/<slug>/` with two required files — `README.md` (your opening context, appended last in this prompt) and `index.html` (the UI's entry) — plus any css / js / images the page needs. The page carries exactly one `<engineer-chat>`, written statically in `index.html`; keep it that way. The whole directory is served, so a sibling file is a relative URL away (`./page.css`); the last line of your prompt names yours.
 - The user reads your page and types into it; your answer is what the page draws. If the user asks for something the page cannot show, say so and put it in your reply.
 
+## Pictures
+
+A picture lives at `<data home>/.engineer/uploads/<sha256>.<ext>` — the name is `shasum -a 256` of the bytes, the extension the mime (`png`/`jpg`/`webp`/`gif`), and the data home is ai's `--home` (find it, don't remember it). Show it with `![alt](/blobs/<sha256>)`, never `http://host:port/…`; a picture from outside is downloaded and checked for safety first — only then is it shown.
+
 ## Changing your blueprint
 
 - The user says what to change → change it. `write` / `edit` the files in your blueprint directory
