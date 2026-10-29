@@ -20,9 +20,10 @@ export interface RoleModels {
   // The conversation model: a provider/model-id from pi's chat catalog. This is
   // the one a `model` tool switch and a creation-time `model` override.
   chat: string;
-  // The image-generation model: a provider/model-id from pi's image catalog
-  // (built in: openrouter only). "" means not configured yet. Read and shape-
-  // checked here, but nothing consumes it until an image tool exists.
+  // The image-generation model: a provider/model-id naming an OpenAI-compatible
+  // /images/generations endpoint (pi's own catalog + credential decide whether it
+  // is reachable). "" means no image model configured: the `image` tool says so
+  // instead of inventing one.
   image: string;
 }
 
@@ -40,8 +41,9 @@ function defaults(): RoleModels {
 
 const DEFAULT_FILE = `# Engineer's own model config: one default per role, provider/model-id.
 # chat:  the conversation model (pi's chat catalog).
-# image: the image-generation model (pi's image catalog — built in: openrouter
-#        only, e.g. openrouter/black-forest-labs/flux.2-flex). "" = not set.
+# image: the image-generation model, reached over an OpenAI-compatible
+#        /images/generations endpoint, e.g. zenmux-openai/openai/gpt-image-2.
+#        "" = not set (the image tool then says so).
 # Read fresh for every session built: a session's own row still wins over this,
 # and pi's own default model is the last resort after it. Edited as a file; pi
 # keeps the catalog and the credentials.

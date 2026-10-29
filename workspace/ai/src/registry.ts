@@ -26,6 +26,7 @@ import { makeModelTool } from "./model.ts";
 import { makeUsageTool } from "./usage.ts";
 import { makeCompactTool } from "./compact.ts";
 import { makeWebSearchTool } from "./search.ts";
+import { makeImageTool } from "./images.ts";
 import {
   cleanTitle,
   titleMaterial,
@@ -547,6 +548,14 @@ export class Registry {
         persist: (choice) => this.persistModel(sess, choice),
       });
       const usageTool = makeUsageTool({ getAgent: () => sess.agent });
+      // The image tool runs on this session's image slot (resolved a few lines
+      // above) and stores what it generates in the same blob store a pasted
+      // image lands in, so the page draws both through this service's /blobs/<sha256>.
+      const imageTool = makeImageTool({
+        runtime: this.modelRuntime,
+        home: this.opts.home,
+        getImageModel: () => sess.imageModel,
+      });
       // compact() aborts and waits for idle, so it can never run inside the turn
       // that asked for it — it goes on the tail and runs between turns.
       const compactTool = makeCompactTool({
@@ -596,6 +605,7 @@ export class Registry {
           "usage",
           "compact",
           "web_search",
+          "image",
           ...(kind === "main" ? WORKSPACE_TOOLS : []),
         ],
         customTools: [
@@ -604,6 +614,7 @@ export class Registry {
           usageTool,
           compactTool,
           makeWebSearchTool(),
+          imageTool,
           ...(kind === "main"
             ? makeWorkspaceTools({
                 logBase: this.opts.logBase,

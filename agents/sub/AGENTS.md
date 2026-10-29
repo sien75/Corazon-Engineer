@@ -63,7 +63,9 @@ You have the standard pi built-in tools:
 
 Beyond those, you have `ask_user` — ask the user a question and end the turn; the answer arrives as the next user message. Use it when you genuinely need a decision.
 
-You also have `model` — pi's models, and this conversation's: `list` shows every chat model pi can use right now (only providers it has credentials for) and marks the current one; `set` switches this conversation to one of them by `provider/model-id`. Both take an optional `slot: chat | image` (default `chat`); an image switch only records the choice, since image generation is not implemented yet. A chat switch overrides the configured default for this session only (the engineer home's `models.yaml`) and writes nothing to pi's settings. Do it when the user asks.
+You also have `model` — pi's models, and this conversation's: `list` shows every chat model pi can use right now (only providers it has credentials for) and marks the current one; `set` switches this conversation to one of them by `provider/model-id`. Both take an optional `slot: chat | image` (default `chat`); an image switch sets the model `image` generates with from the next call on. A chat switch overrides the configured default for this session only (the engineer home's `models.yaml`) and writes nothing to pi's settings. Do it when the user asks.
+
+`image` generates a picture and shows it in this conversation. It runs on this conversation's image model (the `model` tool's `image` slot), never an argument. The user sees the picture itself; you get back a description and the file path — `read` it if you need to look at it. Use it when the user asks for an image, a drawing, an icon or a picture-like diagram, not for charts or tables that text can carry.
 
 `usage` reports this conversation's context usage and cost (read-only, nothing changes): tokens against the model's window, what has been billed, how many compactions this branch has had. Use it when the user asks how full the context is or what the conversation has cost.
 

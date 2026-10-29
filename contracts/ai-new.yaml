@@ -7,7 +7,7 @@ request:
     blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required for kind=sub, absent for kind=main. README.md and index.html are required; every other file (css / js / images / subdirectories) is served from the same directory by relative URL. The directory is not copied — /agent/<sessionId>/ serves it directly — and its README plus its path are appended to this session's system prompt; the slug and the page's <title> are recorded on the session row in log
     kind?: main | sub  # the role: "main" is the shell's own conversation (no blueprint, workspace tools), "sub" is a blueprint agent (default)
     chat?: string  # provider/model-id of the chat model this agent runs, chosen here instead of the role default; omitted means the `chat` of this kind in the engineer home's models.yaml (main / sub). It is recorded on the session row, and a `model` tool switch with slot=chat overrides it from then on (that choice is persisted too, so it survives a restart)
-    image?: string  # provider/model-id of the image-generation model this agent uses; omitted means the role's `image` in models.yaml. It is recorded on the session row, and a `model` tool switch with slot=image overrides it later. Image generation is not implemented yet, so nothing runs on it today
+    image?: string  # provider/model-id of the image-generation model this agent uses; omitted means the role's `image` in models.yaml. It is recorded on the session row, and a `model` tool switch with slot=image overrides it later. The `image` tool generates with it from the next call on
     model?: string  # deprecated alias for `chat`, kept so older callers keep working
 
 response:

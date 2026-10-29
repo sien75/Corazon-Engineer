@@ -8,9 +8,9 @@
 // - chat: a live switch, `agent.setModel` on the running session. The default it
 //   overrides is the role's `chat` in the engineer home's models.yaml (or the
 //   model the conversation was created with).
-// - image: there is no image runtime on the agent, so `set` only records the
-//   choice in the session row's `imageModel`. Image generation is not implemented
-//   yet; the format is here for the tool that will be.
+// - image: a switch only records the choice in the session row's `imageModel` —
+//   the `image` tool reads it at call time, so an image switch takes effect on
+//   the next generation rather than on a session rebuild.
 //
 // pi stays the source of the chat catalog and the credentials: the list is what
 // its catalog + auth make available. What makes a switch survive a restart is the
@@ -90,8 +90,9 @@ export function makeModelTool(deps: ModelToolDeps) {
       "can use right now (only providers it has credentials for) and marks the " +
       "one this session runs; `set` switches this session's chat model to one of " +
       "them by provider/model-id. `slot: image` addresses the image-generation " +
-      "model instead (no image runtime yet: `set` records the choice, `list` " +
-      "reports it). A chat switch overrides the configured `chat` default (the " +
+      "model the `image` tool runs on instead: `set` records it with this " +
+      "conversation, `list` reports it. A chat switch overrides the configured " +
+      "`chat` default (the " +
       "engineer home's models.yaml) for this conversation only — it writes " +
       "nothing to pi's settings and leaves every other conversation alone; the " +
       "choice is recorded with this conversation, so it is still the one it runs " +
@@ -121,8 +122,8 @@ export function makeModelTool(deps: ModelToolDeps) {
           const current = deps.getImageModel?.() ?? "";
           const lines = [
             current ? `current: ${current}` : "current: (none)",
-            "pi's image catalog is not wired here yet (image generation is not " +
-              "implemented); the role default is `image` in models.yaml.",
+            "this is the model the `image` tool generates with; the role default " +
+              "is `image` in models.yaml.",
             "`set` with slot=image records a provider/model-id for this conversation.",
           ];
           return ok(lines.join("\n"), { slot, current });
@@ -133,9 +134,8 @@ export function makeModelTool(deps: ModelToolDeps) {
         }
         deps.persist?.({ slot: "image", model: wanted });
         return ok(
-          `recorded image model ${wanted} for this conversation. Image generation ` +
-            `is not implemented yet, so nothing runs on it today; the choice is ` +
-            `recorded with this conversation and survives a restart.`,
+          `recorded image model ${wanted} for this conversation; the \`image\` tool ` +
+            `generates with it from the next call on, and the choice survives a restart.`,
           { slot, model: wanted },
         );
       }

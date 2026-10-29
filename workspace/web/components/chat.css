@@ -546,6 +546,23 @@
   border-radius: 4px;
 }
 
+/* 生图的结果：和正文同列的一块图，尺寸由 details 里的 width/height 定住，
+   图片还没到时也占着位置，不会让后面的内容跳一下。 */
+.ai-images {
+  max-width: 100%;
+}
+
+.ai-gen-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.ai-gen-img + .ai-gen-img {
+  margin-top: 10px;
+}
+
 
 .ai-input-field,
 #ai-input-field {

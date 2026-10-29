@@ -498,6 +498,26 @@ function wire(host, root, id, RT) {
     }
   }
 
+  // 生成出来的图不进芯片：芯片默认是收起的，而图就是要给人看的那一下。它单独占一块，
+  // 和正文同列。`details.images` 里只有 sha256 —— 和粘贴的图同一条回读路由。
+  function imageMessage(images) {
+    const list = (Array.isArray(images) ? images : []).filter((b) => b && b.sha256);
+    if (!list.length) return undefined;
+    return addMessage("ai-msg ai-assistant ai-images", (el) => {
+      for (const b of list) {
+        const img = document.createElement("img");
+        img.className = "ai-gen-img";
+        img.loading = "lazy";
+        img.alt = "generated image";
+        const w = Number(b.width), h = Number(b.height);
+        if (w > 0) img.width = w;
+        if (h > 0) img.height = h;
+        img.src = `${AI}/blobs/${b.sha256}`;
+        el.appendChild(img);
+      }
+    });
+  }
+
   function toolChip(name, args) {
     const label = toolLabel(name, args);
     const block = chip("tool", label, name, label === name ? name : `${name} ${label}`);
@@ -616,6 +636,12 @@ function wire(host, root, id, RT) {
   function toolLabel(name, args) {
     const a = args && typeof args === "object" ? args : {};
     const base = (p) => String(p || "").split("/").filter(Boolean).pop() || "";
+    // 生图看的是 prompt，不是文件名：摘一句就够认出这一步在干什么。
+    if (name === "image") {
+      const p = String(a.prompt ?? "").replace(/\s+/g, " ").trim();
+      if (!p) return name;
+      return p.length > 42 ? `${p.slice(0, 42)}…` : p;
+    }
     const detail = a.path ?? a.command ?? a.pattern ?? a.name;
     const text = String(detail ?? "").trim();
     if (!text) return name;
@@ -814,6 +840,8 @@ function wire(host, root, id, RT) {
         const block = tools.get(ev.toolCallId);
         if (block) settle(block, ev.isError ? "error" : "done");
         tools.delete(ev.toolCallId);
+        // 生图：图从工具的 details 里来（芯片里只留这一步的调用和文字）。
+        if (ev.toolName === "image" && !ev.isError) imageMessage(ev.result?.details?.images);
         // compact 只是把压缩排上了队：它在这**一轮收尾之后**才跑，
         // 所以接下来的 agent_settled 不能当成收工（否则压缩就被看不见了）。
         if (ev.toolName === "compact" && !ev.isError) expectCompact = true;
@@ -1205,6 +1233,8 @@ function wire(host, root, id, RT) {
             .join("\n");
           if (out && block.pre) block.pre.textContent += `\n${out}`;
           settle(block, raw.isError ? "error" : "done");
+          // 生图的结果重放：和实时那条走同一个 imageMessage。
+          if (raw.toolName === "image" && !raw.isError) imageMessage(raw.details?.images);
           toolBlocks.delete(raw.toolCallId);
           continue;
         }
