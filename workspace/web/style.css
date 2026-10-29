@@ -392,19 +392,25 @@ body {
   pointer-events: none;
 }
 
+/* Every section is the same box: full width up to the column, so a short list
+   (blueprints) sits on the same left edge as a long one (recents) instead of
+   shrinking to its content and drifting to the middle. */
 .launcher-sec {
+  width: 100%;
   max-width: 760px;
   margin-inline: auto;
 }
 
 .launcher-sec + .launcher-sec {
-  margin-top: 14px;
+  margin-top: 10px;
   border-top: 1px solid var(--border);
 }
 
+/* The title shares the rows' text edge: the row is 8px of margin plus 16px of
+   padding, so the title pads by 24px, not by its own idea of 12. */
 .launcher-sec h3 {
   margin: 0;
-  padding: 10px 12px 6px;
+  padding: 10px 24px 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: .06em;
@@ -416,7 +422,7 @@ body {
   display: block;
   width: calc(100% - 16px);
   margin: 0 8px;
-  padding: 14px 16px;
+  padding: 8px 16px;
   border-radius: 6px;
   text-align: left;
   background: none;
@@ -541,15 +547,20 @@ body {
   color: var(--fg);
 }
 
-/* The project launcher's head: back to the board, the project's name, its path. */
+/* The project launcher's head: back to the board, the project's name, its path.
+   It is a flex item of the launcher column, and the auto margins that center it
+   also stop it stretching — without an explicit width it shrinks to its text and
+   the title then sits on a different left edge from the sections below it. Same
+   box, same edge. */
 .launcher-head {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 10px;
+  width: 100%;
   max-width: 760px;
   margin: 0 auto 14px;
-  padding: 0 0 12px;
+  padding: 0 24px 12px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -565,7 +576,7 @@ body {
 }
 
 .launcher-empty {
-  padding: 6px 12px 8px;
+  padding: 6px 24px 8px;
   color: var(--fg-muted);
   font-size: 12px;
 }
