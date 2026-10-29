@@ -2,8 +2,9 @@
 //
 // A session starts out named after its blueprint page's <title> — true of every
 // agent made from that page, and therefore useless once a project has two of
-// them. On the 1st, 11th, 21st … user turn the shell asks the session's own model
-// for a title instead, from what was actually said.
+// them. On the first user turn the shell asks the session's own model for a title
+// instead, from what was actually said. It is written once: later turns do not
+// rename the conversation.
 //
 // The material is the conversation's *prose only*: the user's prompts and the
 // assistant's answers. Tool calls, tool results and thinking are left out — they
@@ -14,12 +15,8 @@
 
 import type { StoredRecord } from "./recorder.ts";
 
-// Every this many user turns, the title is written again (1, 11, 21, …).
-export const TITLE_EVERY = 10;
-
-// How much prose the title call is given, head and tail of a window that is
-// already only the last TITLE_EVERY turns. A single answer can be enormous; a
-// title never needs all of it.
+// How much prose the title call is given, head and tail of the window (which is
+// the first turn). A single answer can be enormous; a title never needs all of it.
 const MATERIAL_BUDGET = 6000;
 const MATERIAL_HEAD = 2500;
 
@@ -68,25 +65,23 @@ function textOf(r: StoredRecord): string {
   return String(r.content ?? "");
 }
 
-// titleMaterial builds the text the title is summarized from: the last
-// TITLE_EVERY user turns (up to and including `turns`) and the assistant prose
-// inside them. `turns` is the user-turn number that triggered this call, so the
-// window needs nothing persisted — it is derived from the records.
+// titleMaterial builds the text the title is summarized from: the conversation up
+// to and including user turn `turns` (the first turn, since the title is written
+// once), and the assistant prose inside it. `turns` is the user-turn number that
+// triggered this call, so the window needs nothing persisted — it is derived from
+// the records.
 export function titleMaterial(
   records: StoredRecord[],
   turns: number,
   budget = MATERIAL_BUDGET,
 ): string {
-  const from = Math.max(1, turns - (TITLE_EVERY - 1));
   const parts: string[] = [];
   let turn = 0;
   for (const r of records) {
     if (r.role === "user") turn++;
-    // The window is bounded on both sides by turn numbers: a steered prompt
-    // recorded after the trigger is a later turn and does not belong in this
-    // conversation's name yet.
+    // Bounded by the trigger turn: a steered prompt recorded after the trigger is
+    // a later turn and does not belong in this conversation's name yet.
     if (turn > turns) break;
-    if (turn < from) continue;
     if (r.role !== "user" && r.role !== "assistant") continue;
     const text = textOf(r).trim();
     if (!text) continue;

@@ -6,8 +6,8 @@ ai 用本会话的模型生成一个新标题写回 `/log/session/upsert`，于�
 浏览器侧不新增断言）。
 
 这一条依赖真模型（标题是模型生成的），所以断言用「不等于初始标题、非空、不像一整段话」，
-不断言具体文案。轮次触发点是 1 / 11 / 21 …，本用例只跑第 1 轮：再多跑十轮会让用例又慢又贵，
-而且触发逻辑是同一个取模，第 11 轮不额外验证什么。
+不断言具体文案。标题只在第 1 轮总结一次（`registry.ts` 的 `titleDue` 只在 `turns === 1` 为真），
+之后的轮次不再改名；本用例只跑第 1 轮，再多跑轮次既慢又贵，也验证不出什么新东西。
 
 ## Setup
 
@@ -79,13 +79,13 @@ Expected: `sub` 是 `s_…`，`title0=Probe Page`——起点是页面的 `<titl
 
 ## 0. 窗口与清洗（纯函数，不需要模型）
 
-触发轮次和「用哪些消息」是 `title.ts` 里的纯函数，跑十一个真回合既慢又贵，而这里能钉住同一件事：
-第 11 轮的窗口从第 2 轮开始、到第 11 轮结束；thinking / 工具调用 / 工具结果 / `model` 记录都不进
+「用哪些消息」是 `title.ts` 里的纯函数，而这里能钉住同一件事：第 1 轮的窗口只含第 1 轮
+（之后的提问不进名字），thinking / 工具调用 / 工具结果 / `model` 记录都不进
 材料；模型写的「带引号且带句号」的标题会被清干净。
 
 ```bash
 cat > /tmp/session-title-unit.ts <<'TS'
-import { titleMaterial, cleanTitle, TITLE_EVERY } from "WORKSPACE_AI/src/title.ts";
+import { titleMaterial, cleanTitle } from "WORKSPACE_AI/src/title.ts";
 
 const recs: any[] = [];
 let seq = 1;
@@ -105,22 +105,16 @@ for (let i = 1; i <= 25; i++) {
     },
   });
   recs.push({ seq: seq++, role: "toolResult", content: "", raw: { role: "toolResult", toolCallId: `c${i}`, content: [] } });
-  if (i === 5) recs.push({ seq: seq++, role: "model", content: "", raw: { role: "model", model: "x/y" } });
+  if (i === 1) recs.push({ seq: seq++, role: "model", content: "", raw: { role: "model", model: "x/y" } });
 }
 const checks: [string, boolean][] = [];
 const m1 = titleMaterial(recs, 1);
-const m11 = titleMaterial(recs, 11);
-const m21 = titleMaterial(recs, 21);
-checks.push(["TITLE_EVERY is 10", TITLE_EVERY === 10]);
 checks.push(["turn 1 holds only turn 1", m1.includes("Q1") && !m1.includes("Q2")]);
-checks.push(["turn 11 starts at Q2", m11.includes("Q2") && !m11.includes("Q1 ")]);
-checks.push(["turn 11 ends at Q11", m11.includes("Q11") && !m11.includes("Q12")]);
-checks.push(["turn 21 starts at Q12", m21.includes("Q12") && !m21.includes("Q11")]);
-checks.push(["turn 21 ends at Q21", m21.includes("Q21") && !m21.includes("Q22")]);
-checks.push(["assistant prose included", m11.includes("A2")]);
-checks.push(["thinking excluded", !m11.includes("THINK")]);
-checks.push(["tool results excluded", !m11.includes("toolResult")]);
-checks.push(["model rows excluded", !titleMaterial(recs, 25).includes("x/y")]);
+checks.push(["turn 1 ends before Q2 (later prompts stay out)", !m1.includes("Q3") && !m1.includes("Q25")]);
+checks.push(["assistant prose included", m1.includes("A1")]);
+checks.push(["thinking excluded", !m1.includes("THINK")]);
+checks.push(["tool results excluded", !m1.includes("toolResult")]);
+checks.push(["model rows excluded", !m1.includes("x/y")]);
 checks.push(["cleanTitle strips quotes and full stop", cleanTitle('  "看蓝图目录"。\n解释：这是标题') === "看蓝图目录"]);
 checks.push(["cleanTitle takes the first line", cleanTitle("标题一行\n第二行") === "标题一行"]);
 // 标题要短：中文 10 个字以内、英文 2-4 个单词。兜底按语言选一档数，切点不落在英文单词中间。
@@ -145,7 +139,7 @@ PY
 (cd workspace/ai && bun run /tmp/session-title-unit.ts)
 ```
 
-Expected: 二十行全部 `PASS`，退出码 0。
+Expected: 所有行都是 `PASS`，退出码 0。
 
 ## 1. 第一轮之后标题被总结替换，而且**随流推下来**
 

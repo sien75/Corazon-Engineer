@@ -30,7 +30,7 @@ type Session struct {
 	Blueprint string `yaml:"blueprint"`
 	// Title is the name the tab bar shows: the blueprint page's <title>, written by
 	// ai when the session is made ("main" for the shell's own chat) and replaced by
-	// the title it summarizes from the conversation on the 1st, 11th, 21st … turn.
+	// the title it summarizes from the conversation on the first turn.
 	// It is stored so a reload can draw the bar before anything is loaded; the shell
 	// falls back to fetching the page for rows that predate it.
 	Title string `yaml:"title"`

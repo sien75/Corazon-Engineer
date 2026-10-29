@@ -29,7 +29,6 @@ import { makeWebSearchTool } from "./search.ts";
 import {
   cleanTitle,
   titleMaterial,
-  TITLE_EVERY,
   TITLE_SYSTEM_PROMPT,
   TITLE_TEMPERATURE,
   TITLE_TIMEOUT_MS,
@@ -145,8 +144,8 @@ interface Sess {
   // otherwise the compaction happens with nobody watching.
   compacting: boolean;
   // How many user turns this conversation has seen. Recovered from the records
-  // at build (a user record is a turn), so the title schedule — 1, 11, 21, … —
-  // survives a restart in the middle of it.
+  // at build (a user record is a turn), so the title's first-turn check survives
+  // a restart.
   turns: number;
   // A title call is in flight. It is out of band, so it must not stack: two
   // triggers arriving together would write two names for one conversation.
@@ -275,7 +274,7 @@ export class Registry {
     const readme = blueprint ? blueprintReadme(project, blueprint) : undefined;
     const tail = blueprint ? `${readme ?? ""}\n\n${pageLine(blueprint)}` : undefined;
     // The name the tab bar draws before a word has been said; the conversation
-    // itself replaces it on its 1st, 11th, 21st … turn (see maybeTitle).
+    // itself replaces it on its first turn (see maybeTitle).
     const title = blueprint ? blueprintTitle(project, blueprint) : "main";
     await this.writeSession(id, kind, projectID, blueprint ?? "", title, model, image);
     return this.build(id, [], kind, project, tail, title, model, image);
@@ -743,14 +742,14 @@ export class Registry {
     return true;
   }
 
-  // titleDue is the schedule: the 1st, 11th, 21st … user turn of a blueprint
+  // titleDue is the schedule: the first user turn of a blueprint
   // agent. main is skipped — the shell draws its tab as "main" whatever the row
   // says. Asked at settle, so the flag is already up when the stream decides
   // whether agent_settled is the last thing it will send.
   private titleDue(sess: Sess): boolean {
     if (sess.kind !== "sub") return false;
     if (this.stub || !sess.agent) return false;
-    return sess.turns >= 1 && (sess.turns - 1) % TITLE_EVERY === 0;
+    return sess.turns === 1;
   }
 
   // maybeTitle runs the title call the schedule asked for. The work is out of

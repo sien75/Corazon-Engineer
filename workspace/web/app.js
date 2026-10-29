@@ -262,8 +262,8 @@ function viewOf(tab) {
       tab.name = title;
       renderTabs();
     }
-    // The page tells us when ai renames its conversation (1st, 11th, 21st …
-    // turn): <engineer-chat> forwards the `session_title` event on its own
+    // The page tells us when ai renames its conversation (the first turn):
+    // <engineer-chat> forwards the `session_title` event on its own
     // document, and the frame is same-origin, so this is the whole channel. It
     // is a push, not a poll — the name lands in the same second it is made.
     doc?.addEventListener("engineer-title", (event) => {

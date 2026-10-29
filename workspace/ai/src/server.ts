@@ -228,8 +228,8 @@ export function serve(registry: Registry, addr: string): void {
                 // stream on it. agent_end is unreliable (fires on retries).
                 // Exceptions, both of them work scheduled *after* the run
                 // settles: a manual compaction (the `compact` tool schedules it
-                // on the tail) and the conversation's new name (the 1st, 11th,
-                // 21st … turn). The stream stays open for those, so the user sees
+                // on the tail) and the conversation's new name (the first
+                // turn). The stream stays open for those, so the user sees
                 // them as they happen instead of on the next turn's replay.
                 if (ev.type === "compaction_end" && !sess.active) close();
                 else if (ev.type === "session_title" && !sess.active && !sess.compacting) close();
