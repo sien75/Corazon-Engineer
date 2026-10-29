@@ -1,0 +1,3 @@
+id: core-ai-web-search
+description: web_search 工具——main 与 sub 都能调，走 DeepSeek 的 /v1/tools/search，key 取 pi 的 auth.json，结果落进记录
+atoms: [ai, log]

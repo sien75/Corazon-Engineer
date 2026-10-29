@@ -25,6 +25,7 @@ import { makeWorkspaceTools } from "./workspace.ts";
 import { makeModelTool } from "./model.ts";
 import { makeUsageTool } from "./usage.ts";
 import { makeCompactTool } from "./compact.ts";
+import { makeWebSearchTool } from "./search.ts";
 import {
   cleanTitle,
   titleMaterial,
@@ -536,6 +537,7 @@ export class Registry {
           "model",
           "usage",
           "compact",
+          "web_search",
           ...(kind === "main" ? WORKSPACE_TOOLS : []),
         ],
         customTools: [
@@ -543,6 +545,7 @@ export class Registry {
           modelTool,
           usageTool,
           compactTool,
+          makeWebSearchTool(),
           ...(kind === "main"
             ? makeWorkspaceTools({
                 logBase: this.opts.logBase,
