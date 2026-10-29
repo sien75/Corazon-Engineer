@@ -92,6 +92,15 @@ const specs = {
   main: resolveSpec(flags.agents, "main"),
   sub: resolveSpec(flags.agents, "sub"),
 };
+// main's reference docs live beside its spec (models.md, schema.md, contract.md,
+// enum.md, tools.md) and it has no other way to know where they are: its cwd is
+// the home or a project folder, never the checkout. Naming the directory is what
+// turns "the spec mentions models.md" into a file it can read.
+const specDirLine =
+  "\n\n---\n\n# Spec directory\n\n" +
+  `This spec was read from ${path.resolve(flags.agents)}. The reference docs beside it — ` +
+  "models.md (models: the three layers, models.yaml, pi's own config), schema.md, " +
+  "contract.md, enum.md, tools.md — are files there, read with the read tool.\n";
 // The address the model should call this service by: a wildcard or loopback
 // bind is reached as localhost; anything else (the launcher opened the stack to
 // a specific interface) keeps its host.
@@ -117,7 +126,7 @@ const registry = new Registry({
   home,
   logBase,
   specs: {
-    main: specs.main + runtimeEndpoints,
+    main: specs.main + specDirLine + runtimeEndpoints,
     sub: specs.sub + runtimeEndpoints,
   },
   forceStub,

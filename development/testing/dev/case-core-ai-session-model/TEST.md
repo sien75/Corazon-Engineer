@@ -1,20 +1,29 @@
 # Test: core-ai-session-model
 
-模型选择的优先级端到端：`models.yaml` 的角色默认 < 创建时传入 < 会话内切换；chat 和 image 两个 slot 各自独立。
+模型选择的三层优先级端到端：会话行（创建时传入 / 会话内切换，同一层）> `models.yaml` 的角色默认
+> pi 自己的默认（只有 chat）。chat 和 image 两个 slot 各自独立，image 到 `models.yaml` 为止。
 
 1. **不传 chat** → 跑在 `models.yaml` 的 `sub.chat` 上，会话行 `model` 仍是空串
    （空 = 没有显式选择，所以改 `models.yaml` 对下一次恢复生效）；
 2. `ai/new` 带 `chat`（旧名 `model` 仍是别名）→ 落到会话行；
-3. 会话内让 agent 调 `model` 工具切换 chat → 记录里出现 `slot: chat`，会话行改写；
+3. 会话内让 agent 调 `model` 工具切换 chat → **只改会话行**，记录里不再有任何
+   `role: model` 条目；
 4. 创建时带 `image` → 落到会话行 `imageModel`；会话内 `model` 工具 `slot=image`
-   切换 → 记录里出现 `slot: image`，`imageModel` 改写；
-5. **杀掉 ai 重启** → chat 仍是最后切换的那个（记录压过 `models.yaml`），image 也是
-   切换后的那个（记录压过创建时的 image 和配置）。
+   切换 → 只改 `imageModel`，同样没有记录条目；
+5. **杀掉 ai 重启** → chat 仍是最后切换的那个（会话行压过 `models.yaml`），image 也是
+   切换后的那个（会话行压过创建时的 image 和配置）；
+6. `models.yaml` 里的 chat 名 pi 用不了 → 退到 pi settings 的
+   `defaultProvider` / `defaultModel`；那个也用不了 → 退到 pi 能用的第一个模型；
+7. main 用 `edit` 改 `models.yaml` 的默认值 → 文件里的注释还在，新 build 跟上；
+   运行中的会话不变。
 
 `MODEL_A` / `MODEL_B` 从 pi 自己的 chat 可用目录里取（`~/.pi/agent/models.json`），
-然后写进 `$HOME_DIR/models.yaml`；pi 的 settings（`defaultProvider` / `defaultModel`）
-不再参与模型选择。pi 只配了一个模型时，切换目标退回同一个 ref——第 3、5 段的持久化断言
-仍然成立，只有「换了型号」这一层变弱。
+然后写进 `$HOME_DIR/models.yaml`；pi 的 settings（`defaultProvider` / `defaultModel`）是第 3 层，
+只在 `models.yaml` 也解析不到时生效。pi 只配了一个模型时，切换目标退回同一个 ref——第 3、5 段
+的持久化断言仍然成立，只有「换了型号」这一层变弱。
+
+thinking 档位不在这个用例里：没有任何一层配置它，`model` 工具切换时也不记，重启后由 pi
+按自己的规则重新推。所以这里不断言 `thinkingLevel`。
 
 `IMAGE_A` / `IMAGE_B` 是形状合法的生图 ref（`openrouter/...`）；生图还没有消费者，
 所以这里只断言记录与持久化，不调用任何生图接口。
@@ -171,18 +180,18 @@ Expected: 未知 chat 是 `400`（pi 用不了的名字在这里就被挡下，�
 `SUB` 与 `ALIAS` 都是 `s_…`，`detail` 里 `kind: sub`、`blueprint: probe`、
 `title: Probe Page`、`model: $MODEL_A`——旧字段 `model` 与 `chat` 等价。
 
-## 3. 会话内 model 工具切换 chat：写 slot: chat 记录，也写会话行
+## 3. 会话内 model 工具切换 chat：只写会话行
 
 ```bash
 ask $SUB "用 model 工具把本会话切到 ${MODEL_B}，然后把工具回复原样念一遍。不要用 bash 或 curl，不要问我任何问题。"
-curl -s -X POST $LOG/log/session/messages -d "sessionId: $SUB" | grep -E 'slot: chat|role: model|model: ' | head -8
+echo "model records: $(curl -s -X POST $LOG/log/session/messages -d "sessionId: $SUB" | grep -c 'role: model')"
 detail $SUB
 ```
 
-Expected: 记录里出现一条 `role: model` 且带 `slot: chat`，其 `model` 是 `$MODEL_B`；
-`detail` 的 `model` 从 `$MODEL_A` 变成 `$MODEL_B`。
+Expected: `model records: 0`——会话记录里没有 `role: model` 条目了；`detail` 的 `model`
+从 `$MODEL_A` 变成 `$MODEL_B`（会话行是唯一的一处）。
 
-## 4. image：创建时传入，会话内按 slot=image 切换
+## 4. image：创建时传入，会话内按 slot=image 切换（同样只写会话行）
 
 ```bash
 curl -s -o /dev/null -w 'bad image: %{http_code}\n' -X POST $AI/ai/new \
@@ -191,15 +200,15 @@ SUB_IMG=$(new_with probe "$PROJECT" "" "$IMAGE_A" | sid)
 echo "sub_img=$SUB_IMG"
 detail $SUB_IMG
 ask $SUB_IMG "用 model 工具，slot 用 image，把本会话的 image 模型设为 ${IMAGE_B}。不要用 bash 或 curl，不要问我任何问题。"
-curl -s -X POST $LOG/log/session/messages -d "sessionId: $SUB_IMG" | grep -E 'slot: image|role: model|model: ' | head -8
+echo "model records: $(curl -s -X POST $LOG/log/session/messages -d "sessionId: $SUB_IMG" | grep -c 'role: model')"
 detail $SUB_IMG
 ```
 
 Expected: 形状不对的 image 是 `400`；`SUB_IMG` 的 `detail` 里 `model: ""`（没传 chat）、
-`imageModel: $IMAGE_A`（创建时传入）；切换后记录里出现 `role: model` 且带
-`slot: image`、`model: $IMAGE_B`，`detail` 的 `imageModel` 变成 `$IMAGE_B`。
+`imageModel: $IMAGE_A`（创建时传入）；切换后记录里仍然没有 `role: model` 条目，
+`detail` 的 `imageModel` 变成 `$IMAGE_B`。
 
-## 5. 杀掉 ai 重启：记录压过 models.yaml
+## 5. 杀掉 ai 重启：会话行压过 models.yaml
 
 重启前把配置里的 `sub.chat` 也写成 `$MODEL_A`（和记录里的 `$MODEL_B` 相反），
 `image` 保持空：
@@ -229,10 +238,68 @@ grep -o "${IMAGE_B}" /tmp/session-model-stream.txt | head -1
 grep -c 'history repair' /tmp/session-model-ai.log || true
 ```
 
-Expected: 两条 `resume` 都是 `200`；`SUB` 的 `model` 仍是 `$MODEL_B`（记录里的 chat
-压过刚改的配置）；`SUB_IMG` 的 `imageModel` 仍是 `$IMAGE_B`（记录里的 image 压过空配置）；
-agent 自己列出的 chat current 是 `$MODEL_B`，image current 是 `$IMAGE_B`；
-`history repair` 为 0。
+Expected: 两条 `resume` 都是 `200`；`SUB` 的 `model` 仍是 `$MODEL_B`（会话行压过刚改的配置）；
+`SUB_IMG` 的 `imageModel` 仍是 `$IMAGE_B`（会话行压过空配置）；agent 自己列出的 chat current
+是 `$MODEL_B`，image current 是 `$IMAGE_B`；`history repair` 为 0。
+
+## 6. 第 3 层：models.yaml 不可用时退到 pi 自己的默认
+
+`readModelsConfig` 只校验形状，所以一个形状合法、pi 却没有的 ref 会被留下并在 build 时跳过。
+
+```bash
+cat > "$HOME_DIR/models.yaml" <<EOF
+main:
+  chat: no-such-provider/no-such-model
+  image: ""
+sub:
+  chat: no-such-provider/no-such-model
+  image: ""
+EOF
+PI_DEFAULT=$(python3 - <<'PY'
+import json, os
+d = json.load(open(os.path.expanduser("~/.pi/agent/settings.json")))
+print(f"{d.get('defaultProvider', '')}/{d.get('defaultModel', '')}")
+PY
+)
+echo "pi default: $PI_DEFAULT"
+SUB_PI=$(new_with probe "$PROJECT" "" "" | sid)
+echo "sub_pi=$SUB_PI"
+detail $SUB_PI
+ask $SUB_PI "用 model 工具 list 一下，把标着 current 的那一行原样念出来。不要用 bash 或 curl，不要问我任何问题。"
+grep -o "${PI_DEFAULT}[^\"]*current" /tmp/session-model-stream.txt | head -1
+grep -o 'no usable model' /tmp/session-model-ai.log | tail -1
+```
+
+Expected: `SUB_PI` 的 `detail` 里 `model: ""`（没有显式选择）；日志里出现
+`no usable model (no-such-provider/no-such-model ...)`（前两层都被跳过）；agent 自己列出的
+current 是 `$PI_DEFAULT`——pi settings 的默认就是第 3 层。`$PI_DEFAULT` 本身也不可用时，
+再退到 pi 能用的第一个模型；那一支要动用户的 pi settings 才能造出来，这里不断言。
+
+## 7. main 改 models.yaml 的默认值（改文件，不是工具）
+
+没有"改默认值"的工具：默认值就是文件里的一格，main 用 `edit` 改。先删掉文件让 ai 重新
+写出带注释的模板，再改 `sub.chat`：
+
+```bash
+rm -f "$HOME_DIR/models.yaml"
+start_ai
+echo "comments before: $(grep -c '^#' "$HOME_DIR/models.yaml")"
+MAIN=$(curl -s -X POST $AI/ai/new --data-binary '{"kind":"main"}' | sid)
+echo "main=$MAIN"
+ask $MAIN "用 edit 工具把 ${HOME_DIR}/models.yaml 里 sub 的 chat 改成 ${MODEL_B}，其它行不要动。改完把新的 sub 段念一遍。不要用 bash 或 curl，不要问我任何问题。"
+echo "comments after: $(grep -c '^#' "$HOME_DIR/models.yaml")"
+grep -A2 '^sub:' "$HOME_DIR/models.yaml"
+SUB_DM=$(new_with probe "$PROJECT" "" "" | sid)
+echo "sub_dm=$SUB_DM"
+detail $SUB_DM
+ask $SUB_DM "用 model 工具 list 一下，把标着 current 的那一行原样念出来。不要用 bash 或 curl，不要问我任何问题。"
+grep -o "${MODEL_B}[^\"]*current" /tmp/session-model-stream.txt | head -1
+```
+
+Expected: `comments before` / `comments after` 都大于 0（`edit` 是定点修改，注释不会掉）；
+`sub.chat` 变成 `$MODEL_B`；`SUB_DM` 的 `detail` 里 `model: ""`，agent 自己报的 current 是
+`$MODEL_B`——新 build 跟上了改过的文件。已经运行着的会话不受影响（第 5 段已经验证过：
+它们读的是自己的会话行）。
 
 ## Teardown
 

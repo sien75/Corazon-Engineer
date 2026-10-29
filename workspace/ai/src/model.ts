@@ -9,15 +9,18 @@
 //   overrides is the role's `chat` in the engineer home's models.yaml (or the
 //   model the conversation was created with).
 // - image: there is no image runtime on the agent, so `set` only records the
-//   choice (a `model` record carrying `slot: image` plus the session row's
-//   `imageModel`). Image generation is not implemented yet; the format is here
-//   for the tool that will be.
+//   choice in the session row's `imageModel`. Image generation is not implemented
+//   yet; the format is here for the tool that will be.
 //
 // pi stays the source of the chat catalog and the credentials: the list is what
 // its catalog + auth make available. What makes a switch survive a restart is the
-// `model` entry written into this conversation's own records (plus the session
-// row's mirror): history is rebuilt from those records, so a resumed session
-// comes back on the model it was last switched to, not on the role default.
+// session row — the one place a conversation's model choice lives. Nothing is
+// written into the conversation's own records, so a rebuild has a single answer
+// to read and no older one to disagree with it.
+//
+// The thinking level is not part of any of this. A switch does not snapshot
+// `agent.thinkingLevel` and a rebuild does not pass one: pi derives it per model
+// from its own settings, which is the same rule it applied at switch time.
 
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
@@ -33,10 +36,9 @@ export interface ModelToolDeps {
   getAgent: () => AgentSession | undefined;
   // The image model this conversation is on (resolved at build), for `list`.
   getImageModel?: () => string | undefined;
-  // persist records the choice: a `model` entry in this conversation's records
-  // (which is what a resumed session is rebuilt from) plus the session row's
-  // mirror. Absent only where there is nothing to persist into.
-  persist?: (choice: { slot: "chat" | "image"; model: string; thinkingLevel?: string }) => void;
+  // persist records the choice on the session row, which is what a resumed
+  // session is rebuilt from. Absent only where there is nothing to persist into.
+  persist?: (choice: { slot: "chat" | "image"; model: string }) => void;
 }
 
 // ref is how a model is named everywhere: provider/model-id, the same string
@@ -209,12 +211,7 @@ export function makeModelTool(deps: ModelToolDeps) {
         // pi refused when the provider has no credentials; say it as it is.
         return fail(`pi refused the switch: ${String(err)}`);
       }
-      const choice = {
-        slot: "chat" as const,
-        model: ref(target),
-        thinkingLevel: String(agent.thinkingLevel),
-      };
-      deps.persist?.(choice);
+      deps.persist?.({ slot: "chat", model: ref(target) });
       return ok(
         `switched to ${ref(target)} (thinking ${agent.thinkingLevel}). This ` +
           `conversation only: the configured default in models.yaml still says what it ` +

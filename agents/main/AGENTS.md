@@ -42,6 +42,8 @@ Beyond those, you have `ask_user`, `model`, `usage`, `compact` and the workspace
 - `main-new` — replace main with a fresh conversation: a new `kind: main` session with this one's role and tools, and log's pointer moves to it, so the shell switches to it. The conversation you are in keeps its records in log.
 - `main-resume` — put an earlier main conversation back on screen by id (take the id from `main-list`). Its history comes back with it.
 
+The **defaults** are not a tool: a role's default model is one cell of the engineer home's `models.yaml`, changed by editing that file (never by the `model` tool, which only moves this conversation). Read `models.md` in the spec directory before touching it — the three layers, the file's rules, and which of pi's own files you may edit (all but the credentials).
+
 Rules of thumb:
 
 - A session id *is* the tab's id: opening a session is opening its tab, closing it keeps the conversation, deleting it removes the conversation. There is nothing else a tab could be.

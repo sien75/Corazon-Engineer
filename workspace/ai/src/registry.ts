@@ -497,21 +497,19 @@ export class Registry {
         const msg = this.toAgentMessage(m, legacy);
         if (msg) sessionManager.appendMessage(msg);
       }
-      // Which model this session runs, strongest claim first: the last `model`
-      // switch recorded in its own conversation (so a restart does not undo it),
-      // then the model it was created with, then the role default in the engineer
-      // home's models.yaml. Nothing usable among them falls back to the first
-      // model pi can serve — picked here and passed explicitly, because leaving
-      // it to pi would re-enter pi's own settings and put its model selection
-      // back in charge.
-      const recorded = lastModelChoice(history);
+      // Which model this session runs, three layers deep. In the session first:
+      // the row's `model` is the one place a conversation's choice lives — a
+      // `model` tool switch and a creation-time choice both land there, and
+      // nothing goes into the conversation's own records, so a rebuild cannot
+      // find a second, older answer to disagree with it. Then the role default in
+      // the engineer home's models.yaml. Then pi's own default: the model its
+      // settings name if pi can serve it, else the first model pi can serve.
       const config = readModelsConfig(this.opts.home);
       const roleDefault = config[kind].chat;
-      const candidates = [recorded?.model, modelChoice, roleDefault]
+      const candidates = [modelChoice, roleDefault]
         .map((ref) => String(ref ?? "").trim())
         .filter(Boolean);
       let model: Model | undefined;
-      let chosen = "";
       for (const ref of candidates) {
         const found = this.modelFor(ref);
         if (!found) {
@@ -521,30 +519,28 @@ export class Registry {
           continue;
         }
         model = found;
-        chosen = ref;
         break;
       }
       if (!model) {
-        // Prefer the configured provider, then anything pi can serve.
-        const provider = roleDefault.split("/")[0];
-        model =
-          this.available.find((m) => m.provider === provider) ?? this.available[0];
+        // pi's own default, the last layer. Its settings name a provider and a
+        // model; when that is unset or unusable, the first model pi can serve is
+        // the last resort. Picked here and passed explicitly either way, so pi's
+        // own selection is never what decides while a session is being built.
+        const piDefault = [settings.getDefaultProvider(), settings.getDefaultModel()]
+          .filter(Boolean)
+          .join("/");
+        model = this.modelFor(piDefault) ?? this.available[0];
         console.warn(
-          `engineer ai: session ${id}: no usable model (${candidates.join(" -> ") || "none configured"}); ` +
-            `using ${model.provider}/${model.id}`,
+          `engineer ai: session ${id}: no usable model (` +
+            `${candidates.join(" -> ") || "none configured"}); using ` +
+            `${model.provider}/${model.id}`,
         );
       }
-      const thinkingLevel =
-        recorded && chosen === recorded.model ? recorded.thinkingLevel : undefined;
-      // The image slot, same order as chat — newest image record, the
-      // creation-time image, the role's `image` in models.yaml — but with no
-      // fallback: there is no image runtime, so an unusable name is the future
+      // The image slot, one layer shorter: the session row (a `model` switch or
+      // the creation-time image), then the role's `image` in models.yaml. No pi
+      // fallback — there is no image runtime, so an unusable name is the future
       // image tool's problem, not this build's.
-      const imageModel = (
-        lastModelChoice(history, "image")?.model ||
-        imageChoice ||
-        config[kind].image
-      ).trim();
+      const imageModel = (imageChoice || config[kind].image).trim();
       sess.imageModel = imageModel || undefined;
       const modelTool = makeModelTool({
         runtime: this.modelRuntime,
@@ -580,10 +576,11 @@ export class Registry {
         resourceLoader: loader,
         sessionManager,
         settingsManager: settings,
-        // Always explicit: build() picked a model above, so pi's own settings
-        // are never consulted for one.
+        // Always explicit: build() picked a model above, so pi's own selection
+        // never decides here. The thinking level is deliberately not passed:
+        // nothing configures one per session, so pi derives it from its own
+        // settings for whichever model this is.
         model,
-        ...(thinkingLevel ? { thinkingLevel: thinkingLevel as any } : {}),
         // Capability surface: read/grep/find/ls + bash (execution, including
         // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
         // is every session's custom tool; the workspace tools belong to main
@@ -822,22 +819,14 @@ export class Registry {
     dbg(sess.id, "title", `${Date.now() - startedAt}ms`, title);
   }
 
-  // persistModel remembers a `model` tool switch where a rebuild will find it: a
-  // `model` record in this conversation (the source of truth — build reads the
-  // last one with the same slot) and the session row's mirror (what a list shows
-  // without reading records). A failed row write is not worth failing the switch
-  // itself.
+  // persistModel moves a `model` tool switch onto the session row — the single
+  // place a conversation's model choice lives, and the one a rebuild reads. A
+  // failed row write is not worth failing the switch itself: the live session
+  // already runs on the new model.
   private persistModel(
     sess: Sess,
-    choice: { slot: "chat" | "image"; model: string; thinkingLevel?: string },
+    choice: { slot: "chat" | "image"; model: string },
   ): void {
-    this.recordRaw(sess, "model", "", {
-      role: "model",
-      slot: choice.slot,
-      model: choice.model,
-      ...(choice.thinkingLevel ? { thinkingLevel: choice.thinkingLevel } : {}),
-      timestamp: Date.now(),
-    });
     if (choice.slot === "image") sess.imageModel = choice.model;
     const patch: Record<string, unknown> =
       choice.slot === "image" ? { imageModel: choice.model } : { model: choice.model };
@@ -1088,11 +1077,12 @@ function sanitizeHistory(
   // legacy and carry no ordering information to de-duplicate on.
   //
   // `model` rows are metadata, not messages: they say which model the session was
-  // switched to, they are read before this runs (lastModelChoice), and they are
-  // dropped here. They are written *during* a tool call — between the assistant
-  // message that asked for it and the result that answers it — so keeping them
-  // would break the pairing below and turn a real tool result into an orphan.
-  // Their seq still counts as present, so a dropped write is still reported.
+  // switched to. They are no longer written (the session row is the one place a
+  // model choice lives) but conversations recorded before that still carry them.
+  // They are written *during* a tool call — between the assistant message that
+  // asked for it and the result that answers it — so keeping them would break the
+  // pairing below and turn a real tool result into an orphan. Their seq still
+  // counts as present, so a dropped write is still reported.
   const deduped: StoredRecord[] = [];
   const seqs = new Set<number>();
   const seen = new Set<number>();
@@ -1189,33 +1179,6 @@ function toolCallsOf(r: StoredRecord): { id: string; name: string }[] {
   return r.raw.content
     .filter((b: any) => b?.type === "toolCall" && b.id)
     .map((b: any) => ({ id: String(b.id), name: String(b.name ?? "") }));
-}
-
-// lastModelChoice is the model a conversation was last switched to for one slot:
-// the newest `model` record carrying that slot. Records written before slots
-// existed carry none and mean chat. Those rows are the persisted side of the
-// `model` tool — not messages, so they are never replayed to the model, only read
-// back to decide what the rebuilt session runs.
-function lastModelChoice(
-  records: StoredRecord[],
-  slot: "chat" | "image" = "chat",
-): { model: string; thinkingLevel?: string } | undefined {
-  for (let i = records.length - 1; i >= 0; i--) {
-    const r = records[i];
-    if (r.role !== "model") continue;
-    if (slotOf(r) !== slot) continue;
-    const model = String(r.raw?.model ?? "").trim();
-    if (!model) continue;
-    const thinkingLevel = String(r.raw?.thinkingLevel ?? "").trim();
-    return thinkingLevel ? { model, thinkingLevel } : { model };
-  }
-  return undefined;
-}
-
-// slotOf is which model a `model` record switched: chat when the field is
-// absent (every record written before the image slot existed).
-function slotOf(r: StoredRecord): "chat" | "image" {
-  return String(r.raw?.slot ?? "").trim() === "image" ? "image" : "chat";
 }
 
 // lastCompactionIndex returns the index of the latest compaction record, or 0

@@ -1,11 +1,14 @@
 // The engineer's own model config: which model a conversation of each role runs
-// by default. It lives in the data home (models.yaml), not in pi's settings — pi
-// keeps the catalog, models.json and the credentials, but its own settings no
-// longer choose a model.
+// by default. It lives in the data home (models.yaml).
 //
-// The file is meant to be edited by hand: ai writes it once with these defaults
-// when it is missing, then reads it fresh for every session it builds, so an edit
-// applies to the next session (or the next resume), not to one already running.
+// It is the second of three layers: a session's own row (what the `model` tool
+// switched it to, or what it was created with) comes first, this file second, and
+// pi's own default third. pi keeps the catalog, models.json and the credentials;
+// its settings still name a default model, but only as that last resort.
+//
+// Edited as a file — by hand, or by main with write / edit; ai reads it fresh for
+// every session it builds, so an edit applies to the next session (or the next
+// resume), not to one already running.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -39,8 +42,9 @@ const DEFAULT_FILE = `# Engineer's own model config: one default per role, provi
 # chat:  the conversation model (pi's chat catalog).
 # image: the image-generation model (pi's image catalog — built in: openrouter
 #        only, e.g. openrouter/black-forest-labs/flux.2-flex). "" = not set.
-# Edited by hand; ai reads it for every session it builds. pi still owns the
-# catalog and the credentials — its own settings never choose a model.
+# Read fresh for every session built: a session's own row still wins over this,
+# and pi's own default model is the last resort after it. Edited as a file; pi
+# keeps the catalog and the credentials.
 
 main:
   chat: ${DEFAULT_CHAT}

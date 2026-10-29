@@ -1,9 +1,10 @@
 import YAML from "yaml";
 
 // A persisted conversation record. `role` is the pi message role (user /
-// assistant / toolResult), "compaction" for a context-compaction entry, or
-// "model" for a model choice made inside the session — a `model` record is not
-// a message: it is replayed for its value, never shown to the model.
+// assistant / toolResult) or "compaction" for a context-compaction entry.
+// Conversations recorded before the model choice moved onto the session row may
+// also carry "model" rows, a choice made inside the session; they are not
+// messages — history repair drops them rather than replaying them.
 // `content` is a derived plain-text projection used by the session list preview
 // and search. `raw` is the pi message (or compaction entry) verbatim — the
 // source of truth for replay and context rebuild — except that image bytes are
