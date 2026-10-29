@@ -157,6 +157,13 @@ const bar = () =>
   }));
 const sessionTabs = (b) => b.tabs.filter((t) => !t.main && !t.launcher);
 const groupOf = (b, chip) => b.groups.find((g) => g.chip === chip);
+// A tab's own padding, which is what its underline (border-bottom, the width of the
+// box) shows: equal on both sides unless the tab carries a × — then the close button
+// brings its own padding and the label sits closer to it.
+const pads = (sel) => page.evaluate((s) => {
+  const cs = getComputedStyle(document.querySelector(s));
+  return { left: parseFloat(cs.paddingLeft), right: parseFloat(cs.paddingRight) };
+}, sel);
 
 // 1. boot: main alone, nothing open, main is not closable, the project has a group
 let b = await bar();
@@ -166,6 +173,11 @@ const base = await openIds();
 check("the bar is main plus one tab per open session",
   sessionTabs(b).length === base.length && b.tabs[0].main && b.tabs[0].label === "main", { bar: b, base });
 check("main is active and has no close button", b.tabs[0].active && !b.tabs[0].closable, { bar: b });
+// 下划线是 tab 盒子上的 border-bottom，所以它会照出这个盒子左右的内边距：
+// 没有 × 的 tab 两边一样宽，选中时那条线才不会一边长一边短。
+check("main's label is padded equally on both sides (the underline is not lopsided)",
+  JSON.stringify(await pads("#tabs .tab.main")) === JSON.stringify({ left: 10, right: 10 }),
+  { pads: await pads("#tabs .tab.main") });
 check("boot lands on main at /", new URL(await page.url()).pathname === "/", { url: await page.url() });
 check("every project on the board has a group chip, collapsed",
   b.groups.length === 1 && b.groups[0].chip === "tabs" && !b.groups[0].expanded, { groups: b.groups });
@@ -202,6 +214,10 @@ check("edit put a launcher tab in the project's group and activated it",
     groupOf(b, "tabs")?.expanded, { bar: b });
 check("the launcher tab is addressed by the project",
   new URL(await page.url()).pathname === `/project/${PROJECT}/new`, { path: new URL(await page.url()).pathname });
+// 它也没有 ×，所以两边一样宽（和 main 同一条规则）。
+check("the launcher icon tab is padded equally too",
+  JSON.stringify(await pads("#tabs .tab.launcher")) === JSON.stringify({ left: 10, right: 10 }),
+  { pads: await pads("#tabs .tab.launcher") });
 const launcherView = await page.evaluate(() => ({
   head: document.querySelector(".view-launcher .launcher-title")?.textContent.trim(),
   sections: [...document.querySelectorAll(".view-launcher .launcher-sec h3")].map((h) => h.textContent.trim()),
@@ -222,6 +238,10 @@ const newest = sessionTabs(b).find((t) => t.label === "Probe Page");
 check("a new session tab appeared, named after the page", !!opened && !!newest, { bar: b, opened });
 check("the new tab is active, closable and inside the project's group",
   newest?.active && newest?.closable && groupOf(b, "tabs")?.tabs.includes("Probe Page"), { bar: b, newest });
+// 带 × 的那一格右边只留 4px（× 自己带内边距），左边仍是 10px。
+check("a closable tab keeps its label close to the ×",
+  JSON.stringify(await pads("#tabs .tab.closable")) === JSON.stringify({ left: 10, right: 4 }),
+  { pads: await pads("#tabs .tab.closable") });
 check("the project launcher has no close button — it cannot be closed",
   await page.evaluate(() => {
     const t = document.querySelector("#tabs .tab.launcher");
@@ -403,7 +423,7 @@ EOF
 ```
 
 Expected: all checks pass and the script prints `"ok": true` — main alone at boot plus a collapsed
-group chip per project, the Engineer launcher's board (`edit` / `eye` / `remove` + add field), an
+group chip per project, **main（和 launcher 图标 tab）左右内边距相等——选中时下划线不偏向一边**， the Engineer launcher's board (`edit` / `eye` / `remove` + add field), an
 `edit` that opens a launcher tab inside the group at `/project/<id>/new`, a blueprint pick that
 becomes a session tab named after its page and addressed by `/session/<sessionId>`, two seeded
 messages in log, a close that keeps the conversation *and the group*, a reopen from the launcher

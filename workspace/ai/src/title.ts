@@ -23,9 +23,14 @@ export const TITLE_EVERY = 10;
 const MATERIAL_BUDGET = 6000;
 const MATERIAL_HEAD = 2500;
 
-// A title that a tab bar can show: ~20 CJK characters or ~10 English words, one
-// line, no quotes, no full stop.
-const MAX_TITLE = 60;
+// A title is read on a tab, at a glance: it has to stay short. The two languages
+// count differently — Chinese in characters, English in words — so the backstop
+// has one budget per language and either one ends the title.
+const MAX_CJK = 10;
+const MAX_WORDS = 4;
+
+// The scripts that count as "Chinese" here: Han, plus the kana a title may carry.
+const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
 
 // The subject a title must not have: who did it is the user, always, so saying so
 // is noise at best and a wrong point of view at worst.
@@ -39,10 +44,10 @@ const SUBJECT_PREFIX = /^(助手|用户|我|AI|ai|Ai|模型|assistant|Assistant|
 export const TITLE_SYSTEM_PROMPT =
   "你在给一 tab 起标题。标题站在用户这边，写**用户**在这段对话里做了什么：" +
   "用动词开头的短语，不要写主语（不写「助手」「AI」「模型」「用户」「我」）。\n" +
-  "好：「询问有哪些工具」「列出蓝图目录」「排查登录失败」「新建蓝图页面」\n" +
+  "好：「查看有哪些工具」「列出蓝图」「排查登录失败」「新建页面」\n" +
   "坏：「助手总结工具」「用户询问工具」「AI 列出蓝图」「我有哪些工具」\n" +
   "用户是在提问，就用「询问…」「了解…」「确认…」这类动词开头。" +
-  "不超过 20 个汉字或 10 个英文单词，用对话的主要语言。" +
+  "标题要短：中文不超过 10 个字，英文 2 到 4 个单词，用对话的主要语言。" +
   "只输出标题本身，不要引号、不要句末标点、不要解释。";
 
 // textOf returns the prose of one record: text blocks only. A legacy row (no raw
@@ -96,8 +101,47 @@ export function titleMaterial(
   return `${joined.slice(0, MATERIAL_HEAD)}${marker}${joined.slice(-tail)}`;
 }
 
+// Wrapping markup and a closing full stop come off in any order — `"标题"。` needs
+// both, and one pass over each edge leaves the other behind. Trim until nothing
+// changes.
+const EDGE = /^[#>*\-\s"'“”‘’`「『]+|[\s"'“”‘’`」』。．.，,；;：:、!！?？~～]+$/g;
+function trimEdges(s: string): string {
+  let prev: string;
+  do {
+    prev = s;
+    s = s.replace(EDGE, "");
+  } while (s !== prev);
+  return s;
+}
+
+// clampTitle is the backstop the prompt cannot be trusted with. Which budget
+// applies is decided by the title's own script: no Han means English, so it is
+// counted in words; any Han at all means Chinese, so it is counted in characters.
+// A cut never lands inside a Latin word: half a word reads worse than a shorter
+// title.
+function clampTitle(t: string): string {
+  if (!CJK.test(t)) {
+    const words = t.split(/\s+/).filter(Boolean);
+    return words.length <= MAX_WORDS ? t : words.slice(0, MAX_WORDS).join(" ");
+  }
+  const chars = [...t];
+  let han = 0;
+  let end = chars.length;
+  for (let i = 0; i < chars.length; i++) {
+    if (!CJK.test(chars[i])) continue;
+    if (++han > MAX_CJK) {
+      end = i;
+      break;
+    }
+  }
+  if (end === chars.length) return t;
+  const cut = chars.slice(0, end).join("").trimEnd();
+  // The cut may have landed mid-word ("修复 logi"): drop that whole word.
+  return /[A-Za-z0-9]$/.test(cut) ? cut.replace(/[A-Za-z0-9'’._-]+$/, "").trimEnd() : cut;
+}
+
 // cleanTitle turns whatever the model wrote into something a tab can show: one
-// line, no wrapping quotes or markdown, no trailing punctuation, bounded length.
+// line, no wrapping quotes or markdown, no trailing punctuation, short.
 export function cleanTitle(raw: string): string {
   // Models like to answer with a preamble line; the title is the first line that
   // says anything.
@@ -105,23 +149,15 @@ export function cleanTitle(raw: string): string {
     .split("\n")
     .map((l) => l.trim())
     .find(Boolean) ?? "";
-  let t = line.replace(/\s+/g, " ").trim();
-  // Wrapping markup and a closing full stop come off in any order — `"标题"。`
-  // needs both, and one pass over each edge leaves the other behind. Trim until
-  // nothing changes.
-  const EDGE = /^[#>*\-\s"'“”‘’`「『]+|[\s"'“”‘’`」』。．.，,；;：:、!！?？~～]+$/g;
-  let prev: string;
-  do {
-    prev = t;
-    t = t.replace(EDGE, "");
-  } while (t !== prev);
+  let t = trimEdges(line.replace(/\s+/g, " ").trim());
   // A model that slips a subject in anyway ("助手总结工具", "用户询问工具") gets it
   // stripped: the tab names an action, and a wrong point of view is worse than a
   // slightly blunter phrase.
   const withoutSubject = t.replace(SUBJECT_PREFIX, "").trim();
   if (withoutSubject) t = withoutSubject;
-  if (t.length > MAX_TITLE) t = t.slice(0, MAX_TITLE).trim();
-  return t;
+  // Trimming again after the clamp: the cut can leave a comma or a full stop at
+  // what is now the end of the title.
+  return trimEdges(clampTitle(t));
 }
 
 // A title call holds this turn's stream open (it is sent out as a

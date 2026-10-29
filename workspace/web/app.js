@@ -386,6 +386,9 @@ function tabButton(tab) {
   btn.className =
     "tab" + (tab.main ? " main" : "") + (tab.kind === "launcher" ? " launcher" : "");
   btn.dataset.tabId = tab.id;
+  // A tab is only narrower on the right when it carries a ×: the close button has
+  // its own padding, so the label must not be pushed away from it. Without it
+  // (main, the launcher icon) both sides are the same, and so is the underline.
   const label = document.createElement("span");
   label.className = "tab-label";
   if (tab.main) label.textContent = "main";
@@ -395,6 +398,7 @@ function tabButton(tab) {
   // The project launcher is not closable: it is the group's own page, the place
   // that group's tabs are opened from. Only a conversation tab has a ×.
   if (!tab.main && tab.kind !== "launcher") {
+    btn.classList.add("closable");
     const close = document.createElement("button");
     close.type = "button";
     close.className = "tab-close";

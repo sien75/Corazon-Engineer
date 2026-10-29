@@ -80,6 +80,12 @@ body {
 
 #tabs .tab[data-tab-id] {
   max-width: 180px;
+}
+
+/* Only a tab with a × is tightened on the right (the close button brings its own
+   padding). main and the launcher icon have none, so their label stays centred in
+   equal padding on both sides — which is what the active underline shows. */
+#tabs .tab.closable {
   padding-right: 4px;
 }
 

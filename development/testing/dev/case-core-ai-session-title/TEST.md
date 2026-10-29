@@ -123,7 +123,13 @@ checks.push(["tool results excluded", !m11.includes("toolResult")]);
 checks.push(["model rows excluded", !titleMaterial(recs, 25).includes("x/y")]);
 checks.push(["cleanTitle strips quotes and full stop", cleanTitle('  "看蓝图目录"。\n解释：这是标题') === "看蓝图目录"]);
 checks.push(["cleanTitle takes the first line", cleanTitle("标题一行\n第二行") === "标题一行"]);
-checks.push(["cleanTitle caps length", cleanTitle("标".repeat(200)).length === 60]);
+// 标题要短：中文 10 个字以内、英文 2-4 个单词。兜底按语言选一档数，切点不落在英文单词中间。
+checks.push(["cleanTitle keeps a 10-character Chinese title", cleanTitle("排查登录失败的问题") === "排查登录失败的问题"]);
+checks.push(["cleanTitle caps a Chinese title at 10 characters", cleanTitle("修复登录失败的问题并重试") === "修复登录失败的问题并"]);
+checks.push(["cleanTitle drops what the cut left trailing", cleanTitle("一二三四五六七八九十，十一十二") === "一二三四五六七八九十"]);
+checks.push(["cleanTitle never cuts a Latin word in half", cleanTitle("一二三四五六七八九并login按钮") === "一二三四五六七八九并"]);
+checks.push(["cleanTitle caps an English title at 4 words", cleanTitle("add a reload button to the tab bar") === "add a reload button"]);
+checks.push(["cleanTitle keeps a short English title", cleanTitle("fix login flow") === "fix login flow"]);
 // 标题站在用户这边：主语要是漏进来（"助手总结工具"），剥掉它——错的视角比钝的动词更糟。
 checks.push(["cleanTitle drops 助手 as subject", cleanTitle("助手总结工具") === "总结工具"]);
 checks.push(["cleanTitle drops 用户 as subject", cleanTitle("用户询问工具") === "询问工具"]);
@@ -139,7 +145,7 @@ PY
 (cd workspace/ai && bun run /tmp/session-title-unit.ts)
 ```
 
-Expected: 十五行全部 `PASS`，退出码 0。
+Expected: 二十行全部 `PASS`，退出码 0。
 
 ## 1. 第一轮之后标题被总结替换，而且**随流推下来**
 
@@ -162,12 +168,17 @@ for i in $(seq 1 90); do
 done
 echo "title1=$T"
 python3 - "$T" <<'PY'
-import sys
+import re, sys
 t = sys.argv[1]
 print("len:", len(t))
 assert t and t != "Probe Page", "title was never summarized"
-assert len(t) <= 60, f"title too long: {len(t)}"
 assert "\n" not in t, "title is multi-line"
+# 标题要短：中文 10 个字以内，英文 2-4 个单词（cleanTitle 兜底保证，提示词也要它短）。
+cjk = len(re.findall(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", t))
+if cjk:
+    assert cjk <= 10, f"too many Chinese characters ({cjk}): {t}"
+else:
+    assert len(t.split()) <= 4, f"too many English words ({len(t.split())}): {t}"
 # 用户视角：标题写「用户做了什么」，所以不能带主语。
 bad = ("助手", "AI", "ai", "模型", "用户", "我")
 assert not t.startswith(bad), f"title starts with a subject: {t}"
@@ -178,8 +189,8 @@ echo "ok"
 Expected: `agent_settled` 的行号小于 `session_title` 的行号（流没在收工时关掉；一个**空闲**时
 打开的流会立刻关掉，所以这里必须像页面一样「先 ask 再开流」），
 推下来的 `title` 与随后 `title_of` 读到的一致；`title1=` 是一个概括这轮对话的短标题
-（不是 `Probe Page`，不含换行，不超过 60 字，**不以「助手 / AI / 模型 / 用户 / 我」开头**），
-脚本打印 `ok`。
+（不是 `Probe Page`，不含换行，**中文不超过 10 个字 / 英文不超过 4 个单词**，
+**不以「助手 / AI / 模型 / 用户 / 我」开头**），脚本打印 `ok`。
 
 ## 2. 标题生成不往会话记录里加东西
 
