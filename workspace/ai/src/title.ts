@@ -159,7 +159,3 @@ export function cleanTitle(raw: string): string {
 // `session_title` event), so it has a deadline: past this, the conversation
 // keeps the name it had rather than the tab waiting on a slow provider.
 export const TITLE_TIMEOUT_MS = 15000;
-
-// Naming wants the same answer twice for the same conversation, not a fresh one
-// each time. This is not a creative task.
-export const TITLE_TEMPERATURE = 0.2;

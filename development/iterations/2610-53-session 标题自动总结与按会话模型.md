@@ -198,9 +198,19 @@ passed or stored here」已经不成立；`model` 工具「writes nothing back�
 - **不要 thinking**：`reasoning` 一律不传。这一层的「关」就是不传——`minimal` 及以上都只会
   *增加* 预算，pi 的 `SimpleStreamOptions.reasoning` 也没有 `"off"` 这个值（`pi-agent-core`
   的 `ThinkingLevel` 里有，`pi-ai` 的没有，传了编译不过）。
-- `maxTokens: 64`：答案上限本身就压住了思考空间，思考型模型也没有余量在里面打转。
-- `temperature: 0.2`：同一段对话重算应该得到同一个名字，这不是创作。
+- `maxTokens: 256`（原为 64）：答案上限压住思考空间——这对「不请求也照样思考」的模型不成立，
+  见下。
+- ~~`temperature: 0.2`~~（**已撤**）：同一段对话重算应该得到同一个名字，但这一个参数会让
+  新模型（ZenMux 上的 `claude-haiku-5.5`、`claude-sonnet-5.5`）直接 400 拒绝——
+  `` `temperature` is deprecated for this model ``。一次被拒的调用等于**没有名字**，比名字不
+  可复现糟得多，所以这一项不传了（`TITLE_TEMPERATURE` 一并删掉）。代价是放弃「同一段对话
+  重算得到同一个名字」，而标题本来就只算一次，不重算。
 - `maxRetries: 1` + `signal: AbortSignal.timeout(15000)`：不排队重试，15 秒上限。
+
+> 64 的由来与推翻：原话是「64 小到思考型模型也没余量在里面打转」。实测不成立——
+> `deepseek-v4.1-flash` 即使没请求 `reasoning` 也在 thinking，64 个 token 全被思考吃掉，
+> 回 `stop=length` 且文本为空；放宽到 256 就稳定出名字（`询问所用模型`）。标题本身只占几个
+> token，剩下的就是留给「先想后答」的余量。
 
 实测（`ENGINEER_AI_DEBUG` 打点，deepseek-flash）：从拿到模型到会话行写完 **543ms**，
 `title1=查看blueprints下的蓝图目录`。也就是说 tab 改名的延迟现在基本只剩这一跳。

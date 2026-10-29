@@ -30,7 +30,6 @@ import {
   cleanTitle,
   titleMaterial,
   TITLE_SYSTEM_PROMPT,
-  TITLE_TEMPERATURE,
   TITLE_TIMEOUT_MS,
 } from "./title.ts";
 import { loadImage, saveImage } from "./blobs.ts";
@@ -793,12 +792,17 @@ export class Registry {
         // A name is not a reasoning task, and this call is on the clock (the
         // turn's stream is open until it returns): no thinking budget is
         // requested at all — `reasoning` omitted is the "off" position at this
-        // layer, since every level above it only *adds* a budget — the answer
-        // ceiling is small enough that a thinking model cannot ruminate inside
-        // it, and there is one attempt, not a retry ladder.
-        maxTokens: 64,
-        // Same conversation, same name: this is not a creative task.
-        temperature: TITLE_TEMPERATURE,
+        // layer, since every level above it only *adds* a budget — and there is
+        // one attempt, not a retry ladder.
+        //
+        // 256, not 64: some models think even when no budget is asked for
+        // (deepseek-v4.1-flash does), and at 64 the thinking ate the whole
+        // ceiling — `stop=length`, no text, no name. A title is a handful of
+        // tokens; the rest is headroom for a model that thinks before it answers.
+        maxTokens: 256,
+        // No `temperature`: the newest Claude models reject the field outright
+        // (400, "`temperature` is deprecated for this model"), and a rejected
+        // call is no name at all — worse than a name that is not reproducible.
         maxRetries: 1,
         // Bounded anyway: a provider that never answers must not hold a page
         // hostage. A timed-out name is no name.
