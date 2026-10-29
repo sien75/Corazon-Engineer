@@ -38,7 +38,7 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 
 除此之外,你有 `ask_user` —— 问用户一个问题并结束这一轮;回答会作为下一条用户消息到来。确实需要用户决定时用它。
 
-你还有 `model` —— pi 的模型,以及这段对话用的模型:`list` 列出 pi 现在能用的所有模型(只含它有凭据的 provider),并标出当前这个;`set` 按 `provider/model-id` 把这段对话切过去。切换只覆盖这一段 session 上 pi 配置的默认值,不写 pi 的 settings。用户提出时才做。
+你还有 `model` —— pi 的模型,以及这段对话用的模型:`list` 列出 pi 现在能用的所有 chat 模型(只含它有凭据的 provider),并标出当前这个;`set` 按 `provider/model-id` 把这段对话切过去。两者都可带 `slot: chat | image`(默认 `chat`);切 image 只记录选择,生图还没实现。chat 切换只覆盖这一段 session 上配置的默认值(`models.yaml`),不写 pi 的 settings。用户提出时才做。
 
 `usage` 报告这段对话的上下文占用与花费(只读,什么都不改):token 占模型窗口多少、已经计费多少、这条分支上压缩过几次。用户问上下文满没满、这段对话花了多少钱时用它。
 

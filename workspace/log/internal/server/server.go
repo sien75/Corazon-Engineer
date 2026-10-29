@@ -249,12 +249,13 @@ func (s *Server) handleSessionOff(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionUpsert(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SessionID string `yaml:"sessionId"`
-		Kind      string `yaml:"kind"`
-		ProjectID string `yaml:"projectId"`
-		Blueprint string `yaml:"blueprint"`
-		Title     string `yaml:"title"`
-		Model     string `yaml:"model"`
+		SessionID  string `yaml:"sessionId"`
+		Kind       string `yaml:"kind"`
+		ProjectID  string `yaml:"projectId"`
+		Blueprint  string `yaml:"blueprint"`
+		Title      string `yaml:"title"`
+		Model      string `yaml:"model"`
+		ImageModel string `yaml:"imageModel"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -269,7 +270,7 @@ func (s *Server) handleSessionUpsert(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid projectId: "+p)
 		return
 	}
-	sess, err := s.store.UpsertSession(req.SessionID, req.Kind, req.ProjectID, req.Blueprint, req.Title, req.Model)
+	sess, err := s.store.UpsertSession(req.SessionID, req.Kind, req.ProjectID, req.Blueprint, req.Title, req.Model, req.ImageModel)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return

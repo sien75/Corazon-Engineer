@@ -15,7 +15,8 @@ response:
         projectId: string  # the project it belongs to, "" for main
         blueprint: string  # slug of the page it drives, "" when it has none
         title: string  # display name: the blueprint page's <title>, or the title ai summarized from the conversation; "" when none was written
-        model: string  # provider/model-id this session runs, "" when pi's settings decide
+        model: string  # provider/model-id of the chat model this session runs, "" when the role default in models.yaml applies
+        imageModel: string  # provider/model-id of the image-generation model, "" when the role's `image` in models.yaml applies or none is set
         createdAt: string  # first message time, or the session row's creation time when nothing was said yet, RFC3339
         lastAt: string  # latest message time, or createdAt when nothing was said yet, RFC3339
         count: number  # number of messages in the session

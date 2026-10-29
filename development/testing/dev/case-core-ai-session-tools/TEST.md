@@ -105,10 +105,22 @@ Expected: after the close `openSessions` is empty while the row still answers 20
 (closing is not deleting); after the open the same id is back — no new session was
 made.
 
+## 3. session-list 显示 models.yaml 的默认值
+
+```bash
+ask $MAIN "Call the session-list tool right now. Do not use bash or curl, do not ask anything — just call the tool and report its reply."
+curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN" | grep -c 'model deepseek/deepseek-flash' || true
+curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN" | grep -c 'pi default' || true
+```
+
+Expected: 配置默认出现至少 1 次（main 和 sub 的会话行都没有显式 model，session-list
+用 models.yaml 的 `chat` 填）；`pi default` 为 0。
+
 ## Teardown
 
 ```bash
 pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-static --log http://localhost:9061" 2>/dev/null || true
 rm -rf "$ROOT"
 ```

@@ -1,32 +1,42 @@
-// The model tool: what pi can use right now, and switching this conversation's
-// model. It is every session's tool (main and sub alike) and it never talks to
-// the frontend — a switch is pi's own `setModel`, so nothing is written to pi's
+// The model tool: what pi can use right now, and which model this conversation
+// runs. It is every session's tool (main and sub alike) and it never talks to the
+// frontend — a chat switch is pi's own `setModel`, so nothing is written to pi's
 // settings and no other conversation is touched.
 //
-// pi stays the only source of model config: the list is what its own catalog +
-// auth make available, and a session with no explicit choice runs whatever pi
-// resolved from its settings. A switch overrides that for one session only — it
-// is written nowhere near pi's settings, and no other conversation is touched.
-// What makes it survive a restart is the `model` entry written into this
-// conversation's own records (plus the session row's mirror): history is rebuilt
-// from those records, so a resumed session comes back on the model it was last
-// switched to, not on pi's default.
+// Two slots, two kinds of switch:
+//
+// - chat: a live switch, `agent.setModel` on the running session. The default it
+//   overrides is the role's `chat` in the engineer home's models.yaml (or the
+//   model the conversation was created with).
+// - image: there is no image runtime on the agent, so `set` only records the
+//   choice (a `model` record carrying `slot: image` plus the session row's
+//   `imageModel`). Image generation is not implemented yet; the format is here
+//   for the tool that will be.
+//
+// pi stays the source of the chat catalog and the credentials: the list is what
+// its catalog + auth make available. What makes a switch survive a restart is the
+// `model` entry written into this conversation's own records (plus the session
+// row's mirror): history is rebuilt from those records, so a resumed session
+// comes back on the model it was last switched to, not on the role default.
 
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { isModelRef } from "./models-config.ts";
 
 export interface ModelToolDeps {
-  // pi's runtime: the model catalog + which providers have credentials. Absent
-  // only in stub mode (--stub, or no provider authenticated at all).
+  // pi's runtime: the chat model catalog + which providers have credentials.
+  // Absent only in stub mode (--stub, or no provider authenticated at all).
   runtime?: ModelRuntime;
   // This session's agent. It is undefined for the same reason: a stub session
   // has no pi session behind it, so there is nothing to switch.
   getAgent: () => AgentSession | undefined;
+  // The image model this conversation is on (resolved at build), for `list`.
+  getImageModel?: () => string | undefined;
   // persist records the choice: a `model` entry in this conversation's records
   // (which is what a resumed session is rebuilt from) plus the session row's
   // mirror. Absent only where there is nothing to persist into.
-  persist?: (choice: { model: string; thinkingLevel: string }) => void;
+  persist?: (choice: { slot: "chat" | "image"; model: string; thinkingLevel?: string }) => void;
 }
 
 // ref is how a model is named everywhere: provider/model-id, the same string
@@ -74,16 +84,19 @@ export function makeModelTool(deps: ModelToolDeps) {
     name: "model",
     label: "Model",
     description:
-      "pi's models, and this conversation's model. `list` shows every model pi " +
+      "pi's models, and this conversation's model. `list` shows every chat model pi " +
       "can use right now (only providers it has credentials for) and marks the " +
-      "one this session runs; `set` switches this session to one of them by " +
-      "provider/model-id. `set` overrides pi's configured default for this " +
-      "conversation only — it writes nothing to pi's settings and leaves every " +
-      "other conversation alone; the choice is recorded with this conversation, " +
-      "so it is still the one it runs after a restart. Use it when the user asks " +
-      "which model is running or asks to switch; do not switch on your own " +
-      "initiative.",
-    promptSnippet: "model: list pi's available models, or switch this session's model",
+      "one this session runs; `set` switches this session's chat model to one of " +
+      "them by provider/model-id. `slot: image` addresses the image-generation " +
+      "model instead (no image runtime yet: `set` records the choice, `list` " +
+      "reports it). A chat switch overrides the configured `chat` default (the " +
+      "engineer home's models.yaml) for this conversation only — it writes " +
+      "nothing to pi's settings and leaves every other conversation alone; the " +
+      "choice is recorded with this conversation, so it is still the one it runs " +
+      "after a restart. Use it when the user asks which model is running or asks " +
+      "to switch; do not switch on your own initiative.",
+    promptSnippet:
+      "model: list pi's available chat models, or switch this session's chat / image model",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("list"), Type.Literal("set")], {
         description: "list, or set",
@@ -91,8 +104,40 @@ export function makeModelTool(deps: ModelToolDeps) {
       model: Type.Optional(
         Type.String({ description: "provider/model-id to switch to (set only), from list" }),
       ),
+      slot: Type.Optional(
+        Type.Union([Type.Literal("chat"), Type.Literal("image")], {
+          description: "which model to list or switch: chat (default) or image",
+        }),
+      ),
     }),
     execute: async (_toolCallId, params) => {
+      const slot = params.slot === "image" ? "image" : "chat";
+      const wanted = String(params.model ?? "").trim();
+
+      if (slot === "image") {
+        if (params.action === "list") {
+          const current = deps.getImageModel?.() ?? "";
+          const lines = [
+            current ? `current: ${current}` : "current: (none)",
+            "pi's image catalog is not wired here yet (image generation is not " +
+              "implemented); the role default is `image` in models.yaml.",
+            "`set` with slot=image records a provider/model-id for this conversation.",
+          ];
+          return ok(lines.join("\n"), { slot, current });
+        }
+        if (!wanted) return fail("set needs a model, e.g. provider/model-id");
+        if (!isModelRef(wanted)) {
+          return fail(`not a provider/model-id: ${wanted}`);
+        }
+        deps.persist?.({ slot: "image", model: wanted });
+        return ok(
+          `recorded image model ${wanted} for this conversation. Image generation ` +
+            `is not implemented yet, so nothing runs on it today; the choice is ` +
+            `recorded with this conversation and survives a restart.`,
+          { slot, model: wanted },
+        );
+      }
+
       if (!deps.runtime) return fail("no model runtime: this session runs in stub mode (--stub)");
       let available: readonly any[];
       try {
@@ -117,7 +162,7 @@ export function makeModelTool(deps: ModelToolDeps) {
         lines.push(
           current
             ? `current: ${ref(current)} (thinking ${agent?.thinkingLevel ?? "?"})`
-            : "current: (pi's default; this session has no agent yet)",
+            : "current: (this session has no agent yet)",
         );
         for (const [provider, models] of byProvider) {
           lines.push(`${provider}:`);
@@ -128,6 +173,7 @@ export function makeModelTool(deps: ModelToolDeps) {
         }
         lines.push(`${available.length} model(s) from pi's config.`);
         return ok(lines.join("\n"), {
+          slot,
           current: current ? ref(current) : "",
           thinkingLevel: agent?.thinkingLevel ?? "",
           models: available.map((m) => ({
@@ -143,7 +189,6 @@ export function makeModelTool(deps: ModelToolDeps) {
         });
       }
 
-      const wanted = String(params.model ?? "").trim();
       if (!wanted) return fail("set needs a model, e.g. provider/model-id from list");
       let target = available.find((m) => ref(m) === wanted);
       if (!target) {
@@ -164,14 +209,18 @@ export function makeModelTool(deps: ModelToolDeps) {
         // pi refused when the provider has no credentials; say it as it is.
         return fail(`pi refused the switch: ${String(err)}`);
       }
-      const choice = { model: ref(target), thinkingLevel: String(agent.thinkingLevel) };
+      const choice = {
+        slot: "chat" as const,
+        model: ref(target),
+        thinkingLevel: String(agent.thinkingLevel),
+      };
       deps.persist?.(choice);
       return ok(
         `switched to ${ref(target)} (thinking ${agent.thinkingLevel}). This ` +
-          `conversation only: pi's settings still say what they said, and other ` +
-          `conversations are untouched. The choice is recorded with this ` +
-          `conversation, so it is still the model after a restart.`,
-        { model: ref(target), thinkingLevel: agent.thinkingLevel },
+          `conversation only: the configured default in models.yaml still says what it ` +
+          `says, and other conversations are untouched. The choice is recorded with ` +
+          `this conversation, so it is still the model after a restart.`,
+        { slot, model: ref(target), thinkingLevel: agent.thinkingLevel },
       );
     },
   });

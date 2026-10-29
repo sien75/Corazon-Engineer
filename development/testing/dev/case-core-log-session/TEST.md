@@ -86,8 +86,8 @@ sqlite3 "$HOME_DIR/engineer.db" "PRAGMA table_info(sessions);" | cut -d'|' -f2 |
 ```
 
 Expected: `.tables` lists no `tabs` and a `projects` table; `current` has
-`open_sessions` (not `open_tabs`); `sessions` has `title` and `project_id`, and no
-`tab_id`.
+`open_sessions` (not `open_tabs`); `sessions` has `title`, `project_id`, `model` and
+`image_model`, and no `tab_id`.
 
 ## 3. the sessions themselves survived
 

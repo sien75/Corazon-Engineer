@@ -145,7 +145,8 @@ curl -s -X POST $LOG/log/list -d '{"pageNum": 1}' \
 Expected: the first list already contains `s_main01` / `s_sub01` / `s_sub02` with
 `count: 0` (a session that has said nothing is still a session — that is what makes
 a fresh agent appear in the launcher), each carrying `kind`, `blueprint`, `title`,
-`createdAt`, `lastAt`; after the message, `s_sub02` is first and has `count: 1`.
+`model`, `imageModel`, `createdAt`, `lastAt`; after the message, `s_sub02` is first
+and has `count: 1`.
 
 ## 7. deleting a session removes the records, the row and the list entry
 

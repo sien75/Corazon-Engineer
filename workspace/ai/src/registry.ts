@@ -36,6 +36,7 @@ import {
 } from "./title.ts";
 import { loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
+import { ensureModelsConfig, readModelsConfig } from "./models-config.ts";
 
 // The workspace tools main alone may call. Names are listed here because pi's
 // allowlist is by name, not by tool object.
@@ -124,6 +125,10 @@ interface Sess {
   // everything instantiated from a blueprint (a page, ask_user, no workspace).
   kind: "main" | "sub";
   agent?: AgentSession; // undefined in stub mode (no API key)
+  // The image-generation model this conversation uses (undefined = none). No
+  // consumer yet: it is resolved at build and kept here for the image tool that
+  // will be built on this format.
+  imageModel?: string;
   events: EngineerEvent[];
   listeners: Set<Listener>;
   tail: Promise<void>; // serializes prompts within the session
@@ -168,18 +173,19 @@ export interface RegistryOptions {
 export class Registry {
   private sessions = new Map<string, Sess>();
   private modelRuntime?: ModelRuntime;
-  // What pi's own config makes available right now. Nothing here chooses a
-  // model for a session — pi does that — it only answers "is there any model at
-  // all?", which is the difference between a real session and the echo stub.
+  // What pi's own catalog + credentials make available right now. It is the
+  // catalog the role defaults in models.yaml are resolved against, and the last
+  // resort when none of them is usable — never the chooser itself.
   private available: Model[] = [];
 
   constructor(private opts: RegistryOptions) {}
 
-  // init opens pi's model runtime (its catalog + auth, i.e. pi's own config). No
-  // model is picked here: which model a session runs is pi's decision, from
-  // settings' defaultProvider/defaultModel or, failing that, the first model it
-  // has. Without any authenticated provider it falls back to the dev echo stub.
+  // init opens pi's model runtime (its catalog + auth). Which model a session
+  // runs is not decided here and not by pi's settings: build() resolves it from
+  // models.yaml (or a creation-time / in-session choice). Without any
+  // authenticated provider it falls back to the dev echo stub.
   async init(): Promise<void> {
+    ensureModelsConfig(this.opts.home);
     if (this.opts.forceStub) return; // dev stub forced (offline / tests)
     this.modelRuntime = await ModelRuntime.create();
     this.available = [...(await this.modelRuntime.getAvailable())];
@@ -262,6 +268,7 @@ export class Registry {
     kind: "main" | "sub" = "sub",
     projectID = "",
     model = "",
+    image = "",
   ): Promise<Sess> {
     const id = `s_${randomBytes(8).toString("hex")}`;
     const project = kind === "sub" ? await this.projectDir(projectID) : "";
@@ -270,12 +277,12 @@ export class Registry {
     // The name the tab bar draws before a word has been said; the conversation
     // itself replaces it on its 1st, 11th, 21st … turn (see maybeTitle).
     const title = blueprint ? blueprintTitle(project, blueprint) : "main";
-    await this.writeSession(id, kind, projectID, blueprint ?? "", title, model);
-    return this.build(id, [], kind, project, tail, title, model);
+    await this.writeSession(id, kind, projectID, blueprint ?? "", title, model, image);
+    return this.build(id, [], kind, project, tail, title, model, image);
   }
 
   // writeSession records what a conversation is — its role, the blueprint its page
-  // comes from, the name the tab bar shows and the model it runs. The name is the
+  // comes from, the name the tab bar shows and the models it runs. The name is the
   // page's <title> (resolved here, not by the page at runtime), so the shell can
   // draw a tab before it loads anything; log owns the row, and it is the only
   // place the mapping lives.
@@ -286,8 +293,17 @@ export class Registry {
     blueprint: string,
     title: string,
     model: string,
+    imageModel: string,
   ): Promise<void> {
-    await this.upsertSession({ sessionId: id, kind, projectId: projectID, blueprint, title, model });
+    await this.upsertSession({
+      sessionId: id,
+      kind,
+      projectId: projectID,
+      blueprint,
+      title,
+      model,
+      imageModel,
+    });
   }
 
   // upsertSession is the one writer of a session row. An empty field keeps the
@@ -311,7 +327,14 @@ export class Registry {
   private async sessionMeta(
     id: string,
   ): Promise<
-    | { kind: "main" | "sub"; projectID: string; blueprint: string; title: string; model: string }
+    | {
+        kind: "main" | "sub";
+        projectID: string;
+        blueprint: string;
+        title: string;
+        model: string;
+        imageModel: string;
+      }
     | undefined
   > {
     try {
@@ -328,6 +351,7 @@ export class Registry {
         blueprint: String(data?.blueprint ?? ""),
         title: String(data?.title ?? ""),
         model: String(data?.model ?? ""),
+        imageModel: String(data?.imageModel ?? ""),
       };
     } catch {
       return undefined;
@@ -391,7 +415,16 @@ export class Registry {
       }
       tail = `${readme ?? ""}\n\n${pageLine(meta.blueprint)}`;
     }
-    return this.build(id, history, kind, project, tail, meta?.title ?? "", meta?.model ?? "");
+    return this.build(
+      id,
+      history,
+      kind,
+      project,
+      tail,
+      meta?.title ?? "",
+      meta?.model ?? "",
+      meta?.imageModel ?? "",
+    );
   }
 
   private async build(
@@ -402,6 +435,7 @@ export class Registry {
     blueprintReadme?: string,
     title = "",
     modelChoice = "",
+    imageChoice = "",
   ): Promise<Sess> {
     // Where this conversation's agent works: the project folder it belongs to, or
     // the home for main — main is the shell's own chat and belongs to no project.
@@ -465,22 +499,57 @@ export class Registry {
       }
       // Which model this session runs, strongest claim first: the last `model`
       // switch recorded in its own conversation (so a restart does not undo it),
-      // then the model it was created with, then nothing at all — pi resolves
-      // that from its own settings, exactly as its CLI does. A ref pi can no
-      // longer use (a retired model, a provider without credentials) falls back
-      // rather than failing the session: the conversation is worth more than the
-      // model it was on.
+      // then the model it was created with, then the role default in the engineer
+      // home's models.yaml. Nothing usable among them falls back to the first
+      // model pi can serve — picked here and passed explicitly, because leaving
+      // it to pi would re-enter pi's own settings and put its model selection
+      // back in charge.
       const recorded = lastModelChoice(history);
-      const wanted = recorded?.model || modelChoice;
-      const model = wanted ? this.modelFor(wanted) : undefined;
-      if (wanted && !model) {
+      const config = readModelsConfig(this.opts.home);
+      const roleDefault = config[kind].chat;
+      const candidates = [recorded?.model, modelChoice, roleDefault]
+        .map((ref) => String(ref ?? "").trim())
+        .filter(Boolean);
+      let model: Model | undefined;
+      let chosen = "";
+      for (const ref of candidates) {
+        const found = this.modelFor(ref);
+        if (!found) {
+          console.warn(
+            `engineer ai: session ${id}: ${ref} is not usable now; trying the next choice`,
+          );
+          continue;
+        }
+        model = found;
+        chosen = ref;
+        break;
+      }
+      if (!model) {
+        // Prefer the configured provider, then anything pi can serve.
+        const provider = roleDefault.split("/")[0];
+        model =
+          this.available.find((m) => m.provider === provider) ?? this.available[0];
         console.warn(
-          `engineer ai: session ${id} was on ${wanted}, which pi cannot use now; falling back`,
+          `engineer ai: session ${id}: no usable model (${candidates.join(" -> ") || "none configured"}); ` +
+            `using ${model.provider}/${model.id}`,
         );
       }
+      const thinkingLevel =
+        recorded && chosen === recorded.model ? recorded.thinkingLevel : undefined;
+      // The image slot, same order as chat — newest image record, the
+      // creation-time image, the role's `image` in models.yaml — but with no
+      // fallback: there is no image runtime, so an unusable name is the future
+      // image tool's problem, not this build's.
+      const imageModel = (
+        lastModelChoice(history, "image")?.model ||
+        imageChoice ||
+        config[kind].image
+      ).trim();
+      sess.imageModel = imageModel || undefined;
       const modelTool = makeModelTool({
         runtime: this.modelRuntime,
         getAgent: () => sess.agent,
+        getImageModel: () => sess.imageModel,
         persist: (choice) => this.persistModel(sess, choice),
       });
       const usageTool = makeUsageTool({ getAgent: () => sess.agent });
@@ -511,16 +580,10 @@ export class Registry {
         resourceLoader: loader,
         sessionManager,
         settingsManager: settings,
-        // Omitted entirely when nothing chose one: not passing it is what makes
-        // pi's settings the decision.
-        ...(model
-          ? {
-              model,
-              ...(recorded?.thinkingLevel
-                ? { thinkingLevel: recorded.thinkingLevel as any }
-                : {}),
-            }
-          : {}),
+        // Always explicit: build() picked a model above, so pi's own settings
+        // are never consulted for one.
+        model,
+        ...(thinkingLevel ? { thinkingLevel: thinkingLevel as any } : {}),
         // Capability surface: read/grep/find/ls + bash (execution, including
         // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
         // is every session's custom tool; the workspace tools belong to main
@@ -549,8 +612,10 @@ export class Registry {
           ...(kind === "main"
             ? makeWorkspaceTools({
                 logBase: this.opts.logBase,
-                newSession: async (blueprint: string, project: string, model?: string) =>
-                  (await this.new(blueprint, "sub", project, model ?? "")).id,
+                defaultModel: (kind: string) =>
+                  readModelsConfig(this.opts.home)[kind === "main" ? "main" : "sub"].chat,
+                newSession: async (blueprint: string, project: string, model?: string, image?: string) =>
+                  (await this.new(blueprint, "sub", project, model ?? "", image ?? "")).id,
                 newMainSession: async () => (await this.new(undefined, "main")).id,
                 resumeSession: async (id: string) => {
                   if (!(await this.resume(id))) {
@@ -759,19 +824,27 @@ export class Registry {
 
   // persistModel remembers a `model` tool switch where a rebuild will find it: a
   // `model` record in this conversation (the source of truth — build reads the
-  // last one) and the session row's mirror (what a list shows without reading
-  // records). A failed row write is not worth failing the switch itself.
-  private persistModel(sess: Sess, choice: { model: string; thinkingLevel: string }): void {
+  // last one with the same slot) and the session row's mirror (what a list shows
+  // without reading records). A failed row write is not worth failing the switch
+  // itself.
+  private persistModel(
+    sess: Sess,
+    choice: { slot: "chat" | "image"; model: string; thinkingLevel?: string },
+  ): void {
     this.recordRaw(sess, "model", "", {
       role: "model",
+      slot: choice.slot,
       model: choice.model,
-      thinkingLevel: choice.thinkingLevel,
+      ...(choice.thinkingLevel ? { thinkingLevel: choice.thinkingLevel } : {}),
       timestamp: Date.now(),
     });
-    void this.upsertSession({ sessionId: sess.id, kind: sess.kind, model: choice.model }).catch(
+    if (choice.slot === "image") sess.imageModel = choice.model;
+    const patch: Record<string, unknown> =
+      choice.slot === "image" ? { imageModel: choice.model } : { model: choice.model };
+    void this.upsertSession({ sessionId: sess.id, kind: sess.kind, ...patch }).catch(
       (err) => {
         console.error(
-          `engineer ai: session row model write failed sessionId=${sess.id}: ${String(err)}`,
+          `engineer ai: session row ${choice.slot} model write failed sessionId=${sess.id}: ${String(err)}`,
         );
       },
     );
@@ -1118,22 +1191,31 @@ function toolCallsOf(r: StoredRecord): { id: string; name: string }[] {
     .map((b: any) => ({ id: String(b.id), name: String(b.name ?? "") }));
 }
 
-// lastModelChoice is the model a conversation was last switched to: the newest
-// `model` record in its history. Those rows are the persisted side of the
-// `model` tool — not messages, so they are never replayed to the model, only
-// read back to decide what the rebuilt session runs.
+// lastModelChoice is the model a conversation was last switched to for one slot:
+// the newest `model` record carrying that slot. Records written before slots
+// existed carry none and mean chat. Those rows are the persisted side of the
+// `model` tool — not messages, so they are never replayed to the model, only read
+// back to decide what the rebuilt session runs.
 function lastModelChoice(
   records: StoredRecord[],
+  slot: "chat" | "image" = "chat",
 ): { model: string; thinkingLevel?: string } | undefined {
   for (let i = records.length - 1; i >= 0; i--) {
     const r = records[i];
     if (r.role !== "model") continue;
+    if (slotOf(r) !== slot) continue;
     const model = String(r.raw?.model ?? "").trim();
     if (!model) continue;
     const thinkingLevel = String(r.raw?.thinkingLevel ?? "").trim();
     return thinkingLevel ? { model, thinkingLevel } : { model };
   }
   return undefined;
+}
+
+// slotOf is which model a `model` record switched: chat when the field is
+// absent (every record written before the image slot existed).
+function slotOf(r: StoredRecord): "chat" | "image" {
+  return String(r.raw?.slot ?? "").trim() === "image" ? "image" : "chat";
 }
 
 // lastCompactionIndex returns the index of the latest compaction record, or 0

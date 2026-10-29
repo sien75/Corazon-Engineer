@@ -2,6 +2,7 @@ import YAML from "yaml";
 import type { Registry, EngineerEvent, IncomingBlock } from "./registry.ts";
 import { readBlob } from "./blobs.ts";
 import { BlueprintError, slugFrom } from "./blueprint.ts";
+import { isModelRef } from "./models-config.ts";
 
 // The ai API speaks YAML on the wire (application/yaml), like static / log.
 // JSON request bodies still parse, since JSON is a subset of YAML.
@@ -120,14 +121,22 @@ export function serve(registry: Registry, addr: string): void {
           if (kind === "sub" && !projectId) {
             return errRes(400, "bad_request", "projectId required for kind=sub");
           }
-          // The model this agent runs, if the caller wants to choose it instead of
-          // leaving it to pi's settings. It is checked against what pi can use
-          // right now — a name nothing can serve would make a session that fails
-          // on its first turn, which is worse than a rejected request. In stub
-          // mode there is no catalog to check against, and nothing runs anyway.
-          const model = String(body.model ?? "").trim();
-          if (model && !registry.stub && !registry.modelFor(model)) {
-            return errRes(400, "bad_request", `model not available: ${model}`);
+          // The chat model this agent runs, if the caller wants to choose it instead
+          // of the role's `chat` default in models.yaml. `model` is the old name
+          // for it, kept as an alias. It is checked against what pi can use right
+          // now — a name nothing can serve would make a session that fails on its
+          // first turn, which is worse than a rejected request. In stub mode there
+          // is no catalog to check against, and nothing runs anyway.
+          const chat = String(body.chat ?? body.model ?? "").trim();
+          if (chat && !registry.stub && !registry.modelFor(chat)) {
+            return errRes(400, "bad_request", `model not available: ${chat}`);
+          }
+          // The image-generation model. There is no image catalog wired yet, so
+          // only the provider/model-id shape is checked; the choice is recorded
+          // for the tool that will run on it.
+          const image = String(body.image ?? "").trim();
+          if (image && !isModelRef(image)) {
+            return errRes(400, "bad_request", `image is not a provider/model-id: ${image}`);
           }
           let sess;
           try {
@@ -135,7 +144,8 @@ export function serve(registry: Registry, addr: string): void {
               blueprint || undefined,
               kind,
               kind === "sub" ? projectId : "",
-              model,
+              chat,
+              image,
             );
           } catch (err) {
             if (err instanceof BlueprintError) {
@@ -143,7 +153,7 @@ export function serve(registry: Registry, addr: string): void {
             }
             throw err;
           }
-          return yamlRes({ sessionId: sess.id, kind, model });
+          return yamlRes({ sessionId: sess.id, kind, chat, image });
         }
 
         case "/ai/resume": {

@@ -21,11 +21,19 @@ import YAML from "yaml";
 
 export interface WorkspaceDeps {
   logBase: string;
+  // The `chat` default of a role in the engineer home's models.yaml. A session
+  // row with an empty model has no explicit choice, so this is what it runs.
+  defaultModel: (kind: string) => string;
   // Open a new conversation from a blueprint slug inside a project (the session
-  // row, its project, its blueprint, its title and its model are written by the
-  // registry); returns its id. `model` is a provider/model-id or "" — empty
-  // leaves the choice to pi's own settings.
-  newSession: (blueprint: string, project: string, model?: string) => Promise<string>;
+  // row, its project, its blueprint, its title and its models are written by the
+  // registry); returns its id. `model` / `image` are provider/model-ids or "" —
+  // empty uses the role default from models.yaml.
+  newSession: (
+    blueprint: string,
+    project: string,
+    model?: string,
+    image?: string,
+  ) => Promise<string>;
   // Open a new main conversation (kind "main": the same role and tools as the
   // one these tools run inside); returns its id. The pointer is moved by the
   // tool itself — the registry only makes the session.
@@ -111,6 +119,12 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       });
       const byId = new Map<string, any>();
       for (const rec of list.sessions ?? []) byId.set(String(rec.sessionId), rec);
+      // One config read per role for the whole listing, not one per row.
+      const defaults = new Map<string, string>();
+      const defaultFor = (kind: string) => {
+        if (!defaults.has(kind)) defaults.set(kind, deps.defaultModel(kind));
+        return defaults.get(kind) ?? "";
+      };
       const rows: any[] = [];
       const lines: string[] = [];
       for (const sessionId of current.openSessions ?? []) {
@@ -120,18 +134,19 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
           lines.push(`session ${sessionId}  (session row missing)`);
           continue;
         }
+        const model = rec.model || defaultFor(String(rec.kind ?? "sub"));
         rows.push({
           sessionId,
           title: rec.title ?? "",
           projectId: rec.projectId ?? "",
           blueprint: rec.blueprint ?? "",
-          model: rec.model ?? "",
+          model,
           lastAt: rec.lastAt ?? "",
         });
         lines.push(
           `session ${sessionId}  ${oneLine(rec.title || "(untitled)", 40)}  ` +
             `project ${rec.projectId || "-"}  ${rec.blueprint || "-"}  ` +
-            `model ${rec.model || "pi default"}  ${rec.lastAt ?? ""}`,
+            `model ${model || "-"}  ${rec.lastAt ?? ""}`,
         );
       }
       const body = [
@@ -241,18 +256,32 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       "read from that project's .agents/blueprints/ — so the project is required " +
       "(project-list has the ids). The session id is assigned here — you never " +
       "pass one, and an existing conversation cannot be moved into a new tab " +
-      "(reopen it with session-open instead). `model` (a provider/model-id) names " +
-      "the model the new agent runs; omit it and pi's own settings decide. The " +
+      "(reopen it with session-open instead). `chat` / `model` (a " +
+      "provider/model-id) names the conversation model the new agent runs; omit it " +
+      "and the role's `chat` default in the engineer home's models.yaml applies. " +
+      "`image` names its image-generation model (no image runtime yet, so it is only " +
+      "recorded). The " +
       "agent itself can still switch with the model tool, and that switch wins " +
       "from then on — including after a restart.",
     promptSnippet: "session-new: a new agent in a new tab",
     parameters: Type.Object({
       project: Type.String({ description: "project id (from project-list)" }),
       blueprint: Type.String({ description: "blueprint slug to instantiate" }),
-      model: Type.Optional(
+      chat: Type.Optional(
         Type.String({
           description:
-            "provider/model-id this agent runs, from the model tool's list; omit for pi's default",
+            "provider/model-id of the chat model, from the model tool's list; omit for the role's models.yaml default",
+        }),
+      ),
+      image: Type.Optional(
+        Type.String({
+          description:
+            "provider/model-id of the image-generation model; omit for the role's models.yaml `image`",
+        }),
+      ),
+      model: Type.Optional(
+        Type.String({
+          description: "deprecated alias for `chat`",
         }),
       ),
     }),
@@ -261,10 +290,11 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       const project = String(params.project ?? "").trim();
       if (!slug) return fail("session-new needs `blueprint` — project-list lists the projects, and a project's .agents/blueprints/ has the slugs.");
       if (!project) return fail("session-new needs `project` (a project id from project-list).");
-      const model = String(params.model ?? "").trim();
+      const model = String(params.chat ?? params.model ?? "").trim();
+      const image = String(params.image ?? "").trim();
       let sessionId = "";
       try {
-        sessionId = await deps.newSession(slug, project, model);
+        sessionId = await deps.newSession(slug, project, model, image);
       } catch (err) {
         return fail(
           `Could not instantiate ${slug}: ${err instanceof Error ? err.message : String(err)}`,

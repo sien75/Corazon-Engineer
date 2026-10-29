@@ -35,22 +35,30 @@ type Session struct {
 	// falls back to fetching the page for rows that predate it.
 	Title string `yaml:"title"`
 	// Model is the provider/model-id this session runs, chosen when it was made or
-	// by a later `model` tool switch ("" means pi's own settings decide). It is a
-	// mirror of the choice, so a list can show it without reading the records — the
-	// records stay the source of truth for what a rebuilt agent actually runs.
-	Model     string `yaml:"model"`
-	CreatedAt string `yaml:"createdAt"`
+	// by a later `model` tool switch ("" means the role default in the engineer
+	// home's models.yaml applies). It is a mirror of the choice, so a list can show
+	// it without reading the records — the records stay the source of truth for
+	// what a rebuilt agent actually runs.
+	Model string `yaml:"model"`
+	// ImageModel is the provider/model-id of the image-generation model chosen for
+	// this session at creation or by a later `model` tool switch with slot=image
+	// ("" means the role's `image` in models.yaml, or none). Image generation is
+	// not implemented yet, so nothing consumes it — the choice is kept where a
+	// rebuild and the future image tool can find it.
+	ImageModel string `yaml:"imageModel"`
+	CreatedAt  string `yaml:"createdAt"`
 }
 
 func (s Session) Body() map[string]interface{} {
 	return map[string]interface{}{
-		"sessionId": s.SessionID,
-		"kind":      s.Kind,
-		"projectId": s.ProjectID,
-		"blueprint": s.Blueprint,
-		"title":     s.Title,
-		"model":     s.Model,
-		"createdAt": s.CreatedAt,
+		"sessionId":  s.SessionID,
+		"kind":       s.Kind,
+		"projectId":  s.ProjectID,
+		"blueprint":  s.Blueprint,
+		"title":      s.Title,
+		"model":      s.Model,
+		"imageModel": s.ImageModel,
+		"createdAt":  s.CreatedAt,
 	}
 }
 
@@ -108,6 +116,7 @@ func (s *Store) createWorkspaceTables() error {
 			blueprint TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
 			model TEXT NOT NULL DEFAULT '',
+			image_model TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS projects (
@@ -138,6 +147,7 @@ func (s *Store) createWorkspaceTables() error {
 		`ALTER TABLE sessions ADD COLUMN blueprint TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions ADD COLUMN image_model TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`,
 		// A board written before groups existed gets the eye's column in place:
 		// every project it holds was drawn in the titlebar, so visible is the
@@ -289,10 +299,10 @@ func (s *Store) writeOpenSessions(sessionIDs []string) error {
 }
 
 // UpsertSession stores a session's kind, project, blueprint, display name and
-// the model it runs. An existing row keeps its createdAt, and an empty project /
-// blueprint / title / model keeps the stored value: a resume or a replay says
-// nothing about the project, the page or the model, so it must not wipe them.
-func (s *Store) UpsertSession(sessionID, kind, projectID, blueprint, title, model string) (Session, error) {
+// the chat and image models it runs. An existing row keeps its createdAt, and an
+// empty project / blueprint / title / model / imageModel keeps the stored value:
+// a resume or a replay says nothing about them, so it must not wipe them.
+func (s *Store) UpsertSession(sessionID, kind, projectID, blueprint, title, model, imageModel string) (Session, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return Session{}, sql.ErrNoRows
@@ -304,16 +314,18 @@ func (s *Store) UpsertSession(sessionID, kind, projectID, blueprint, title, mode
 	blueprint = strings.TrimSpace(blueprint)
 	title = strings.TrimSpace(title)
 	model = strings.TrimSpace(model)
+	imageModel = strings.TrimSpace(imageModel)
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.Exec(`INSERT INTO sessions (session_id, kind, project_id, blueprint, title, model, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`INSERT INTO sessions (session_id, kind, project_id, blueprint, title, model, image_model, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			kind = excluded.kind,
 			project_id = CASE WHEN excluded.project_id = '' THEN sessions.project_id ELSE excluded.project_id END,
 			blueprint = CASE WHEN excluded.blueprint = '' THEN sessions.blueprint ELSE excluded.blueprint END,
 			title = CASE WHEN excluded.title = '' THEN sessions.title ELSE excluded.title END,
-			model = CASE WHEN excluded.model = '' THEN sessions.model ELSE excluded.model END`,
-		sessionID, kind, projectID, blueprint, title, model, now)
+			model = CASE WHEN excluded.model = '' THEN sessions.model ELSE excluded.model END,
+			image_model = CASE WHEN excluded.image_model = '' THEN sessions.image_model ELSE excluded.image_model END`,
+		sessionID, kind, projectID, blueprint, title, model, imageModel, now)
 	if err != nil {
 		return Session{}, err
 	}
@@ -323,8 +335,8 @@ func (s *Store) UpsertSession(sessionID, kind, projectID, blueprint, title, mode
 // GetSession returns one session; sql.ErrNoRows when it does not exist.
 func (s *Store) GetSession(sessionID string) (Session, error) {
 	var out Session
-	err := s.db.QueryRow(`SELECT session_id, kind, project_id, blueprint, title, model, created_at FROM sessions WHERE session_id = ?`,
-		sessionID).Scan(&out.SessionID, &out.Kind, &out.ProjectID, &out.Blueprint, &out.Title, &out.Model, &out.CreatedAt)
+	err := s.db.QueryRow(`SELECT session_id, kind, project_id, blueprint, title, model, image_model, created_at FROM sessions WHERE session_id = ?`,
+		sessionID).Scan(&out.SessionID, &out.Kind, &out.ProjectID, &out.Blueprint, &out.Title, &out.Model, &out.ImageModel, &out.CreatedAt)
 	return out, err
 }
 

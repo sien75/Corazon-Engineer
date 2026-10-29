@@ -1,3 +1,3 @@
 id: core-ai-session-model
-description: 按会话的模型——ai/new 带 model 时落到 sessions 行，会话内 model 工具切换写一条 model 记录并改写该行，杀掉 ai 重启后 resume 仍然回到最后切换的那个模型
+description: 按会话的模型（chat / image 两个 slot）——不传 chat 时用 models.yaml 的角色默认（会话行仍为空串），ai/new 带 chat（旧名 model 仍是别名）/ image 时落到 sessions 行；会话内 model 工具按 slot 切换，写一条带 slot 的 model 记录并改写对应行字段；杀掉 ai 重启后 chat 与 image 都仍是最后切换的那个（记录压过 models.yaml / 创建值）
 atoms: [ai, log]

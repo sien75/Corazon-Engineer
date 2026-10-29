@@ -6,18 +6,22 @@ request:
     projectId?: string  # p_<12 hex> — the project the agent belongs to: its folder is the agent's cwd and the blueprint tree its page comes from. Required for kind=sub, absent for kind=main (main is global and belongs to no project)
     blueprint?: string  # slug of a prototype under .agents/blueprints/<slug>/ — required for kind=sub, absent for kind=main. README.md and index.html are required; every other file (css / js / images / subdirectories) is served from the same directory by relative URL. The directory is not copied — /agent/<sessionId>/ serves it directly — and its README plus its path are appended to this session's system prompt; the slug and the page's <title> are recorded on the session row in log
     kind?: main | sub  # the role: "main" is the shell's own conversation (no blueprint, workspace tools), "sub" is a blueprint agent (default)
-    model?: string  # provider/model-id this agent runs, chosen here instead of by pi's settings; omitted means pi decides. It is recorded on the session row, and a `model` tool switch inside the session overrides it from then on (that choice is persisted too, so it survives a restart)
+    chat?: string  # provider/model-id of the chat model this agent runs, chosen here instead of the role default; omitted means the `chat` of this kind in the engineer home's models.yaml (main / sub). It is recorded on the session row, and a `model` tool switch with slot=chat overrides it from then on (that choice is persisted too, so it survives a restart)
+    image?: string  # provider/model-id of the image-generation model this agent uses; omitted means the role's `image` in models.yaml. It is recorded on the session row, and a `model` tool switch with slot=image overrides it later. Image generation is not implemented yet, so nothing runs on it today
+    model?: string  # deprecated alias for `chat`, kept so older callers keep working
 
 response:
   status: 200
   body:
     sessionId: string  # the new agent. It is not on screen yet: a tab is this session, and session-open puts it up. Its UI is served at /agent/<sessionId>/
     kind: main | sub  # echoed role; the session row in log stores it
+    chat: string  # the chat model named for this agent, "" when the role default applies
+    image: string  # the image-generation model named for this agent, "" when the role's `image` applies
 
 errors:
   - status: 400
     code: bad_request
-    description: blueprint missing, unknown, or lacking one of its two required files (README.md, index.html); projectId missing for kind=sub, or naming no known project; kind not main | sub; model naming one pi cannot use right now
+    description: blueprint missing, unknown, or lacking one of its two required files (README.md, index.html); projectId missing for kind=sub, or naming no known project; kind not main | sub; chat or model naming one pi cannot use right now, or image not shaped provider/model-id
   - status: 500
     code: internal
     description: server error

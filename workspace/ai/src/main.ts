@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { Registry } from "./registry.ts";
 import { serve } from "./server.ts";
+import { modelsConfigPath } from "./models-config.ts";
 
 // Local service-to-service calls (ai → log) must never be proxied. A system
 // proxy exported as http_proxy / https_proxy (e.g. Clash) also captures
@@ -131,5 +132,6 @@ if (registry.stub) {
   );
 }
 console.log(`engineer ai: log=${logBase}`);
+console.log(`engineer ai: models=${modelsConfigPath(home)}`);
 console.log(`engineer ai: spec=${path.resolve(flags.agents)}`);
 serve(registry, addr);

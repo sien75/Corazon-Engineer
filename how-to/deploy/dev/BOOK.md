@@ -41,14 +41,15 @@ The launcher binds `127.0.0.1` by default — this is a local tool, not a servic
 
 Logs and pids live under `.engineer/dev/`.
 
-Which model a conversation runs is **pi's own decision by default** — no service takes a model flag. pi reads its config (`~/.pi/agent/settings.json` → `defaultProvider` / `defaultModel`, overridable with `PI_CODING_AGENT_DIR`), falls back to the first model it has credentials for, and every other setting (shell, compaction, retry, thinking level) comes from the same place.
+Which model a conversation runs comes from the engineer's own config, not from pi's: the **data home's `models.yaml`** (`<data home>/models.yaml`, written with defaults on first start) has one entry per role — `main` and `sub` — each with a `chat` (conversation) and an `image` (image generation, read but not used yet) slot, both `provider/model-id`. `chat` defaults to `deepseek/deepseek-flash`; `image` is empty. pi still owns the catalog and the credentials (`~/.pi/agent/settings.json`, `models.json`, `auth.json`), but its `defaultProvider` / `defaultModel` no longer choose a model.
 
-Two things can override that **for one conversation**, and neither writes pi's settings:
+Three choices can override that, strongest first, and none writes pi's settings. They come in two slots — `chat` (the conversation) and `image` (image generation) — and each slot resolves on its own:
 
-- **At creation** — `POST /ai/new` takes an optional `model` (`provider/model-id`); main reaches it through `session-new`'s `model`. An unknown or unusable name is a `400`, so a session cannot be born on a model nothing can serve.
-- **At any time** — the agent has the `model` tool (`list` / `set` with a `provider/model-id`).
+- **In the conversation** — the agent has the `model` tool: `list` / `set` with a `provider/model-id`, plus an optional `slot: chat | image` (default `chat`). A chat switch is live (`agent.setModel`); an image switch only records the choice, because no image runtime is wired yet. Both are recorded with the conversation, so a restart does not undo them.
+- **At creation** — `POST /ai/new` takes optional `chat` and `image` (`provider/model-id`; `model` is the old alias for `chat`); main reaches them through `session-new`. An unknown chat name is a `400`, so a session cannot be born on a model nothing can serve; `image` is shape-checked only.
+- **In `models.yaml`** — the role's `chat` / `image`, read fresh for every session that is built or resumed.
 
-The choice is recorded **with the conversation** (a `model` entry in its records, plus the session row's mirror), so a resumed or restarted session comes back on it: strongest claim first the last switch, then the model it was created with, then pi's settings. A name pi can no longer use falls back rather than failing the session.
+A chat name pi can no longer use (a retired model, a provider without credentials) is skipped with a warning; if none of the three chat choices is usable, the session runs on the first model pi can serve (the configured provider's, if it has one) instead of failing — pi's own settings are never consulted for that. The image slot has no fallback and no catalog check yet: it is a recorded choice waiting for the image tool.
 
 A hand-run: `cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 7501 --home <data home> --log <log url> --static <static url> --agents ../../agents`. **Every one of those flags is required**: ai has no default host, port, home, log address, static address or spec file, so a hand-run must state all six (`--stub` is the only optional one). `--home` is the program's data directory (uploaded images), not a project; `--agents` is the directory holding the two role specs (`main/AGENTS.md`, `sub/AGENTS.md`).
 
