@@ -552,9 +552,8 @@ function wire(host, root, id, RT) {
         img.className = "ai-gen-img";
         img.loading = "lazy";
         img.alt = "generated image";
-        const w = Number(b.width), h = Number(b.height);
-        if (w > 0) img.width = w;
-        if (h > 0) img.height = h;
+        // width/height 属性刻意不写：它是一份 presentational hint，一旦落在 width 上，
+        // max-height 生效时浏览器就不再按原比例重算，长图会被压成方的。占位交给 CSS 的上限。
         img.src = `${AI}/blobs/${b.sha256}`;
         el.appendChild(img);
       }

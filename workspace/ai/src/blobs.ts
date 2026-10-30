@@ -49,7 +49,10 @@ export function saveImage(
   return { sha256, size: bytes.length };
 }
 
-function findBlobFile(root: string, sha256: string): string | undefined {
+// findBlobFile is the one place a content address becomes a path on disk: the
+// stored name is the hash plus the mime's extension, so it is looked up rather
+// than guessed. Exported because the image tool takes references by address too.
+export function findBlobFile(root: string, sha256: string): string | undefined {
   if (!/^[0-9a-f]{64}$/.test(sha256)) return undefined;
   const dir = uploadsDir(root);
   if (!existsSync(dir)) return undefined;

@@ -33,7 +33,7 @@ import {
   TITLE_SYSTEM_PROMPT,
   TITLE_TIMEOUT_MS,
 } from "./title.ts";
-import { loadImage, saveImage } from "./blobs.ts";
+import { findBlobFile, loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
 import { ensureModelsConfig, readModelsConfig } from "./models-config.ts";
 
@@ -884,7 +884,11 @@ export class Registry {
           size: ref.size,
         });
         piImages.push({ type: "image", data: b.data, mimeType: b.mimeType });
-        text += "[image]";
+        // Pixels alone leave the model with no way to *name* this picture in a
+        // later call (the image tool takes a path). The marker is the name: the
+        // file the bytes were just stored as, plus the address the page draws.
+        const file = findBlobFile(this.opts.home, ref.sha256);
+        text += file ? `\n[image: ${file} — /blobs/${ref.sha256}]\n` : "\n[image]\n";
       }
     }
     const projection = content

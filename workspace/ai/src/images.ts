@@ -29,6 +29,18 @@
 // (<home>/.engineer/uploads/<sha256>.<ext>), so the picture is served by the
 // same /blobs/<sha256> route and the log keeps only the reference.
 //
+// A reference image turns generation into editing. The reference is a *path*, not
+// a blob handle: everything this system already hands a model names its file
+// (the tool result does, and a pasted image gets a `[image: <path>]` marker in the
+// prompt), so the model can pass one straight back without any side state. Three
+// spellings resolve to the same bytes — a file path, `/blobs/<sha256>`, a bare
+// hash. Shape 1 then becomes `POST {baseUrl}/images/edits` as multipart
+// (`image` / `image[]` + prompt + model + n + size), and shape 2 puts the pictures
+// in the chat message as `image_url` parts with data: URLs. The same 404/405
+// fallback decides between them, because "no images endpoint" is a property of
+// the gateway, not of the request. A gateway that refuses image *input* answers
+// 4xx with its own reason, which is reported as-is: not every model edits.
+//
 // What the model reads back is text; the pixels ride in `details`, which the page
 // draws. An image block in a toolResult would be replayed to every provider on
 // every later turn (OpenAI's tool message is text-only, so it would not even
@@ -37,9 +49,10 @@
 
 import { Type } from "typebox";
 import path from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { saveImage, uploadsDir } from "./blobs.ts";
+import { findBlobFile, saveImage, uploadsDir } from "./blobs.ts";
 
 export interface ImageToolDeps {
   // pi's runtime: provider baseUrl + credential. Absent only in stub mode, where
@@ -58,6 +71,10 @@ const TIMEOUT_MS = 180_000;
 const DEFAULT_SIZE = "1024x1024";
 const MAX_N = 4;
 const MIME_DEFAULT = "image/png";
+// References ride whole in the request (multipart or a data: URL), so they are
+// bounded here rather than discovered as a 413 from the gateway.
+const MAX_REFS = 8;
+const MAX_REF_BYTES = 20 * 1024 * 1024;
 
 // One entry per model whose accepted sizes are narrower than the OpenAI default.
 // Keyed by the full provider/model-id: the same model id on another gateway can
@@ -95,6 +112,35 @@ function sniffMime(b: Uint8Array): string {
   if (b[0] === 0x52 && b[1] === 0x49 && b[8] === 0x57 && b[9] === 0x45) return "image/webp";
   if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return "image/gif";
   return MIME_DEFAULT;
+}
+
+// resolveRef reads one reference into bytes. The spellings are the ones already
+// in use around here: the file path an image result prints, the `/blobs/<sha256>`
+// address a page draws, the hash alone, and a path relative to the engineer home.
+function resolveRef(home: string, raw: string): { bytes: Uint8Array; mimeType: string } {
+  const ref = raw.trim();
+  if (!ref) throw new Error("an empty reference");
+  const addr = /^\/blobs\/([0-9a-f]{64})(?:\.[a-z0-9]+)?$/.exec(ref);
+  const sha = addr ? addr[1] : /^[0-9a-f]{64}$/.test(ref) ? ref : "";
+  let file = "";
+  if (sha) {
+    file = findBlobFile(home, sha) ?? "";
+    if (!file) {
+      throw new Error(
+        `no blob ${sha} in this conversation's store — pass a file path if the ` +
+          "picture came from somewhere else",
+      );
+    }
+  } else {
+    file = [path.resolve(ref), path.resolve(home, ref)].find((p) => existsSync(p)) ?? "";
+    if (!file) throw new Error(`no such file: ${ref}`);
+  }
+  const size = statSync(file).size;
+  if (size > MAX_REF_BYTES) {
+    throw new Error(`reference ${ref} is ${size} bytes; the limit is ${MAX_REF_BYTES}`);
+  }
+  const bytes = new Uint8Array(readFileSync(file));
+  return { bytes, mimeType: sniffMime(bytes) };
 }
 
 // apiError turns the gateway's own error shape ({error:{message,type,code}}) into
@@ -179,7 +225,9 @@ export function makeImageTool(deps: ImageToolDeps) {
       "an argument here. You get back a description and the hash of the file, not " +
       "the pixels: the user sees the picture already, and if you need to look at it " +
       "yourself, read the file path the result names. Each call is billed, so write " +
-      "the prompt once and well.",
+      "the prompt once and well. Pass `reference` with picture paths to edit or derive " +
+      "from existing images instead of drawing from scratch; not every model accepts " +
+      "one, and a gateway that refuses says why.",
     promptSnippet: "image: generate a picture and show it in this conversation",
     parameters: Type.Object({
       prompt: Type.String({
@@ -196,6 +244,14 @@ export function makeImageTool(deps: ImageToolDeps) {
       ),
       n: Type.Optional(
         Type.Number({ description: `How many pictures, 1-${MAX_N} (default 1)` }),
+      ),
+      reference: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            `Up to ${MAX_REFS} pictures to derive the result from: a file path (what an ` +
+            "image result prints), `/blobs/<sha256>`, or the hash alone. Turns the call " +
+            "into an edit of those images.",
+        }),
       ),
     }),
     execute: async (_toolCallId, params, signal) => {
@@ -218,6 +274,31 @@ export function makeImageTool(deps: ImageToolDeps) {
 
       const n = Math.max(1, Math.min(MAX_N, Math.round(Number(params.n ?? 1)) || 1));
       const size = String(params.size ?? "").trim() || DEFAULT_SIZE;
+      // References are read, then copied into the blob store: what was sent is
+      // then also what the log keeps, even when the file came from outside.
+      const asked = (Array.isArray(params.reference) ? params.reference : [])
+        .map((v) => String(v ?? ""))
+        .filter((v) => v.trim());
+      if (asked.length > MAX_REFS) {
+        return fail(`at most ${MAX_REFS} reference images; not ${asked.length}`);
+      }
+      const refs: Array<{ bytes: Uint8Array; mimeType: string; sha256: string }> = [];
+      for (const raw of asked) {
+        let bytes: Uint8Array;
+        let mimeType: string;
+        try {
+          ({ bytes, mimeType } = resolveRef(deps.home, raw));
+        } catch (err: any) {
+          return fail(String(err?.message ?? err));
+        }
+        let saved: { sha256: string };
+        try {
+          saved = saveImage(deps.home, Buffer.from(bytes).toString("base64"), mimeType);
+        } catch (err: any) {
+          return fail(`could not store the reference image: ${String(err?.message ?? err)}`);
+        }
+        refs.push({ bytes, mimeType, sha256: saved.sha256 });
+      }
       const allowed = SIZES[parts.id];
       if (allowed && !allowed.includes(size)) {
         return fail(`${ref} accepts only ${allowed.join(", ")}; not ${size}`);
@@ -258,42 +339,66 @@ export function makeImageTool(deps: ImageToolDeps) {
 
       const timeout = AbortSignal.timeout(TIMEOUT_MS);
       const stop = signal ? AbortSignal.any([signal, timeout]) : timeout;
-      const send = async (route: string, body: unknown, shape: string) => {
+      const request = async (route: string, body: string | FormData, shape: string) => {
+        const h: Record<string, string> = { ...headers };
+        if (apiKey) h.Authorization = `Bearer ${apiKey}`;
+        // A JSON body is ours to label; a multipart one must be left to fetch, so
+        // that it can write the boundary into the header itself.
+        if (typeof body === "string") h["Content-Type"] = "application/json";
         const res = await f(`${baseUrl}${route}`, {
           method: "POST",
-          headers: {
-            ...headers,
-            "Content-Type": "application/json",
-            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-          },
-          body: JSON.stringify(body),
+          headers: h,
+          body,
           signal: stop,
         });
         if (!res.ok) return { res, error: await apiError(res, ref), shape };
         return { payload: await res.json(), shape };
+      };
+      const json = (route: string, body: unknown) => request(route, JSON.stringify(body), "images");
+      const form = () => {
+        const fd = new FormData();
+        fd.append("model", parts.id);
+        fd.append("prompt", prompt);
+        fd.append("n", String(n));
+        fd.append("size", size);
+        // One picture rides as `image`, several as `image[]` — the spellings the
+        // images/edits endpoint documents.
+        const field = refs.length > 1 ? "image[]" : "image";
+        for (const [i, r] of refs.entries()) {
+          const part = new Blob([r.bytes as any], { type: r.mimeType });
+          fd.append(field, part, `reference-${i + 1}.${r.mimeType.split("/")[1] ?? "png"}`);
+        }
+        return fd;
       };
 
       // Shape 1 (images), then shape 2 (chat with image output) only when the
       // gateway says the images endpoint is not there — a 400 from shape 1 is a
       // real answer about this request and must not be retried a second way.
       let payload: any;
-      let shape = "images";
+      let shape = refs.length ? "images-edits" : "images";
       try {
-        const first: any = await send(
-          "/images/generations",
-          { model: parts.id, prompt, n, size },
-          "images",
-        );
+        const first: any = refs.length
+          ? await request("/images/edits", form(), "images-edits")
+          : await json("/images/generations", { model: parts.id, prompt, n, size });
         if (first.payload) {
           payload = first.payload;
         } else if (first.res.status === 404 || first.res.status === 405) {
-          const second: any = await send(
+          // A chat gateway has no images endpoint: the prompt and the references
+          // go into one user message, the pictures as data: URLs.
+          const content: any[] = [{ type: "text", text: prompt }];
+          for (const r of refs) {
+            content.push({
+              type: "image_url",
+              image_url: { url: `data:${r.mimeType};base64,${Buffer.from(r.bytes).toString("base64")}` },
+            });
+          }
+          const second: any = await request(
             "/chat/completions",
-            {
+            JSON.stringify({
               model: parts.id,
-              messages: [{ role: "user", content: prompt }],
+              messages: [{ role: "user", content: refs.length ? content : prompt }],
               modalities: ["image", "text"],
-            },
+            }),
             "chat",
           );
           if (!second.payload) return fail(String(second.error?.message ?? second.error));
@@ -347,10 +452,11 @@ export function makeImageTool(deps: ImageToolDeps) {
 
       // The text is what the model reads: what came out, where the file is, and
       // the one thing it can do next.
+      const from = refs.length ? ` from ${refs.length} reference image(s)` : "";
       const lines = [
         images.length === 1
-          ? `generated 1 image (${size}, ${images[0].mimeType}) with ${ref}`
-          : `generated ${images.length} images (${size}) with ${ref}`,
+          ? `generated 1 image (${size}, ${images[0].mimeType})${from} with ${ref}`
+          : `generated ${images.length} images (${size})${from} with ${ref}`,
       ];
       for (const img of images) {
         const file = `${img.sha256}.${img.mimeType.split("/")[1] ?? "bin"}`;
@@ -361,7 +467,16 @@ export function makeImageTool(deps: ImageToolDeps) {
         "The user sees the picture already; do not describe it back as a link. " +
           "To look at it yourself, read the file path above.",
       );
-      return ok(lines.join("\n"), { images, prompt, model: ref, size, shape });
+      return ok(lines.join("\n"), {
+        images,
+        prompt,
+        model: ref,
+        size,
+        shape,
+        ...(refs.length
+          ? { references: refs.map((r) => ({ sha256: r.sha256, mimeType: r.mimeType })) }
+          : {}),
+      });
     },
   });
 }

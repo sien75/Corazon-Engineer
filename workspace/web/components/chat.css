@@ -540,13 +540,21 @@
 
 /* Every image the conversation draws — a pasted one, a generated one, a
    markdown one — is capped at 300×300 and keeps its ratio; a smaller picture
-   stays at its own size. Clicking opens it in the overlay below. */
+   stays at its own size. Clicking opens it in the overlay below.
+
+   `width`/`height` are spelled `auto` on purpose: an `<img>`'s width/height
+   attributes are presentational hints, and a hint that lands on `width` stops the
+   browser from re-deriving the ratio when `max-height` binds — a tall picture then
+   comes out squashed square. With both auto, the two caps are applied by the
+   replaced-element algorithm, which is the one that preserves the ratio. */
 .ai-user-img,
 .ai-gen-img,
 .ai-markdown img {
+  width: auto;
+  height: auto;
   max-width: min(300px, 100%);
   max-height: 300px;
-  height: auto;
+  object-fit: contain;
   cursor: zoom-in;
 }
 
@@ -556,8 +564,8 @@
   border-radius: 4px;
 }
 
-/* 生图的结果：和正文同列的一块图，尺寸由 details 里的 width/height 定住，
-   图片还没到时也占着位置，不会让后面的内容跳一下。 */
+/* 生图的结果：和正文同列的一块图。尺寸由 chat.css 的两个上限决定（300×300，等比），
+   width/height 属性一律不写——见上面那段注释：属性会钉住宽或高，长图就被压成方的。 */
 .ai-images {
   max-width: 100%;
 }

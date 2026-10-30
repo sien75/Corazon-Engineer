@@ -1,0 +1,3 @@
+id: core-ai-image-reference
+description: 生图工具收参考图——粘贴图在提示里带 [image: <path>] 标记，模型把那个路径当 reference 传回去，工具走 /images/edits 出一张新图并落 blob
+atoms: [ai, log]

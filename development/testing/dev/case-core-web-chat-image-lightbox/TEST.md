@@ -98,8 +98,9 @@ function png(w, h) {
   ]);
 }
 
-// 两张比例相反的图：宽图卡宽度上限，竖图卡高度上限 —— 只测一种会漏掉另一条。
-const blobs = { wide: png(2048, 1024), tall: png(900, 1500) };
+// 三张图：一张宽、一张竖（粘贴）、一张竖（生图）。三条都测才不漏：宽图卡宽度上限，
+// 竖图卡高度上限 —— 而生图的竖图曾经被 width/height 属性压成方的。
+const blobs = { wide: png(2048, 1024), tall: png(900, 1500), tallgen: png(1024, 1536) };
 
 // ai 写进 log 的形状：一条带粘贴图（blob 地址）的用户消息，加一次生图的结果。
 // 生图的 `width/height` 就是 ai 那边 `details.images` 里带的原图尺寸。
@@ -140,6 +141,9 @@ const history = `messages:
           - sha256: wide
             width: 2048
             height: 1024
+          - sha256: tallgen
+            width: 1024
+            height: 1536
 `;
 
 const yamlRes = (text) => new Response(text, { headers: { "Content-Type": "application/yaml" } });
@@ -264,16 +268,24 @@ const first = await probe();
 
 const pasted = first.imgs.find((i) => i.cls.includes("ai-user-img"));
 const generated = first.imgs.find((i) => i.cls.includes("ai-gen-img"));
+const generatedTall = first.imgs.find((i) => i.cls.includes("ai-gen-img") && i.natural?.[0] === 1024);
 check("replay draws the pasted image", !!pasted, first.imgs);
 check("replay draws the generated image", !!generated, first.imgs);
+check("replay draws the tall generated image", !!generatedTall, first.imgs);
 check("pasted image is the tall 900x1500 png",
   JSON.stringify(pasted?.natural) === JSON.stringify([900, 1500]), pasted?.natural);
 check("generated image is the wide 2048x1024 png",
   JSON.stringify(generated?.natural) === JSON.stringify([2048, 1024]), generated?.natural);
+check("tall generated image is the 1024x1536 png",
+  JSON.stringify(generatedTall?.natural) === JSON.stringify([1024, 1536]), generatedTall?.natural);
 
 // 宽图：宽度卡在 300，高度跟着比例（300 × 1024/2048 = 150）。
 check("generated image is capped at 300 wide", near(generated?.w, 300), generated);
 check("generated image keeps its ratio", near(generated?.h, 150), generated);
+// 竖的生图：高度卡在 300，宽度跟着比例（300 × 1024/1536 = 200）—— 这一条曾经是 300×300，
+// 因为 ai 把 details 里的 width/height 写成了 img 属性，属性钉住宽，max-height 就压平了比例。
+check("tall generated image is capped at 300 tall", near(generatedTall?.h, 300), generatedTall);
+check("tall generated image keeps its ratio", near(generatedTall?.w, 200), generatedTall);
 // 竖图：高度卡在 300，宽度跟着比例（300 × 900/1500 = 180）。
 check("pasted image is capped at 300 tall", near(pasted?.h, 300), pasted);
 check("pasted image keeps its ratio", near(pasted?.w, 180), pasted);
