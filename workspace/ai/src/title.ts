@@ -157,5 +157,13 @@ export function cleanTitle(raw: string): string {
 
 // A title call holds this turn's stream open (it is sent out as a
 // `session_title` event), so it has a deadline: past this, the conversation
-// keeps the name it had rather than the tab waiting on a slow provider.
+// keeps the name it had rather than the tab waiting on a slow provider. Per
+// attempt, and that is the only limit: three of them is the worst case, ~47s,
+// and it costs a connection and a late name — not a turn the user is waiting on,
+// because agent_settled went out before this.
 export const TITLE_TIMEOUT_MS = 15000;
+
+// A naming call is one small completion, and providers fail small completions
+// too. Three attempts, a second apart: a name is worth asking twice more for.
+export const TITLE_ATTEMPTS = 3;
+export const TITLE_RETRY_DELAY_MS = 1000;

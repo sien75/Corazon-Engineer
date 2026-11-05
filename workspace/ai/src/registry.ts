@@ -32,6 +32,8 @@ import {
   titleMaterial,
   TITLE_SYSTEM_PROMPT,
   TITLE_TIMEOUT_MS,
+  TITLE_ATTEMPTS,
+  TITLE_RETRY_DELAY_MS,
 } from "./title.ts";
 import { findBlobFile, loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
@@ -50,6 +52,14 @@ const WORKSPACE_TOOLS = [
   "session-new",
   "session-delete",
 ];
+
+// A provider that fails a turn is given this ladder before the conversation is
+// told: 10s, 20s, … 90s apart — nine waits, about seven and a half minutes, and
+// only then an error. Provider wobble is the common case and it passes; a user
+// should not have to re-ask the question they just asked.
+const TURN_RETRY_DELAYS_MS = [10, 20, 30, 40, 50, 60, 70, 80, 90].map((s) => s * 1000);
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 // pageLine is the last thing a sub agent is told: which directory its page lives
 // in. The prompt carries the README; the path is what makes "change the page" an
@@ -137,6 +147,14 @@ interface Sess {
   runText: string;
   recordSeq: number;
   sawSettled: boolean; // whether pi emitted agent_settled for the current run
+  // The agent_settled pi emitted for the attempt that just ended, kept back
+  // until the turn is really over. pi settles a *failed* run too (its own
+  // finally), and forwarding that would end the turn on the page while the
+  // retry — and the answer the user is waiting for — is still to come.
+  settledEvent?: { type: string; [key: string]: unknown };
+  // The user asked to stop this run; a failure that follows is theirs, not the
+  // provider's, so the retry ladder is skipped.
+  aborting: boolean;
   active: boolean; // a run is scheduled or in flight (used by resume/stream)
   // A manual compaction has been scheduled by the `compact` tool and its
   // compaction_end has not arrived yet. The run is over (agent_settled) but the
@@ -450,6 +468,7 @@ export class Registry {
       // Continue the recorder's per-session sequence after a resume.
       recordSeq: history.reduce((max, m) => Math.max(max, m.seq), 0),
       sawSettled: false,
+      aborting: false,
       active: false,
       compacting: false,
       turns: history.filter((m) => m.role === "user").length,
@@ -655,6 +674,11 @@ export class Registry {
           // open past agent_settled when more of this turn is still coming, and
           // the name is one of those things.
           if (this.titleDue(sess)) sess.titling = true;
+          // Held back, not forwarded: runTurn forwards it once the turn is over
+          // for good. pi emits this for a failed attempt too, and a settled the
+          // page can see is a turn it stops waiting on.
+          sess.settledEvent = ev as { type: string; [key: string]: unknown };
+          return;
         }
         // Compaction is the one thing that can happen after the run settled;
         // its end is what makes the session idle again.
@@ -793,40 +817,53 @@ export class Registry {
     await drainRecords();
     const material = titleMaterial(await fetchRecords(this.opts.logBase, sess.id), turns);
     if (material.trim().length < 8) return; // nothing worth naming
-    const reply = await this.modelRuntime.completeSimple(
-      model,
-      {
-        systemPrompt: TITLE_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: material, timestamp: Date.now() }],
-      },
-      {
-        // A name is not a reasoning task, and this call is on the clock (the
-        // turn's stream is open until it returns): no thinking budget is
-        // requested at all — `reasoning` omitted is the "off" position at this
-        // layer, since every level above it only *adds* a budget — and there is
-        // one attempt, not a retry ladder.
-        //
-        // 256, not 64: some models think even when no budget is asked for
-        // (deepseek-v4.1-flash does), and at 64 the thinking ate the whole
-        // ceiling — `stop=length`, no text, no name. A title is a handful of
-        // tokens; the rest is headroom for a model that thinks before it answers.
-        maxTokens: 256,
-        // No `temperature`: the newest Claude models reject the field outright
-        // (400, "`temperature` is deprecated for this model"), and a rejected
-        // call is no name at all — worse than a name that is not reproducible.
-        maxRetries: 1,
-        // Bounded anyway: a provider that never answers must not hold a page
-        // hostage. A timed-out name is no name.
-        signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
-      },
-    );
-    const text = Array.isArray(reply?.content)
-      ? reply.content
-          .filter((b: any) => b?.type === "text" && b.text)
-          .map((b: any) => String(b.text))
-          .join(" ")
-      : "";
-    const title = cleanTitle(text);
+    // Three attempts, one deadline each: a provider that fails a small
+    // completion must not cost the conversation its name. A name that never
+    // comes is the old name, which is the same page it was before.
+    let title = "";
+    for (let attempt = 1; attempt <= TITLE_ATTEMPTS; attempt++) {
+      try {
+        const reply = await this.modelRuntime.completeSimple(
+          model,
+          {
+            systemPrompt: TITLE_SYSTEM_PROMPT,
+            messages: [{ role: "user", content: material, timestamp: Date.now() }],
+          },
+          {
+            // A name is not a reasoning task, and this call is on the clock (the
+            // turn's stream is open until it returns): no thinking budget is
+            // requested at all — `reasoning` omitted is the "off" position at this
+            // layer, since every level above it only *adds* a budget — and the
+            // retries happen here, at this level, on the whole call.
+            //
+            // 256, not 64: some models think even when no budget is asked for
+            // (deepseek-v4.1-flash does), and at 64 the thinking ate the whole
+            // ceiling — `stop=length`, no text, no name. A title is a handful of
+            // tokens; the rest is headroom for a model that thinks before it answers.
+            maxTokens: 256,
+            // No `temperature`: the newest Claude models reject the field outright
+            // (400, "`temperature` is deprecated for this model"), and a rejected
+            // call is no name at all — worse than a name that is not reproducible.
+            maxRetries: 1,
+            // Bounded anyway: a provider that never answers must not hold a page
+            // hostage.
+            signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
+          },
+        );
+        const text = Array.isArray(reply?.content)
+          ? reply.content
+              .filter((b: any) => b?.type === "text" && b.text)
+              .map((b: any) => String(b.text))
+              .join(" ")
+          : "";
+        title = cleanTitle(text);
+        if (title) break;
+        dbg(sess.id, "title empty", `attempt ${attempt}/${TITLE_ATTEMPTS}`);
+      } catch (err) {
+        dbg(sess.id, "title error", `attempt ${attempt}/${TITLE_ATTEMPTS}`, String(err));
+      }
+      if (attempt < TITLE_ATTEMPTS) await sleep(TITLE_RETRY_DELAY_MS);
+    }
     if (!title || title === sess.title) return;
     await this.upsertSession({ sessionId: sess.id, kind: sess.kind, title });
     sess.title = title;
@@ -953,6 +990,7 @@ export class Registry {
   // of the abort, so any live SSE stream closes normally. Idle sessions are a
   // no-op; the dev stub has no agent.
   async stop(sess: Sess): Promise<void> {
+    sess.aborting = true;
     if (!sess.agent) return;
     await sess.agent.abort();
   }
@@ -965,23 +1003,75 @@ export class Registry {
   ): Promise<void> {
     sess.turnText = "";
     sess.sawSettled = false;
+    sess.aborting = false;
     dbg(sess.id, "runTurn start", prompt.slice(0, 60));
     try {
       // runTurn only runs when idle (ask() steers instead while streaming), so
       // prompt() starts the run and resolves after it fully settles, including
       // retries and any messages steered in during the run.
-      await agent.prompt(prompt, images.length ? { images } : undefined);
-    } catch (err) {
-      dbg(sess.id, "runTurn error", String(err));
-      this.appendError(sess, "ai_error", String(err));
+      await this.promptWithRetry(sess, agent, prompt, images);
     } finally {
       // pi emits agent_settled itself on a normal run; synthesize one if the
       // run never started (e.g. preflight threw) so the SSE stream still closes.
-      if (!sess.sawSettled) this.append(sess, { type: "agent_settled" });
+      // The attempt that ended is the one whose settled is forwarded.
+      const settled = sess.settledEvent;
+      sess.settledEvent = undefined;
+      this.append(sess, settled ?? { type: "agent_settled" });
       sess.active = false;
       // Naming the conversation is scheduled here, after the run: this turn's
       // answer has to be part of the material.
       this.maybeTitle(sess);
+    }
+  }
+
+  // promptWithRetry runs one user turn, giving a provider-side failure the whole
+  // widening ladder before the turn is reported as dead. A flaky provider used
+  // to end the conversation mid-turn: pi settles the failed run, the page sees
+  // agent_settled and stops waiting, and the error arrives after its stream is
+  // closed — so the turn is retried here, silently, with the stream still open.
+  // The user sees a slow turn, not a broken one.
+  //
+  // A retry replays the prompt into the same session. Whatever the failed
+  // attempt left behind (an error record, and the text of a half answer) stays:
+  // the answer continues under it, because retracting text the user has already
+  // read is worse than a visible seam.
+  private async promptWithRetry(
+    sess: Sess,
+    agent: AgentSession,
+    prompt: string,
+    images: any[] = [],
+  ): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await agent.prompt(prompt, images.length ? { images } : undefined);
+        return;
+      } catch (err) {
+        // A stop the user asked for is not a failure, and once the ladder is
+        // spent the error is the honest answer.
+        const delay = TURN_RETRY_DELAYS_MS[attempt];
+        if (sess.aborting || delay === undefined) {
+          dbg(sess.id, "runTurn error", attempt ? `after ${attempt} retries` : "", String(err));
+          this.appendError(sess, "ai_error", String(err));
+          return;
+        }
+        dbg(
+          sess.id,
+          "runTurn retry",
+          `attempt ${attempt + 1}/${TURN_RETRY_DELAYS_MS.length} in ${delay}ms`,
+          String(err),
+        );
+        // The run is not over after all: a retry is in flight, and the stream —
+        // and the title it is waiting for — must keep treating the turn as live.
+        sess.active = true;
+        sess.sawSettled = false;
+        sess.settledEvent = undefined;
+        sess.titling = false;
+        await sleep(delay);
+        if (sess.aborting) {
+          this.appendError(sess, "ai_error", "stopped");
+          return;
+        }
+      }
     }
   }
 
