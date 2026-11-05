@@ -185,14 +185,6 @@ body {
   color: var(--fg);
 }
 
-/* A project's launcher page lives in a tab of its group, so it is a scrollable
-   view rather than the full-page overlay the Engineer launcher is. */
-.view-launcher {
-  overflow-y: auto;
-  padding: 32px 24px 48px;
-  background: var(--surface);
-}
-
 /* The eye in the Engineer launcher: on draws the group, off (crossed, dimmed)
    hides it. Hiding never closes anything, which is why the row stays. */
 .row-btn.eye {
@@ -321,6 +313,16 @@ body {
    out for a view that is off stage. */
 .view[hidden] {
   display: none;
+}
+
+/* A project's launcher page lives in a tab of its group, so it is a scrollable
+   view rather than the full-page overlay the Engineer launcher is. It has to be
+   written after `.view` — same specificity, and that rule's `overflow: hidden`
+   would otherwise win and clip a long list of recents with no way to scroll. */
+.view-launcher {
+  overflow-y: auto;
+  padding: 32px 24px 48px;
+  background: var(--surface);
 }
 
 /* A page view is the blueprint's own document. */
