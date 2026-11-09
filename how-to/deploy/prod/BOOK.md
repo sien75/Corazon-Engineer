@@ -83,9 +83,11 @@ mkdir -p "$OUT"/{bin,web}
 #    without a rebuild. Every local asset index.html links must be here: theme.css
 #    is the shell's palette (and an agent page's), and components/ holds the
 #    <engineer-chat> element every conversation mounts — shipping without either
-#    strips the UI of its colors or its chat.
+#    strips the UI of its colors or its chat. assets/ holds the images index.html
+#    points at with /assets/… — today the favicon (assets/logo.png); the guard below
+#    fails the pack if one is left out.
 cp workspace/web/{index.html,app.js,style.css,theme.css} "$OUT/web/"
-cp -R workspace/web/vendor workspace/web/components "$OUT/web/"
+cp -R workspace/web/vendor workspace/web/components workspace/web/assets "$OUT/web/"
 
 # 3b. guard: every asset index.html links (except the generated /config.js) must
 #     actually be in the package — this is how theme.css once went missing.

@@ -30,11 +30,47 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-#logo {
-  font-weight: 700;
-  /* With many tabs the bar scrolls; the name stays on one line. */
+#brand {
+  /* Badge + wordmark, one lockup: the name stays on one line and the pair
+     never shrinks, so many tabs scroll instead of squeezing it. */
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   white-space: nowrap;
+  /* It is a name, not text: no selection caret and no text cursor over it. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#brand-name {
+  /* Same ink as the mark's lines, and lighter than a heading: the name sits
+     beside the badge, it does not compete with it. */
+  color: var(--logo-fg, var(--fg));
+  font-weight: 400;
+}
+
+#logo {
+  /* The badge: a filled circle painted with --logo-bg, the mark inside masked
+     and painted with --logo-fg. Both colours come from theme.css, so one file
+     serves every theme and the mark is never baked into pixels. */
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: var(--logo-bg, var(--surface-2));
+  display: inline-grid;
+  place-items: center;
+}
+
+#logo::after {
+  content: "";
+  width: 86%;
+  height: 86%;
+  background-color: var(--logo-fg, var(--accent));
+  -webkit-mask: url("/assets/logo-mark.png") center / contain no-repeat;
+  mask: url("/assets/logo-mark.png") center / contain no-repeat;
 }
 
 #tabs {

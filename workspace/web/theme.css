@@ -22,6 +22,10 @@
   --fg-dim: #57606a;
   --fg-muted: #6e7781;
   --accent: #4268b3;
+  /* The brand mark is one mask painted with this: each theme gets its own
+     ink, so the logo sits in the palette instead of on top of it. */
+  --logo-fg: #d97757;
+  --logo-bg: #fbeee4;
   --accent-bg: #edf2fc;
   --accent-border: #d5e0f5;
   --ok: #1a7f37;
@@ -62,6 +66,8 @@ html {
   --fg-dim: #a1a1aa;
   --fg-muted: #8b8b93;
   --accent: #7dd3fc;
+  --logo-fg: #7dd3fc;
+  --logo-bg: #0f3a4d;
   --accent-bg: #0f3a4d;
   --accent-border: #155e75;
   --ok: #4ade80;
@@ -92,6 +98,8 @@ html {
   --fg-dim: #676254;
   --fg-muted: #7f7869;
   --accent: #866537;
+  --logo-fg: #a9743a;
+  --logo-bg: #f4e7d4;
   --accent-bg: #f4ecdf;
   --accent-border: #e4d6bf;
   --ok: #1a7f37;
@@ -122,6 +130,8 @@ html {
   --fg-dim: #52687c;
   --fg-muted: #6d8194;
   --accent: #426c9a;
+  --logo-fg: #426c9a;
+  --logo-bg: #e4eef9;
   --accent-bg: #e2edf9;
   --accent-border: #c9dcef;
   --ok: #1a7f37;
@@ -152,6 +162,8 @@ html {
   --fg-dim: #e0e3e9;
   --fg-muted: #c4c9d3;
   --accent: #b7cbed;
+  --logo-fg: #c9d8f2;
+  --logo-bg: #46536b;
   --accent-bg: #3e4b61;
   --accent-border: #657c9d;
   --ok: #9bd5af;
