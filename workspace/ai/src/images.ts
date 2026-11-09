@@ -20,6 +20,21 @@
 //      → choices[0].message.images[i].image_url.url (a data: URL or a link).
 //      What a chat gateway (zenmux and friends) exposes when it has no images
 //      endpoint. Tried when the first one is answered 404 / 405.
+//   3. Google Gemini / Vertex generateContent: POST
+//      {baseUrl}/v1/publishers/google/models/{id}:generateContent
+//      {contents:[{role:"user", parts:[{text}|{inlineData:{mimeType,data}}]}],
+//       generationConfig:{responseModalities:["TEXT","IMAGE"], imageConfig?:{aspectRatio}}}
+//      → candidates[0].content.parts[i].inlineData{data,mimeType}. The shape the
+//      Gemini image models speak (Nano Banana and friends); gateways that expose
+//      them under a Vertex-compatible base (…/api/vertex-ai) answer 404 on both
+//      shapes above. Tried last, and only when both of the others said 404 / 405.
+//   4. Vertex ImageN/Imagen predict: POST
+//      {baseUrl}/v1/publishers/{publisher}/models/{id}:predict
+//      {instances:[{prompt}], parameters:{sampleCount}}
+//      → predictions[0].bytesBase64Encoded (base64) or .gcsUri (a link to fetch).
+//      What the image-only models on a Vertex-shaped gateway speak (Seedream,
+//      FLUX.3, Qwen-Image); each is served by its own publisher, so the id's
+//      vendor prefix is mapped to it. Tried inside the same 404/405 chain.
 //
 // `response_format` is deliberately never sent: the gpt-image family rejects it,
 // the dall-e family defaults to a url. Both response shapes are decoded rather
@@ -69,6 +84,44 @@ export interface ImageToolDeps {
 // Generation is slow (tens of seconds on the big models) but not unbounded.
 const TIMEOUT_MS = 180_000;
 const DEFAULT_SIZE = "1024x1024";
+// WIDTHxHEIGHT → the aspectRatio spelling the Gemini image models take. A size
+// with no exact ratio is sent without one (the model then picks its default)
+// rather than rounded into a different picture.
+const ASPECT_RATIOS: Array<[number, number, string]> = [
+  [1, 1, "1:1"],
+  [2, 3, "2:3"],
+  [3, 2, "3:2"],
+  [3, 4, "3:4"],
+  [4, 3, "4:3"],
+  [4, 5, "4:5"],
+  [5, 4, "5:4"],
+  [9, 16, "9:16"],
+  [16, 9, "16:9"],
+  [21, 9, "21:9"],
+];
+
+// The publisher a Vertex-shaped gateway serves a model under. The model id names
+// the vendor, the path names the publisher, and they differ (ByteDance's images
+// are served by volcengine); anything unmapped is its own publisher.
+const PUBLISHERS: Record<string, string> = {
+  bytedance: "volcengine",
+  google: "google",
+  qwen: "qwen",
+  bfl: "bfl",
+  inclusionai: "inclusionai",
+};
+
+function aspectRatio(size: string): string | undefined {
+  const m = /^(\d+)x(\d+)$/.exec(size.trim());
+  if (!m) return undefined;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  if (!w || !h) return undefined;
+  const g = (a: number, b: number): number => (b ? g(b, a % b) : a);
+  const d = g(w, h);
+  const key = `${w / d}:${h / d}`;
+  return ASPECT_RATIOS.find(([, , r]) => r === key)?.[2];
+}
 const MAX_N = 4;
 const MIME_DEFAULT = "image/png";
 // References ride whole in the request (multipart or a data: URL), so they are
@@ -186,6 +239,19 @@ function pickImages(payload: any): Picked[] {
   };
   // Shape 1: {data:[…]}.
   if (Array.isArray(payload?.data)) payload.data.forEach(push);
+  // Shape 4: {predictions:[{bytesBase64Encoded} | {gcsUri}]}.
+  for (const pred of Array.isArray(payload?.predictions) ? payload.predictions : []) {
+    if (typeof pred?.bytesBase64Encoded === "string" && pred.bytesBase64Encoded) {
+      out.push({ b64: pred.bytesBase64Encoded });
+    } else if (typeof pred?.gcsUri === "string" && pred.gcsUri) out.push({ url: pred.gcsUri });
+  }
+  // Shape 3: {candidates:[{content:{parts:[{inlineData:{data,mimeType}}]}}]}.
+  for (const cand of Array.isArray(payload?.candidates) ? payload.candidates : []) {
+    for (const part of Array.isArray(cand?.content?.parts) ? cand.content.parts : []) {
+      const inline = part?.inlineData ?? part?.inline_data;
+      if (inline?.data) out.push({ b64: String(inline.data) });
+    }
+  }
   // Shape 2: {choices:[{message:{images:[…], content:[…]}}]}.
   for (const choice of Array.isArray(payload?.choices) ? payload.choices : []) {
     const msg = choice?.message ?? {};
@@ -371,12 +437,82 @@ export function makeImageTool(deps: ImageToolDeps) {
         return fd;
       };
 
-      // Shape 1 (images), then shape 2 (chat with image output) only when the
-      // gateway says the images endpoint is not there — a 400 from shape 1 is a
-      // real answer about this request and must not be retried a second way.
+      // When the provider itself declares the Gemini protocol, the two shapes
+      // below are the wrong request for that gateway anyway — a Vertex-shaped
+      // base (…/api/vertex-ai) answers /images/generations with 404 and
+      // /chat/completions with 500, which would look like a gateway failure
+      // rather than the wrong shape. So the declaration picks the first shape, and
+      // the 404/405 fallback chain still covers gateways that declare nothing.
+      const declaredApi = String(
+        (deps.runtime as any).getModel?.(parts.provider, parts.id)?.api ?? "",
+      ).trim();
+      const vertexFirst = declaredApi === "google-vertex";
+      const geminiCall = () => {
+        const ratio = aspectRatio(size);
+        const geminiParts: any[] = [{ text: prompt }];
+        for (const r of refs) {
+          geminiParts.push({
+            inlineData: { mimeType: r.mimeType, data: Buffer.from(r.bytes).toString("base64") },
+          });
+        }
+        return request(
+          // A base that already ends in /v1 (a Google-shaped root) keeps it.
+          (baseUrl.endsWith("/v1") ? "" : "/v1") +
+            // The path names the publisher itself, so a model id that repeats it
+            // (`google/gemini-3.1-flash-image`) loses the prefix — the gateway
+            // answers 404 on the doubled one.
+            `/publishers/google/models/${
+              parts.id.startsWith("google/") ? parts.id.slice("google/".length) : parts.id
+            }:generateContent`,
+          JSON.stringify({
+            contents: [{ role: "user", parts: geminiParts }],
+            generationConfig: {
+              responseModalities: ["TEXT", "IMAGE"],
+              ...(ratio ? { imageConfig: { aspectRatio: ratio } } : {}),
+            },
+          }),
+          "gemini",
+        );
+      };
+
+      const predictCall = () => {
+        const slash = parts.id.indexOf("/");
+        const vendor = slash > 0 ? parts.id.slice(0, slash) : "";
+        const name = slash > 0 ? parts.id.slice(slash + 1) : parts.id;
+        const publisher = PUBLISHERS[vendor] ?? vendor;
+        return request(
+          (baseUrl.endsWith("/v1") ? "" : "/v1") +
+            `/publishers/${publisher}/models/${name}:predict`,
+          JSON.stringify({ instances: [{ prompt }], parameters: { sampleCount: n } }),
+          "predict",
+        );
+      };
+      // Shapes 3 and 4 share a gateway, not a model: the Vertex-shaped base serves
+      // both, and the wrong one answers 404, so the pair is tried in that order.
+      const vertexCall = async () => {
+        const first: any = await geminiCall();
+        if (first.payload) return { payload: first.payload, shape: "gemini" };
+        if (!(first.res.status === 404 || first.res.status === 405)) {
+          return { error: String(first.error?.message ?? first.error) };
+        }
+        const second: any = await predictCall();
+        if (second.payload) return { payload: second.payload, shape: "predict" };
+        return { error: String(second.error?.message ?? second.error) };
+      };
+
+      // Shape 1 (images), then shape 2 (chat with image output) and shape 3
+      // (Gemini generateContent) only when the gateway says the endpoint before
+      // it is not there — a 400 is a real answer about this request and must not
+      // be retried another way.
       let payload: any;
       let shape = refs.length ? "images-edits" : "images";
       try {
+        if (vertexFirst) {
+          const third: any = await vertexCall();
+          if (!third.payload) return fail(String(third.error));
+          payload = third.payload;
+          shape = third.shape;
+        } else {
         const first: any = refs.length
           ? await request("/images/edits", form(), "images-edits")
           : await json("/images/generations", { model: parts.id, prompt, n, size });
@@ -401,11 +537,23 @@ export function makeImageTool(deps: ImageToolDeps) {
             }),
             "chat",
           );
-          if (!second.payload) return fail(String(second.error?.message ?? second.error));
-          payload = second.payload;
-          shape = "chat";
+          if (second.payload) {
+            payload = second.payload;
+            shape = "chat";
+          } else if (second.res.status === 404 || second.res.status === 405) {
+            // Not a chat gateway either: it may route this model through the
+            // Vertex protocol, which carries the pictures in candidates[].parts
+            // (Gemini) or predictions[] (ImageN/Imagen).
+            const third: any = await vertexCall();
+            if (!third.payload) return fail(String(third.error));
+            payload = third.payload;
+            shape = third.shape;
+          } else {
+            return fail(String(second.error?.message ?? second.error));
+          }
         } else {
           return fail(String(first.error?.message ?? first.error));
+        }
         }
       } catch (err: any) {
         if (err?.name === "TimeoutError" || err?.name === "AbortError") {
