@@ -298,14 +298,15 @@ function viewOf(tab) {
 // activating one of its tabs expands the group; hiding it forgets both, so showing
 // it again derives the state from its tabs.
 
-// Icons are inline SVG, drawn with the text colour: a tab group's edit is a pen on
-// a sheet (the "edit in a box" shape), the eye is a plain outline eye (and a
-// crossed one when the group is hidden). No font, no CDN, no emoji.
-const ICON_EDIT = `
-<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor"
-     stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <path d="M13.5 8.7V12.5A1.5 1.5 0 0 1 12 14H3.5A1.5 1.5 0 0 1 2 12.5V4A1.5 1.5 0 0 1 3.5 2.5H7.3" />
-  <path d="M11.7 2.3a1.45 1.45 0 0 1 2.05 2.05L8.1 10 5.3 10.7 6 7.9Z" />
+// Icons are inline SVG, drawn with the text colour: a project is a `+` (its launcher
+// is opened — in the tab bar and on its row in the Engineer launcher alike), the eye is
+// a plain outline eye (and a crossed one when the group is hidden). No font, no CDN,
+// no emoji.
+const ICON_LAUNCHER = `
+<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+     stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M8 3.2v9.6" />
+  <path d="M3.2 8h9.6" />
 </svg>`;
 const ICON_EYE = `
 <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
@@ -392,7 +393,7 @@ function tabButton(tab) {
   const label = document.createElement("span");
   label.className = "tab-label";
   if (tab.main) label.textContent = "main";
-  else if (tab.kind === "launcher") label.innerHTML = ICON_EDIT; // the project launcher, drawn
+  else if (tab.kind === "launcher") label.innerHTML = ICON_LAUNCHER; // the project launcher, drawn
   else label.textContent = tab.name || "…";
   btn.appendChild(label);
   // The project launcher is not closable: it is the group's own page, the place
@@ -425,7 +426,7 @@ function launcherEntry(project) {
   btn.type = "button";
   btn.className = "tab launcher launcher-entry";
   btn.dataset.launcherFor = project.projectId;
-  btn.innerHTML = ICON_EDIT;
+  btn.innerHTML = ICON_LAUNCHER;
   const what = project.name || project.path || "this project";
   btn.title = `open ${what}'s launcher`;
   btn.setAttribute("aria-label", "open this project's launcher");
@@ -1085,9 +1086,9 @@ function projectRow(p) {
   const edit = document.createElement("button");
   edit.type = "button";
   edit.className = "row-btn edit";
-  edit.innerHTML = ICON_EDIT;
-  edit.title = "edit — open this project's launcher in a new tab";
-  edit.setAttribute("aria-label", "edit this project");
+  edit.innerHTML = ICON_LAUNCHER;
+  edit.title = "open this project's launcher in a new tab";
+  edit.setAttribute("aria-label", "open this project's launcher");
   edit.addEventListener("click", (event) => {
     event.stopPropagation();
     void openProjectLauncher(p.projectId);

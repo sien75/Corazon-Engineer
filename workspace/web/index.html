@@ -27,16 +27,37 @@
   <!-- The shell is one thing: main's own conversation (global, in no group) and
        the sessions on screen. Both live in #tabs; both are drawn into #panes.
        `+` is not "new tab" — it opens the engineer launcher, where the projects
-       this program works on are added and removed. -->
+       this program works on are added and removed. It sits at the right end,
+       beside the theme toggle, in the space the tab bar does not use. -->
   <header id="topbar">
     <span id="brand">
       <span id="logo" role="img" aria-label="Corazon Engineer"></span>
       <span id="brand-name">Corazon Engineer</span>
     </span>
     <nav id="tabs"></nav>
-    <button id="tab-add" type="button" title="projects — add or open one" aria-label="projects"><span class="tab-label">+</span></button>
+    <button id="tab-add" type="button" title="projects — add or open one" aria-label="projects">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+           stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <rect x="2.4" y="2.4" width="11.2" height="11.2" rx="2" />
+        <path d="M8 5.4v5.2" />
+        <path d="M5.4 8h5.2" />
+      </svg>
+    </button>
     <div id="theme-wrap">
-      <button id="theme-toggle" type="button" title="theme">theme</button>
+      <button id="theme-toggle" type="button" title="theme" aria-label="theme">
+        <!-- light / warm / cold are suns, dark / slate are moons: which one shows is
+             decided by data-theme on <html>, so the toggle needs no listener. -->
+        <svg class="icon-sun" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <circle cx="8" cy="8" r="2.7" />
+          <path d="M8 1.4v2.2M8 12.4v2.2M1.4 8h2.2M12.4 8h2.2M4.89 4.89 3.33 3.33M11.11 4.89 12.67 3.33M11.11 11.11 12.67 12.67M4.89 11.11 3.33 12.67"
+                stroke-linecap="butt" />
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+             stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M13.2 9.6A5.7 5.7 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z" />
+        </svg>
+      </button>
       <div id="theme-menu" hidden>
         <button type="button" data-theme="light" aria-pressed="false"><span class="theme-swatch" data-theme="light" aria-hidden="true"></span><span>light</span><span class="theme-check" aria-hidden="true">✓</span></button>
         <button type="button" data-theme="warm" aria-pressed="false"><span class="theme-swatch" data-theme="warm" aria-hidden="true"></span><span>warm</span><span class="theme-check" aria-hidden="true">✓</span></button>

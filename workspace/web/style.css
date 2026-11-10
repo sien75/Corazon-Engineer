@@ -74,9 +74,10 @@ body {
 }
 
 #tabs {
-  /* The bar takes only the width its tabs need, so the + sits right after the
-     last one; it may shrink (and scroll) when there are many. The theme toggle
-     is what takes the leftover space (margin-left: auto). */
+  /* The bar takes only the width its tabs need, so the right-hand controls stay
+     at the far right; it may shrink (and scroll) when there are many. The + and
+     the theme toggle are what take the leftover space (margin-left: auto on the
+     +). */
   flex: 0 1 auto;
   min-width: 0;
   display: flex;
@@ -96,7 +97,7 @@ body {
   gap: 6px;
   background: none;
   border: none;
-  color: var(--fg-muted);
+  color: var(--titlebar-idle, var(--fg-muted));
   font: inherit;
   font-size: 13px;
   padding: 4px 10px;
@@ -198,6 +199,7 @@ body {
 }
 
 .row-btn.eye svg,
+.row-btn.edit svg,
 .tab .tab-label svg {
   display: block;
 }
@@ -206,6 +208,10 @@ body {
    open (then it is a real tab, with the active underline and a close) or not. */
 #tabs .tab.launcher {
   gap: 4px;
+  /* One box for both states: the entry that opens the page and the tab that is
+     that page are the same button, so clicking must not change its width. The
+     entry used to pad 6px and the opened tab 10px — 8px of jump on click. */
+  padding: 4px 8px;
 }
 
 #tabs .tab.launcher .tab-label {
@@ -213,8 +219,7 @@ body {
 }
 
 #tabs .tab.launcher-entry {
-  padding: 4px 6px;
-  color: var(--fg-muted);
+  color: var(--titlebar-idle, var(--fg-muted));
 }
 
 #tabs .tab.launcher-entry:hover {
@@ -223,7 +228,8 @@ body {
 
 /* The eye in the Engineer launcher: on draws the group, off (crossed, dimmed)
    hides it. Hiding never closes anything, which is why the row stays. */
-.row-btn.eye {
+.row-btn.eye,
+.row-btn.edit {
   display: inline-flex;
   align-items: center;
   padding: 5px 7px;
@@ -238,16 +244,37 @@ body {
   color: var(--fg-muted);
 }
 
+/* The titlebar's two right-hand controls — projects (launcher) and theme — are one
+   fixed square each: same box, same icon size, so neither moves or resizes when it
+   is hovered, focused, clicked or active. No underline here: a border that appears
+   on .active reads as the button growing. */
 #theme-toggle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   background: none;
   border: none;
-  color: var(--fg-muted);
+  border-radius: 5px;
+  color: var(--titlebar-idle, var(--fg-muted));
   font: inherit;
   font-size: 13px;
-  padding: 4px 10px;
   cursor: pointer;
-  border-bottom: var(--tab-underline) solid transparent;
 }
+
+#theme-toggle svg {
+  display: block;
+}
+
+/* Sun for light / warm / cold, moon for dark / slate: data-theme on <html> decides,
+   so the toggle carries both and nothing has to listen. */
+#theme-toggle .icon-moon { display: none; }
+html[data-theme="dark"] #theme-toggle .icon-sun,
+html[data-theme="slate"] #theme-toggle .icon-sun { display: none; }
+html[data-theme="dark"] #theme-toggle .icon-moon,
+html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
 
 #theme-toggle:hover {
   color: var(--fg);
@@ -255,12 +282,10 @@ body {
 
 #theme-toggle.active {
   color: var(--accent);
-  border-bottom-color: var(--accent);
 }
 
 #theme-wrap {
   position: relative;
-  margin-left: auto;
   align-self: stretch;
   display: flex;
   align-items: center;
@@ -375,27 +400,30 @@ body {
 /* Command / session drawer: anchored above the input, expanding upward. */
 .ai-cmd,
 
-/* The + that opens the launcher: same weight as a tab, never scrolls away. */
+/* The projects button that opens the launcher: an icon now, at the right end of
+   the bar beside the theme toggle, so it never scrolls away with the tabs. Its box
+   is fixed — the same 26px square as the theme toggle — so no state changes its
+   size. */
 #tab-add {
   flex: none;
-  /* Exactly a tab's box and text: same inline-flex row, same padding, same
-     font. A tab label and this "+" are then the same text line by construction —
-     no icon metrics to compensate for. */
-  display: inline-flex;
-  align-items: center;
-  /* The tab's box exactly: 4px vertical padding and the shared transparent
-     bottom border (the active underline). Any top border here would push the +
-     down by that many pixels relative to the labels. */
-  padding: 4px 10px;
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   background: none;
   border: 0;
-  border-bottom: var(--tab-underline) solid transparent;
-  border-radius: 0;
-  color: var(--fg-muted);
+  border-radius: 5px;
+  color: var(--titlebar-idle, var(--fg-muted));
   font: inherit;
   font-size: 13px;
   line-height: inherit;
   cursor: pointer;
+}
+
+#tab-add svg {
+  display: block;
 }
 
 #tab-add:hover {
@@ -691,5 +719,4 @@ button:focus-visible {
 #topbar { font-family: var(--font-mono); }
 #tab-add.active {
   color: var(--accent);
-  border-bottom-color: var(--accent);
 }

@@ -65,6 +65,11 @@ html {
   --fg: #e4e4e7;
   --fg-dim: #a1a1aa;
   --fg-muted: #8b8b93;
+  /* The titlebar's idle ink, one step above --fg-muted: tabs, the projects
+     button and the theme toggle sit on the darkest surface, where #8b8b93
+     reads as disabled rather than quiet. Only this one place uses it, so
+     muted text elsewhere keeps its contrast. */
+  --titlebar-idle: #a5a5ae;
   --accent: #7dd3fc;
   --logo-fg: #7dd3fc;
   --logo-bg: #0f3a4d;
