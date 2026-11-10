@@ -7,12 +7,14 @@
 //   <script type="module" src="/components/chat.js"></script>
 //   <engineer-chat session="s_…" autofocus></engineer-chat>
 //
-// `session` is optional: without it the element reads /agent/<sessionId>/ from
-// the page's own URL (which is what a blueprint page wants). `project` mounts the
-// project's own chat instead: no session exists yet, and the first message creates
-// one — the shell is told through the `engineer-session` event. The ai address
-// comes from /config.js, which the element imports itself, so a page does not have
-// to do anything for the conversation to work.
+// `session` is optional: without it the element reads the page's own URL, which is
+// either /agent/<sessionId>/ (a page a session is already looking at) or
+// /agent/p/<projectId>/<slug>/ (the same blueprint, browsed before any conversation
+// exists). `project` / `blueprint` mount a conversation with no session at all: the
+// first message creates one — `POST /ai/new` with those two — and the shell is told
+// through the `engineer-session` event. The ai address comes from /config.js, which
+// the element imports itself, so a page does not have to do anything for the
+// conversation to work.
 //
 // Events (bubbling, for the shell): "engineer-tool" with { name, isError } after
 // every tool call — main's session-* tools are what make the shell re-read the
@@ -56,9 +58,17 @@ async function runtime() {
   }
 }
 
-function sessionFromUrl() {
-  const m = location.pathname.match(/^\/agent\/([^/]+)\//);
-  return m ? decodeURIComponent(m[1]) : "";
+// routeFromUrl reads what the page's own URL says it is. A page is served either
+// under a session (/agent/<sessionId>/, which knows its project through log) or
+// under a project and a blueprint (/agent/p/<projectId>/<slug>/, which is the same
+// page before a conversation exists and therefore carries both itself).
+function routeFromUrl() {
+  const page = location.pathname.match(/^\/agent\/p\/([^/]+)\/([^/]+)\//);
+  if (page) {
+    return { session: "", project: decodeURIComponent(page[1]), blueprint: decodeURIComponent(page[2]) };
+  }
+  const session = location.pathname.match(/^\/agent\/([^/]+)\//);
+  return { session: session ? decodeURIComponent(session[1]) : "", project: "", blueprint: "" };
 }
 
 class EngineerChat extends HTMLElement {
@@ -74,12 +84,16 @@ class EngineerChat extends HTMLElement {
   }
 
   async #mount(root) {
-    const id = this.getAttribute("session") || sessionFromUrl();
-    // A project's own chat has neither: the session is made on the first message.
-    const project = this.getAttribute("project") || "";
+    const route = routeFromUrl();
+    const id = this.getAttribute("session") || route.session;
+    // A page with no session yet — a project's own chat, or a blueprint being
+    // browsed — names its project (and, for a blueprint, its slug) here: the
+    // session is made on the first message.
+    const project = this.getAttribute("project") || route.project;
+    const blueprint = this.getAttribute("blueprint") || route.blueprint;
     if (!id && !project) {
       root.querySelector(".ai-messages").textContent =
-        "engineer-chat: no session (give `session` or `project`, or serve the page at /agent/<sessionId>/)";
+        "engineer-chat: no session (give `session` or `project`, or serve the page at /agent/<sessionId>/ or /agent/p/<projectId>/<slug>/)";
       return;
     }
     const rt = await runtime();
@@ -88,7 +102,7 @@ class EngineerChat extends HTMLElement {
         "engineer-chat: no ai address (is /config.js reachable?)";
       return;
     }
-    this.#cleanup = wire(this, root, id, rt, project);
+    this.#cleanup = wire(this, root, id, rt, project, blueprint);
   }
 
   focus() {
@@ -107,7 +121,7 @@ class EngineerChat extends HTMLElement {
 // this element. `host` is the custom element (for events), `root` its shadow root.
 // `project` is set when the element is a project's home page: `id` is then empty
 // until the first message creates the session.
-function wire(host, root, id, RT, project = "") {
+function wire(host, root, id, RT, project = "", blueprint = "") {
   const AI = RT.ai;
   const LOG = RT.log;
 
@@ -746,7 +760,7 @@ function wire(host, root, id, RT, project = "") {
       const res = await fetch(AI + "/ai/new", {
         method: "POST",
         headers: { "Content-Type": "application/yaml" },
-        body: yaml.dump({ projectId: project, kind: "sub" }),
+        body: yaml.dump({ projectId: project, kind: "sub", ...(blueprint ? { blueprint } : {}) }),
       });
       const data = yaml.load(await res.text()) || {};
       if (!res.ok) {

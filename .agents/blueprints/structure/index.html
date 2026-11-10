@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Structure</title>
+  <!-- Theme before first paint, from the same key the shell uses, so there is no light flash. -->
+  <script>
+    (function () {
+      var t = "light";
+      try {
+        var stored = localStorage.getItem("engineer.theme");
+        if (["light", "dark", "warm", "cold", "slate"].includes(stored)) t = stored;
+      } catch (e) {}
+      document.documentElement.setAttribute("data-theme", t);
+      document.documentElement.style.colorScheme = t === "dark" ? "dark" : "light";
+    })();
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    html, body { height: 100%; }
+    body { margin: 0; height: 100vh; overflow: hidden; font-size: 13px; line-height: 1.6;
+           font-family: var(--font); color: var(--fg); background: var(--bg);
+           display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 26vw) minmax(320px, 27vw);
+           grid-template-rows: auto minmax(0, 1fr); }
+    header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 10px;
+             padding: 10px 16px; border-bottom: 1px solid var(--border); }
+    header h1 { font-size: 14px; margin: 0; }
+    header .hint { color: var(--fg-muted); font-size: 12px; }
+    header .spacer { margin-left: auto; }
+    header button { font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 12px; cursor: pointer;
+                    border: 1px solid var(--border); background: var(--surface-2); color: var(--fg); }
+    header button:hover { border-color: var(--accent-border); color: var(--accent); }
+    #graph-col, #detail, engineer-chat { min-height: 0; }
+    #graph-col { display: flex; flex-direction: column; overflow: hidden;
+                 border-right: 1px solid var(--border); }
+    /* the canvas is the library's root element: it fills its cell and the graph pans / zooms inside it */
+    #canvas { flex: 1 1 0; min-height: 120px; position: relative; overflow: hidden; }
+    /* The library paints into one canvas per layer; the shell vendors the module but not the
+       stylesheet, so the stacking is the page's job (without it the layers flow one under another). */
+    #canvas > canvas.layer { position: absolute; inset: 0; width: 100%; height: 100%; }
+    #canvas > canvas.layer.no-pointer-events { pointer-events: none; }
+    #canvas > canvas.layer.no-user-select { user-select: none; }
+    #contracts { flex: 0 0 auto; border-top: 1px solid var(--border); padding: 8px 12px;
+                 max-height: 26%; overflow: auto; display: flex; flex-wrap: wrap; gap: 5px;
+                 align-content: flex-start; }
+    #contracts h2 { width: 100%; font-size: 11px; margin: 0 0 2px; font-weight: 600;
+                    text-transform: uppercase; letter-spacing: .07em; color: var(--fg-muted); }
+    .chip { font: inherit; font-size: 11px; padding: 2px 7px; border-radius: 10px; cursor: pointer;
+            border: 1px solid var(--border); background: var(--surface-2); color: var(--fg); }
+    .chip:hover { border-color: var(--accent-border); color: var(--accent); }
+    .chip.on { background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent); }
+    #detail { overflow: auto; padding: 12px 14px 24px; }
+    #detail h2 { font-size: 13px; margin: 0 0 2px; }
+    #detail h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+                 color: var(--fg-muted); margin: 14px 0 4px; }
+    #detail .meta { color: var(--fg-muted); font-size: 12px; }
+    #detail .prose { overflow-wrap: anywhere; }
+    #detail .prose p { margin: 0 0 8px; }
+    #detail .iface { border-left: 2px solid var(--border); padding-left: 8px; margin: 5px 0; }
+    #detail code, #detail pre { font-family: var(--font-mono); font-size: 11.5px; }
+    #detail pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 5px;
+                  padding: 8px; overflow: auto; }
+    #detail a { color: var(--accent); }
+    .hint { color: var(--fg-muted); }
+    engineer-chat { display: block; height: 100%; border-left: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Structure</h1>
+    <span class="hint" id="stat">loading…</span>
+    <span class="spacer"></span>
+    <button type="button" id="fit">Fit</button>
+  </header>
+  <div id="graph-col">
+    <div id="canvas"></div>
+    <div id="contracts"></div>
+  </div>
+  <aside id="detail"><p class="hint">Pick a node, a connection, or a contract below.</p></aside>
+  <engineer-chat></engineer-chat>
+  <script type="module" src="/components/chat.js"></script>
+  <script type="module">
+    import { ENGINEER } from "/config.js";
+    import yaml from "/vendor/js-yaml.js";
+    import MarkdownIt from "/vendor/markdown-it.js";
+    import DOMPurify from "/vendor/dompurify.js";
+    import { Graph, CanvasBlock } from "/vendor/graph.js";
+
+    const { static: STATIC, log: LOG } = ENGINEER;
+    const HEAD = { "Content-Type": "application/yaml" };
+    const md = new MarkdownIt({ linkify: true });
+    const $ = (id) => document.getElementById(id);
+
+    async function call(base, path, body) {
+      const r = await fetch(base + path, { method: "POST", headers: HEAD, body: yaml.dump(body) });
+      const text = await r.text();
+      if (!r.ok) throw new Error(text.trim() || path + ": " + r.status);
+      return text.trim() ? yaml.load(text) : {};
+    }
+    const prose = (s) => DOMPurify.sanitize(md.render(String(s || "")));
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+    // The page is served either under a session (/agent/<sessionId>/) or, while it is
+    // only being browsed, under a project (/agent/p/<projectId>/<slug>/). The project
+    // is what every read below needs, so it comes first.
+    const pathParts = location.pathname.split("/").filter(Boolean);
+    const pageProject = pathParts[1] === "p" ? decodeURIComponent(pathParts[2] || "") : "";
+    const sid = pageProject ? "" : (pathParts[1] || "");
+    let PID = "";
+    let VIEW = { atoms: [], edges: [], contracts: [] };
+    let graph = null;
+    let PAIRS = new Map();
+
+    // ---------- layout: a small force simulation, run once, so the picture is stable ----------
+    // A circle with 35 curves through it is unreadable; the library pans, zooms and drags, but it
+    // does not decide where a node goes, so the page does that here before handing the blocks over.
+    const TARGET = { x: 90, y: 90, w: 780, h: 620 };
+
+    function forceLayout(nodes, links) {
+      const W = 900, H = 640;
+      const pos = new Map();
+      nodes.forEach((n, i) => {
+        const a = -Math.PI / 2 + (i * 2 * Math.PI) / nodes.length;
+        pos.set(n.id, { x: 320 * Math.cos(a), y: 250 * Math.sin(a) });
+      });
+      const k = Math.sqrt((W * H) / Math.max(nodes.length, 1)) * 0.9;
+      let temp = 160;
+      for (let step = 0; step < 420; step++) {
+        const disp = new Map(nodes.map((n) => [n.id, { x: 0, y: 0 }]));
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            const a = pos.get(nodes[i].id), b = pos.get(nodes[j].id);
+            let dx = a.x - b.x, dy = a.y - b.y;
+            let d = Math.hypot(dx, dy) || 0.01;
+            const f = (k * k) / d;
+            dx /= d; dy /= d;
+            disp.get(nodes[i].id).x += dx * f; disp.get(nodes[i].id).y += dy * f;
+            disp.get(nodes[j].id).x -= dx * f; disp.get(nodes[j].id).y -= dy * f;
+          }
+        }
+        for (const l of links) {
+          const a = pos.get(l.source), b = pos.get(l.target);
+          if (!a || !b || a === b) continue;
+          let dx = a.x - b.x, dy = a.y - b.y;
+          const d = Math.hypot(dx, dy) || 0.01;
+          const f = (d * d) / k;
+          dx /= d; dy /= d;
+          disp.get(l.source).x -= dx * f; disp.get(l.source).y -= dy * f;
+          disp.get(l.target).x += dx * f; disp.get(l.target).y += dy * f;
+        }
+        for (const n of nodes) {
+          const d = disp.get(n.id), p = pos.get(n.id);
+          const m = Math.hypot(d.x, d.y) || 0.01;
+          p.x += (d.x / m) * Math.min(m, temp);
+          p.y += (d.y / m) * Math.min(m, temp);
+          p.x = Math.max(-460, Math.min(460, p.x));
+          p.y = Math.max(-330, Math.min(330, p.y));
+        }
+        temp = Math.max(2, temp * 0.985);
+      }
+      // The camera will not zoom past 1:1, so the layout itself has to fill the canvas: stretch
+      // the simulation's bounding box to a rectangle a few nodes can occupy comfortably.
+      const xs = [...pos.values()].map((p) => p.x), ys = [...pos.values()].map((p) => p.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const sx = (TARGET.w) / Math.max(maxX - minX, 1), sy = (TARGET.h) / Math.max(maxY - minY, 1);
+      const s = Math.min(sx, sy);
+      for (const p of pos.values()) {
+        p.x = TARGET.x + (p.x - minX) * s;
+        p.y = TARGET.y + (p.y - minY) * s;
+      }
+      return pos;
+    }
+
+    // The default block only paints its name in the schematic zoom range; close up it drops to a
+    // bare rectangle. Atoms are few, so every zoom level keeps the name here.
+    class NamedBlock extends CanvasBlock {
+      renderDetailedView(ctx) {
+        this.renderSchematicView(ctx);
+      }
+    }
+
+    // The library paints with its own palette; take the theme's colours so the canvas is not a
+    // white island inside a dark page.
+    function themeColors() {
+      const cs = getComputedStyle(document.documentElement);
+      const v = (name, fallback) => (cs.getPropertyValue(name) || "").trim() || fallback;
+      return {
+        canvas: { layerBackground: v("--bg", "#fff"), belowLayerBackground: v("--bg", "#fff"),
+                  dots: v("--border", "#ddd"), border: v("--border", "#eee") },
+        block: { background: v("--surface-2", "#eee"), border: v("--border-strong", "#ddd"),
+                 text: v("--fg", "#222"), selectedBorder: v("--accent", "#06f") },
+        connection: { background: v("--border", "#ddd"), selectedBackground: v("--accent", "#06f") },
+        selection: { background: "rgba(120,150,255,.10)", border: v("--accent", "#06f") },
+      };
+    }
+
+    function buildGraph() {
+      const { atoms, edges } = VIEW;
+      const pos = forceLayout(atoms.map((a) => ({ id: a.name })), edges.map((e) => ({ source: e.from, target: e.to })));
+      // The camera addresses world coordinates from its top-left corner, so the layout is moved
+      // into positive space before it is handed over.
+      const xs = atoms.map((a) => pos.get(a.name).x), ys = atoms.map((a) => pos.get(a.name).y);
+      const shiftX = 120 - Math.min(...xs), shiftY = 120 - Math.min(...ys);
+      const blocks = atoms.map((a) => {
+        const p = pos.get(a.name) || { x: 0, y: 0 };
+        return { id: a.name, name: a.name, is: "block",
+                 x: Math.round(p.x + shiftX), y: Math.round(p.y + shiftY), width: 150, height: 56 };
+      });
+      // One curve per ordered pair, not per edge: this system has 35 edges between 4 atoms, so a
+      // curve per edge would be 35 lines drawn on top of each other. The pair's edges are listed
+      // in the detail column when the curve is picked.
+      PAIRS = new Map();
+      for (const e of edges) {
+        const key = e.from + "->" + e.to;
+        if (!PAIRS.has(key)) PAIRS.set(key, []);
+        PAIRS.get(key).push(e);
+      }
+      const connections = [...PAIRS.keys()].map((key) => {
+        const [from, to] = key.split("->");
+        return { id: key, sourceBlockId: from, targetBlockId: to };
+      });
+      graph = new Graph({ blocks, connections,
+        settings: { showConnectionArrows: true,
+          blockComponents: { block: NamedBlock, Block: NamedBlock } } },
+        $("canvas"), themeColors());
+      graph.start();
+      graph.on("connection-selection-change", (ev) => {
+        const d = ev.detail || {};
+        const changes = d.diff?.changes || d.changes || {};
+        const added = (changes.add || []).map((x) => (typeof x === "string" ? x : x?.id));
+        const key = added.filter(Boolean).pop();
+        if (key && PAIRS.has(key)) showPair(key, PAIRS.get(key));
+      });
+      graph.on("blocks-selection-change", (ev) => {
+        const d = ev.detail || {};
+        const changes = d.diff?.changes || d.changes || {};
+        const added = (changes.add || d.blocks || []).map((x) => (typeof x === "string" ? x : x?.id));
+        const name = added.filter(Boolean).pop();
+        const atom = atoms.find((a) => a.name === name);
+        if (atom) showAtom(atom, false);
+      });
+      requestAnimationFrame(() => { graph.updateSize(); fit(); });
+    }
+
+    // Fit the camera to the blocks themselves: the layout is centred on (0, 0) and the camera's
+    // origin is its top-left corner, so "center" would leave every node off to one side.
+    function fit() {
+      if (!graph) return;
+      const bs = Array.from(graph.rootStore.blocksList.$blocks.value || []).map((b) => b.$state.value);
+      if (!bs.length) return;
+      const left = Math.min(...bs.map((b) => b.x)), top = Math.min(...bs.map((b) => b.y));
+      const right = Math.max(...bs.map((b) => b.x + b.width)), bottom = Math.max(...bs.map((b) => b.y + b.height));
+      graph.zoomTo({ x: left - 80, y: top - 80, width: right - left + 160, height: bottom - top + 160 });
+    }
+
+    // ---------- detail ----------
+    function contractLink(path) {
+      if (!path) return "";
+      const full = String(path).replace(/^\.\//, "structure/");
+      return `<button class="chip" data-contract="${esc(full)}">contract ${esc(full.split("/").pop())}</button>`;
+    }
+
+    function showAtom(atom) {
+      const iface = (list) => (list || []).map((i) => `
+        <div class="iface">
+          <code>${esc(i.id)}</code>
+          <div class="meta">${esc(i.protocol)} · ${esc(i.channel)}${i.contract ? " · " + contractLink(i.contract) : ""}</div>
+        </div>`).join("");
+      const consumes = atom.interfaces?.consumes || [];
+      const provides = atom.interfaces?.provides || [];
+      $("detail").innerHTML = `
+        <h2>${esc(atom.name)}</h2>
+        <div class="meta">${esc(atom.role || "")}${atom.role ? " · " : ""}${esc(atom.runtime_type || "")} ${esc(atom.runtime_version || "")}</div>
+        <h3>What it is</h3><div class="prose">${prose(atom.description)}</div>
+        ${provides.length ? `<h3>Provides ${provides.length}</h3>${iface(provides)}` : ""}
+        ${consumes.length ? `<h3>Consumes ${consumes.length}</h3>${iface(consumes)}` : ""}`;
+      for (const b of $("detail").querySelectorAll("[data-contract]")) b.onclick = () => void showContract(b.dataset.contract);
+    }
+
+    // A curve stands for every edge between its two ends, so the detail is the list of them.
+    function showPair(key, list) {
+      const [from, to] = key.split("->");
+      const rows = list.map((e) => `
+        <div class="iface">
+          <code>${esc(e.from_interface || "")} → ${esc(e.to_interface || "")}</code>
+          <div class="meta">${esc(e.protocol)} · ${esc(e.channel)}</div>
+          <div class="prose">${prose(e.description)}</div>
+          ${e.contract ? contractLink(e.contract) : ""}
+        </div>`).join("");
+      $("detail").innerHTML = `
+        <h2>${esc(from)} → ${esc(to)}</h2>
+        <div class="meta">${list.length} connection${list.length === 1 ? "" : "s"} between these two atoms</div>
+        ${rows}`;
+      for (const b of $("detail").querySelectorAll("[data-contract]")) b.onclick = () => void showContract(b.dataset.contract);
+    }
+
+    async function showContract(path) {
+      const id = String(path).replace(/^\.\//, "structure/");
+      $("detail").innerHTML = `<p class="hint">loading ${esc(id)}…</p>`;
+      try {
+        const data = await call(STATIC, "/static/query-detail", { id, type: "contract", projectId: PID });
+        const c = data.contract || {};
+        const body = (b) => (b ? `<pre>${esc(yaml.dump(b))}</pre>` : "");
+        $("detail").innerHTML = `
+          <h2>${esc(c.id || id.split("/").pop().replace(/\.yaml$/, ""))}</h2>
+          <div class="prose">${prose(c.description)}</div>
+          ${c.request ? `<h3>Request</h3>${body(c.request)}` : ""}
+          ${c.response ? `<h3>Response</h3>${body(c.response)}` : ""}
+          ${c.errors?.length ? `<h3>Errors</h3>${body(c.errors)}` : ""}`;
+      } catch (err) {
+        $("detail").innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+      }
+      document.querySelectorAll(".chip.on").forEach((c) => c.classList.remove("on"));
+      document.querySelectorAll("[data-contract]").forEach((c) => {
+        if (c.dataset.contract === id) c.classList.add("on");
+      });
+    }
+
+    function drawContracts() {
+      const box = $("contracts");
+      const list = VIEW.contracts || [];
+      box.innerHTML = `<h2>Contracts ${list.length}</h2>`;
+      for (const p of list) {
+        const path = typeof p === "string" ? p : p.id;
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "chip";
+        b.dataset.contract = path;
+        b.textContent = path.split("/").pop().replace(/\.yaml$/, "");
+        b.addEventListener("click", () => void showContract(path));
+        box.appendChild(b);
+      }
+    }
+
+    $("fit").addEventListener("click", fit);
+    window.addEventListener("resize", () => graph?.updateSize());
+
+    // ---------- boot ----------
+    try {
+      PID = pageProject || (await call(LOG, "/log/session/detail", { sessionId: sid })).projectId;
+      VIEW = await call(STATIC, "/static/query", { projectId: PID });
+      VIEW.atoms = VIEW.atoms || [];
+      VIEW.edges = VIEW.edges || [];
+      VIEW.contracts = VIEW.contracts || [];
+      $("stat").textContent = `${VIEW.atoms.length} atoms · ${VIEW.edges.length} connections · ${VIEW.contracts.length} contracts`;
+      buildGraph();
+      drawContracts();
+    } catch (err) {
+      $("stat").textContent = "read failed";
+      $("detail").innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+    }
+  </script>
+</body>
+</html>

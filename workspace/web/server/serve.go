@@ -86,6 +86,24 @@ const usage = "usage: engineer serve-web --bind <host> --port <n> --assets <dir>
 // agentPrefix is the URL prefix pages are served under: /agent/<sessionId>/…
 const agentPrefix = "/agent/"
 
+// pagePrefix is the same thing without a session: /agent/p/<projectId>/<slug>/… serves
+// a blueprint for browsing, before any conversation exists.
+const pagePrefix = "/agent/p/"
+
+// projectIDOkay is the shape log's project ids have. It arrives in a URL here, so it
+// is checked before it is used to look a folder up.
+func projectIDOkay(id string) bool {
+	if !strings.HasPrefix(id, "p_") || len(id) != 14 {
+		return false
+	}
+	for _, r := range id[2:] {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // blueprintSlug is the only shape a slug may have. It arrives from log, but log's
 // row is written from a request body — validating here is what keeps a bad row
 // from becoming a path.
@@ -373,7 +391,31 @@ func handler(assets string, rt runtimeConfig) http.Handler {
 		// conversation, not the class.
 		base := assets
 		rel := urlPath
-		if strings.HasPrefix(urlPath, agentPrefix) {
+		// A page without a conversation: /agent/p/<projectId>/<slug>/… is the blueprint
+		// itself, straight out of that project's folder. Browsing has to work before a
+		// session exists — a session row is written when the first message is sent, not
+		// when the page is looked at — so this route names the project instead.
+		if strings.HasPrefix(urlPath, pagePrefix) {
+			rest := strings.TrimPrefix(urlPath, pagePrefix)
+			parts := strings.SplitN(rest, "/", 3)
+			if len(parts) < 3 || !projectIDOkay(parts[0]) || !blueprintSlug.MatchString(parts[1]) {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			dir, ok, err := projects.dir(parts[0])
+			if err != nil {
+				http.Error(w, "engineer web: cannot resolve project: "+err.Error(), http.StatusBadGateway)
+				return
+			}
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			base = filepath.Join(dir, ".agents", "blueprints")
+			rel = "/" + parts[1] + "/" + parts[2]
+			// /agent/p/… also starts with /agent/, so this is an `else`: the session
+			// branch would otherwise read "p" as a session id.
+		} else if strings.HasPrefix(urlPath, agentPrefix) {
 			rest := strings.TrimPrefix(urlPath, agentPrefix)
 			slash := strings.Index(rest, "/")
 			if slash < 0 {

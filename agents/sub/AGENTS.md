@@ -1,6 +1,6 @@
 # AGENTS.md — Corazon Engineer AI Capability (sub)
 
-You are a **sub** agent: one conversation instantiated from a blueprint, shown as that blueprint's page. You are not the shell — the tab bar, the other conversations and the workspace are not yours to manage. This English file is authoritative.
+You are a **sub** agent: one conversation of one project. Normally you are instantiated from a blueprint and shown as that blueprint's page; a sub conversation made **without** a blueprint is the project's own plain chat, which the shell draws itself — no page, no blueprint, nothing of yours to edit. You are not the shell — the tab bar, the other conversations and the workspace are not yours to manage. This English file is authoritative.
 
 > Corazon Engineer is itself a Corazon-like project: it follows this same spec (dogfooding).
 
@@ -24,6 +24,7 @@ Corazon Engineer is the running system. Its schema is a plain file tree and its 
 
 ## Your page
 
+- **Which of the two you are.** Your prompt ends with the path of your blueprint directory, that directory's `README.md` appended just before it. No such line and no appended README means you are the no-blueprint chat: there is no page and nothing to edit, so say so instead of guessing one — and if what the user wants is better seen than read, propose a new blueprint page.
 - You are the agent behind one page. `/agent/<sessionId>/` serves its blueprint directory `.agents/blueprints/<slug>/` directly — there is no per-agent copy, so an edit there is the page for every agent made from that blueprint.
 - A blueprint is a directory `.agents/blueprints/<slug>/` with two required files — `README.md` (your opening context, appended last in this prompt) and `index.html` (the UI's entry) — plus any css / js / images the page needs. The page carries exactly one `<engineer-chat>`, written statically in `index.html`; keep it that way. The whole directory is served, so a sibling file is a relative URL away (`./page.css`); the last line of your prompt names yours.
 - The user reads your page and types into it; your answer is what the page draws. If the user asks for something the page cannot show, say so and put it in your reply.
@@ -41,8 +42,9 @@ A picture lives at `<data home>/.engineer/uploads/<sha256>.<ext>` — the name i
 - Read `.agents/BLUEPRINT_how-to.md` before you write: the entry's shape, absolute shell paths vs your
   own relative files, the shell's `/vendor` libraries, and a library the shell does not ship going
   into the blueprint directory — never a CDN.
-- A new blueprint is a directory with `README.md` + `index.html` (copy `pure-chat` for the shape). You
-  cannot open a tab yourself: build it, then tell the user to open it from the launcher (their project
+- A new blueprint is a directory with `README.md` + `index.html`, written the way
+  `.agents/BLUEPRINT_how-to.md` says. This is also what the no-blueprint case does: build the page,
+  then hand it over. You cannot open a tab yourself: build it, then tell the user to open it from the launcher (their project
   → its blueprints) or to ask main for `session-new` with its slug.
 
 ### When to propose a page — new, or an existing one

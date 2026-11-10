@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Library</title>
+  <!-- Theme before first paint, from the same key the shell uses, so there is no light flash. -->
+  <script>
+    (function () {
+      var t = "light";
+      try {
+        var stored = localStorage.getItem("engineer.theme");
+        if (["light", "dark", "warm", "cold", "slate"].includes(stored)) t = stored;
+      } catch (e) {}
+      document.documentElement.setAttribute("data-theme", t);
+      document.documentElement.style.colorScheme = t === "dark" ? "dark" : "light";
+    })();
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/vendor/highlight.css">
+  <style>
+    html, body { height: 100%; }
+    body { margin: 0; height: 100vh; overflow: hidden; font-size: 13px; line-height: 1.6;
+           font-family: var(--font); color: var(--fg); background: var(--bg);
+           display: grid; grid-template-columns: 300px minmax(0, 1fr) minmax(320px, 28vw);
+           grid-template-rows: auto minmax(0, 1fr); }
+    header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 10px;
+             padding: 10px 16px; border-bottom: 1px solid var(--border); }
+    header h1 { font-size: 14px; margin: 0; }
+    header .hint { color: var(--fg-muted); font-size: 12px; }
+    header input { margin-left: auto; font: inherit; font-size: 12px; padding: 3px 9px;
+                   border: 1px solid var(--border); border-radius: 12px;
+                   background: var(--surface-2); color: var(--fg); outline: none; width: 200px; }
+    header input:focus { border-color: var(--accent-border); }
+    #tree, #doc, engineer-chat { min-height: 0; overflow: auto; }
+    #tree { border-right: 1px solid var(--border); padding: 8px 6px 24px; }
+    #tree .root { display: flex; align-items: center; gap: 6px; font-size: 10.5px; cursor: pointer;
+                  text-transform: uppercase; letter-spacing: .07em; color: var(--fg-muted);
+                  margin: 12px 8px 3px; font-weight: 600; user-select: none; }
+    #tree .root:hover { color: var(--fg); }
+    #tree .files { display: block; }
+    #tree .files.hidden { display: none; }
+    /* the file keeps the tree's own shape: its path inside the root, not just its name */
+    .item { display: block; width: 100%; text-align: left; font: inherit; font-size: 12px; cursor: pointer;
+            border: 0; background: none; color: var(--fg); padding: 2px 8px 2px 16px; border-radius: 5px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item .dim { color: var(--fg-muted); }
+    .item:hover { background: var(--surface-3); }
+    .item.on { background: var(--accent-bg); color: var(--accent); }
+    #doc { padding: 16px 22px 36px; }
+    #doc .doc-title { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+    #doc .doc-path { color: var(--fg-muted); font-size: 11.5px; font-family: var(--font-mono);
+                     margin-bottom: 14px; }
+    .prose { overflow-wrap: anywhere; }
+    .prose h1 { font-size: 16px; } .prose h2 { font-size: 14px; } .prose h3 { font-size: 13px; }
+    .prose pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 5px;
+                 padding: 10px; overflow: auto; font-family: var(--font-mono); font-size: 11.5px; }
+    .prose code { font-family: var(--font-mono); font-size: 11.5px; background: var(--code-bg);
+                  padding: 1px 4px; border-radius: 3px; }
+    .prose pre code { background: none; padding: 0; }
+    .prose table { border-collapse: collapse; font-size: 12px; }
+    .prose th, .prose td { border: 1px solid var(--border); padding: 3px 8px; text-align: left; }
+    .prose a { color: var(--accent); }
+    .prose blockquote { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border);
+                        color: var(--fg-muted); }
+    .hint { color: var(--fg-muted); }
+    engineer-chat { display: block; height: 100%; border-left: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Library</h1>
+    <span class="hint" id="stat">loading…</span>
+    <input id="filter" type="search" placeholder="Filter files…" autocomplete="off">
+  </header>
+  <nav id="tree"></nav>
+  <main id="doc"><p class="hint">Pick a file on the left.</p></main>
+  <engineer-chat></engineer-chat>
+  <script type="module" src="/components/chat.js"></script>
+  <script type="module">
+    import { ENGINEER } from "/config.js";
+    import yaml from "/vendor/js-yaml.js";
+    import MarkdownIt from "/vendor/markdown-it.js";
+    import DOMPurify from "/vendor/dompurify.js";
+    import hljs from "/vendor/highlight.js";
+
+    const { static: STATIC, log: LOG } = ENGINEER;
+    const HEAD = { "Content-Type": "application/yaml" };
+    const md = new MarkdownIt({
+      linkify: true,
+      highlight: (code, lang) => {
+        if (lang && hljs.getLanguage(lang)) {
+          try { return hljs.highlight(code, { language: lang }).value; } catch (e) {}
+        }
+        return "";
+      },
+    });
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+    async function call(base, path, body) {
+      const r = await fetch(base + path, { method: "POST", headers: HEAD, body: yaml.dump(body) });
+      const text = await r.text();
+      if (!r.ok) throw new Error(text.trim() || path + ": " + r.status);
+      return text.trim() ? yaml.load(text) : {};
+    }
+
+    // The page is served either under a session (/agent/<sessionId>/) or, while it is
+    // only being browsed, under a project (/agent/p/<projectId>/<slug>/). The project
+    // is what every read below needs, so it comes first.
+    const pathParts = location.pathname.split("/").filter(Boolean);
+    const pageProject = pathParts[1] === "p" ? decodeURIComponent(pathParts[2] || "") : "";
+    const sid = pageProject ? "" : (pathParts[1] || "");
+    // The roots a sub agent reads to know how the project is built and operated.
+    const ROOTS = [
+      ["structure/docs", "docs"],
+      ["how-to", "how-to"],
+      ["humanwrite", "humanwrite"],
+      ["development", "development"],
+    ];
+    const typeOf = (path) => {
+      if (path.startsWith("structure/docs/")) return "docs";
+      if (path.startsWith("how-to/")) return "how-to";
+      if (path.startsWith("humanwrite/")) return "humanwrite";
+      if (path.startsWith("development/")) return "development";
+      return "";
+    };
+
+    let PID = "";
+    let files = [];
+    let current = "";
+    const collapsed = new Set(JSON.parse(localStorage.getItem("library.collapsed") || "[]"));
+
+    function drawTree() {
+      const box = $("tree");
+      const q = $("filter").value.trim().toLowerCase();
+      box.textContent = "";
+      for (const [root, title] of ROOTS) {
+        const list = files.filter((p) => p.startsWith(root + "/") && (!q || p.toLowerCase().includes(q)));
+        if (q && !list.length) continue;
+        const h = document.createElement("div");
+        h.className = "root";
+        h.textContent = `${collapsed.has(root) ? "▸" : "▾"} ${title} ${list.length}`;
+        h.addEventListener("click", () => {
+          collapsed.has(root) ? collapsed.delete(root) : collapsed.add(root);
+          localStorage.setItem("library.collapsed", JSON.stringify([...collapsed]));
+          drawTree();
+        });
+        box.appendChild(h);
+        if (collapsed.has(root)) continue;
+        const wrap = document.createElement("div");
+        wrap.className = "files";
+        for (const path of list) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "item" + (path === current ? " on" : "");
+          b.title = path;
+          const rest = path.slice(root.length + 1);
+          b.innerHTML = `<span class="dim">${esc(path.slice(0, root.length + 1))}</span>${esc(rest)}`;
+          b.addEventListener("click", () => void open(path));
+          wrap.appendChild(b);
+        }
+        box.appendChild(wrap);
+      }
+      if (!box.children.length) box.innerHTML = `<p class="hint" style="padding:8px">No file matches the filter.</p>`;
+    }
+
+    async function open(path) {
+      current = path;
+      drawTree();
+      $("doc").innerHTML = `<p class="hint">loading ${esc(path)}…</p>`;
+      try {
+        const type = typeOf(path);
+        if (!type) throw new Error("cannot read " + path);
+        const data = await call(STATIC, "/static/query-detail", { id: path, type, projectId: PID });
+        const text = data[type] ?? "";
+        $("doc").innerHTML = `
+          <p class="doc-title">${esc(path.split("/").pop())}</p>
+          <p class="doc-path">${esc(path)}</p>
+          <div class="prose">${DOMPurify.sanitize(md.render(String(text)))}</div>`;
+        $("doc").scrollTop = 0;
+      } catch (err) {
+        $("doc").innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+      }
+    }
+
+    $("filter").addEventListener("input", drawTree);
+
+    try {
+      PID = pageProject || (await call(LOG, "/log/session/detail", { sessionId: sid })).projectId;
+      const data = await call(STATIC, "/static/query", { projectId: PID });
+      files = [...(data.docs || []), ...(data["how-to"] || []), ...(data.humanwrite || []),
+               ...(data.development || [])].sort();
+      $("stat").textContent = `${files.length} files`;
+      drawTree();
+      if (files.length) void open(files[0]);
+    } catch (err) {
+      $("stat").textContent = "read failed";
+      $("doc").innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+    }
+  </script>
+</body>
+</html>

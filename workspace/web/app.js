@@ -186,6 +186,12 @@ function agentFrameSrc(sessionId) {
   return `/agent/${encodeURIComponent(sessionId)}/`;
 }
 
+// blueprintFrameSrc is the same page with no session behind it: the project and the
+// slug are in the URL, because there is no session row to resolve them through.
+function blueprintFrameSrc(projectId, slug) {
+  return `/agent/p/${encodeURIComponent(projectId)}/${encodeURIComponent(slug)}/`;
+}
+
 // tabFromSession rebuilds a tab's shell object from the session list. The view is
 // built lazily (showTab → viewOf), so a tab that is never shown costs nothing.
 function tabFromSession(rec) {
@@ -257,14 +263,15 @@ function makeMainTab(sessionId) {
   return tab;
 }
 
-// viewOf builds the one element a tab shows: main's chat, an agent's own page in
-// an iframe (its blueprint's index.html, served at /agent/<sessionId>/), or a
-// project's launcher page.
+// viewOf builds the one element a tab shows: main's chat, a blueprint's page in an
+// iframe, or — for a draft tab — the project's home page.
 function viewOf(tab) {
   if (tab.el) return tab.el;
   if (tab.main) return null; // built by makeMainTab
-  if (tab.kind === "launcher") {
-    tab.el = buildProjectHomeView(tab.projectId);
+  // A draft that is still on its project's home: the blueprints, the recents, and
+  // an empty conversation. Nothing exists yet; the home is the tab's content.
+  if (tab.kind === "new" && !tab.blueprint) {
+    tab.el = buildProjectHomeView(tab);
     return tab.el;
   }
   // A conversation with no blueprint has no page to put in a frame: this is the
@@ -274,9 +281,21 @@ function viewOf(tab) {
     tab.el = makeChatView(tab);
     return tab.el;
   }
+  // The same page either way; only the address differs, and it says whether a
+  // conversation exists yet (see agentFrameSrc / blueprintFrameSrc).
+  tab.el = makePageFrame(tab, tab.kind === "new" && !tab.sessionId
+    ? blueprintFrameSrc(tab.projectId, tab.blueprint)
+    : agentFrameSrc(tab.sessionId));
+  return tab.el;
+}
+
+// makePageFrame is a blueprint's page in an iframe. The frame is same-origin, so
+// what the page says reaches the shell as events on its document: the name its
+// conversation took, and the session its first message created.
+function makePageFrame(tab, src) {
   const frame = document.createElement("iframe");
   frame.className = "view view-page";
-  frame.title = tab.sessionId;
+  frame.title = tab.sessionId || `${tab.projectId}/${tab.blueprint}`;
   // Listen before pointing it anywhere: a blueprint served from cache can load
   // before a listener attached afterwards would ever see it, and the theme is
   // only pushed on load.
@@ -298,10 +317,15 @@ function viewOf(tab) {
       tab.name = renamed;
       renderTabs();
     });
+    // A page browsed before any conversation existed: this is the message that
+    // makes the tab a session. The page keeps running where it is; only the tab
+    // changes what it is.
+    doc?.addEventListener("engineer-session", (event) => {
+      void adoptSession(tab, String(event.detail?.sessionId ?? ""));
+    });
   });
-  frame.src = agentFrameSrc(tab.sessionId);
+  frame.src = src;
   tab.frameEl = frame;
-  tab.el = frame;
   return frame;
 }
 
@@ -371,38 +395,63 @@ function projectOf(tab) {
   return tab.projectId ? projectList.find((p) => p.projectId === tab.projectId) : undefined;
 }
 
-function launcherTabId(projectId) {
-  return `launcher:${projectId}`;
+// A **draft** tab is a tab that is not a session (yet): what the `+` in a group
+// makes, the way a browser's `+` makes an empty tab. It has no row in log — there
+// is no conversation to keep, nothing to resume and nothing to name — and it lives
+// only in this window. The first message sent from it creates the session
+// (`POST /ai/new`, from inside the page) and the tab becomes that session's tab
+// (see adoptSession): from then on it is an ordinary session tab, in log and on
+// screen. Reloading the window does not bring drafts back, because nothing was
+// written down to bring back.
+let draftSeq = 0;
+
+function draftTab(projectId, blueprint = "") {
+  return {
+    id: `new:${++draftSeq}`,
+    kind: "new",
+    projectId,
+    blueprint,
+    sessionId: "",
+    name: blueprint || "new tab",
+    el: null,
+    frameEl: null,
+    main: false,
+  };
 }
 
-function launcherTab(projectId) {
-  return openTabs.find((t) => t.id === launcherTabId(projectId));
-}
-
-// ensureLauncherTab puts a project's launcher on screen as a tab of its group. A
-// hidden group is made visible first: a group that is not drawn cannot be worked
-// in (`edit` on a hidden project means "show it, then open this").
-async function ensureLauncherTab(projectId) {
+// openNewTab is the `+` of a group: a fresh draft tab, on the project's home (or,
+// when a slug is given, on that blueprint's page). A hidden group is shown first —
+// a group that is not drawn cannot be worked in.
+async function openNewTab(projectId, mode = "push", blueprint = "") {
   const project = projectList.find((p) => p.projectId === projectId);
   if (!project) throw new Error(`project ${projectId} is not on the board`);
   if (project.visible === false) await setProjectVisible(project, true);
   expandGroup(projectId);
-  let tab = launcherTab(projectId);
-  if (!tab) {
-    tab = {
-      id: launcherTabId(projectId),
-      kind: "launcher",
-      projectId,
-      sessionId: "",
-      name: "launcher",
-      blueprint: "",
-      el: null,
-      frameEl: null,
-      main: false,
-    };
-    openTabs.push(tab);
-  }
+  const tab = draftTab(projectId, blueprint);
+  openTabs.push(tab);
+  await activateTab(tab.id, mode);
   return tab;
+}
+
+// adoptSession is where a draft stops being a draft. The page made the session (it
+// is the page's own conversation, so it keeps running where it is); the tab only
+// learns what it now is — an id that log knows, and therefore a place in the open
+// list, which is what makes the conversation survive a reload.
+async function adoptSession(tab, sessionId) {
+  if (!tab || !sessionId || tab.kind !== "new") return;
+  const wasActive = activeTabId === tab.id;
+  tab.kind = "sub";
+  tab.sessionId = sessionId;
+  tab.id = sessionId;
+  if (tab.name === "new tab") tab.name = tab.blueprint || "…";
+  if (wasActive) activeTabId = sessionId;
+  try {
+    await logSessionOn([sessionId]);
+  } catch {
+    // The conversation exists either way; the open list is repaired on refresh.
+  }
+  renderTabs();
+  if (wasActive) syncTabUrl(tab, "replace");
 }
 
 // tabButton is one tab in the bar: a label, and a close that takes the tab off
@@ -410,21 +459,19 @@ async function ensureLauncherTab(projectId) {
 function tabButton(tab) {
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className =
-    "tab" + (tab.main ? " main" : "") + (tab.kind === "launcher" ? " launcher" : "");
+  btn.className = "tab" + (tab.main ? " main" : "") + (tab.kind === "new" ? " draft" : "");
   btn.dataset.tabId = tab.id;
   // A tab is only narrower on the right when it carries a ×: the close button has
   // its own padding, so the label must not be pushed away from it. Without it
-  // (main, the launcher icon) both sides are the same, and so is the underline.
+  // (main) both sides are the same, and so is the underline.
   const label = document.createElement("span");
   label.className = "tab-label";
   if (tab.main) label.textContent = "main";
-  else if (tab.kind === "launcher") label.innerHTML = ICON_LAUNCHER; // the project launcher, drawn
   else label.textContent = tab.name || "…";
   btn.appendChild(label);
-  // The project launcher is not closable: it is the group's own page, the place
-  // that group's tabs are opened from. Only a conversation tab has a ×.
-  if (!tab.main && tab.kind !== "launcher") {
+  // Every tab of a group has a × — a draft included: it holds nothing in log, so
+  // closing it loses nothing but itself.
+  if (!tab.main) {
     btn.classList.add("closable");
     const close = document.createElement("button");
     close.type = "button";
@@ -441,22 +488,19 @@ function tabButton(tab) {
   return btn;
 }
 
-// launcherEntry is the project's launcher at the end of its group: always the same
-// icon, never a ×. Before its page is opened it opens it; once opened, that same
-// icon is the tab (it carries the tab id and the active underline), and clicking it
-// brings the page back.
-function launcherEntry(project) {
-  const tab = launcherTab(project.projectId);
-  if (tab) return tabButton(tab);
+// newTabEntry is the `+` at the end of a group — a button, not a tab: clicking it
+// makes a tab (see openNewTab) and the button stays where it is, the way a
+// browser's `+` behaves.
+function newTabEntry(project) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "tab launcher launcher-entry";
-  btn.dataset.launcherFor = project.projectId;
+  btn.dataset.newTabFor = project.projectId;
   btn.innerHTML = ICON_LAUNCHER;
   const what = project.name || project.path || "this project";
-  btn.title = `open ${what}'s launcher`;
-  btn.setAttribute("aria-label", "open this project's launcher");
-  btn.addEventListener("click", () => void openProjectLauncher(project.projectId));
+  btn.title = `new tab in ${what}`;
+  btn.setAttribute("aria-label", "open a new tab in this project");
+  btn.addEventListener("click", () => void openNewTab(project.projectId).catch((err) => toast(String(err.message || err))));
   return btn;
 }
 
@@ -497,15 +541,11 @@ function renderTabs() {
     group.appendChild(chip);
 
     if (expanded) {
-      // The project's session tabs, then its launcher — last, like a browser's
-      // new-tab button. The launcher is a real tab once it is open (icon label,
-      // close button, underline when active); closed, it is the same icon with
-      // nothing around it, and clicking it opens that tab.
-      const tabs = openTabs.filter(
-        (t) => !t.main && t.kind !== "launcher" && t.projectId === project.projectId,
-      );
+      // The project's tabs (sessions and drafts alike), then its `+` — last, the
+      // way a browser puts the new-tab button after the tabs it opens.
+      const tabs = openTabs.filter((t) => !t.main && t.projectId === project.projectId);
       for (const tab of tabs) group.appendChild(tabButton(tab));
-      group.appendChild(launcherEntry(project));
+      group.appendChild(newTabEntry(project));
     }
     tabsEl.appendChild(group);
   }
@@ -524,7 +564,13 @@ function syncTabActive() {
 // point. main, a session, or a project's launcher.
 function tabPath(tab) {
   if (tab.main) return "/";
-  if (tab.kind === "launcher") return `/project/${encodeURIComponent(tab.projectId)}/new`;
+  if (!tab.sessionId) {
+    // A draft is a page of its project: the home, or the blueprint it is browsing.
+    const pid = encodeURIComponent(tab.projectId);
+    return tab.blueprint
+      ? `/project/${pid}/blueprint/${encodeURIComponent(tab.blueprint)}`
+      : `/project/${pid}/new`;
+  }
   return `/session/${encodeURIComponent(tab.sessionId)}`;
 }
 
@@ -545,11 +591,11 @@ async function activateTab(id, mode = "push") {
   if (project && project.visible === false) await setProjectVisible(project, true);
   expandGroup(tab.projectId);
   launcherClose();
-  // A launcher tab is a live list (blueprints + that project's recents), not a
+  // A draft's home is a live list (blueprints + that project's recents), not a
   // document: its lists are re-read each time it comes back on stage, so a session
   // created while it was in the background shows up in Recent. The conversation
   // below them is kept — coming back to it must not throw away a draft.
-  if (tab.kind === "launcher" && tab.el?.homeListsEl) {
+  if (!tab.sessionId && tab.el?.homeListsEl) {
     void fillHomeLists(tab.el.homeListsEl, tab.projectId);
   }
   activeTabId = tab.id;
@@ -564,7 +610,7 @@ async function activateTab(id, mode = "push") {
 // things for good). A launcher tab has nothing in log to close; its group stays.
 async function closeWorkspaceTab(tab) {
   if (tab.main) return;
-  if (tab.kind !== "launcher") {
+  if (tab.sessionId) {
     try {
       await logSessionOff(tab.sessionId);
     } catch {
@@ -608,13 +654,13 @@ let nameTick = 0;
 function startNameTick() {
   if (nameTick) return;
   nameTick = setInterval(() => {
-    const watches = openTabs.some((t) => !t.main && t.kind !== "launcher");
+    const watches = openTabs.some((t) => !t.main && t.sessionId);
     if (!watches) return;
     void sessionsById()
       .then((byId) => {
         let changed = false;
         for (const tab of openTabs) {
-          if (tab.main || tab.kind === "launcher") continue;
+          if (tab.main || !tab.sessionId) continue;
           const rec = byId.get(tab.sessionId);
           if (rec?.title && rec.title !== tab.name) {
             tab.name = rec.title;
@@ -667,7 +713,9 @@ async function doRefreshWorkspace() {
   // goes with its project: a project off the board has no group to live in.
   for (const tab of [...openTabs]) {
     if (tab.main) continue;
-    if (tab.kind === "launcher") {
+    // A draft has no session to look for in the open list: it stays until its
+    // project leaves the board, or the user closes it.
+    if (!tab.sessionId) {
       if (projectsKnown && !onBoard.has(tab.projectId)) removeTab(tab);
       continue;
     }
@@ -1190,10 +1238,9 @@ async function setProjectVisible(project, visible) {
 
 // ---------- project launcher ----------
 
-// A project's launcher is a tab of that project's group: what it can be asked to
-// open (its blueprints) and what was opened before (its recents). It belongs to
-// the group, so opening it means showing the group, adding the tab and bringing
-// it up.
+// Opening a project means making one of its tabs: a draft on its home page — what
+// it can be asked to open (its blueprints) and what was opened before (its
+// recents). The group is shown first, then the tab is added and brought up.
 async function openProjectLauncher(projectId, mode = "push") {
   if (launcherHold) return;
   const project = projectList.find((p) => p.projectId === projectId);
@@ -1204,11 +1251,10 @@ async function openProjectLauncher(projectId, mode = "push") {
   }
   launcherHoldOn();
   try {
-    await ensureLauncherTab(projectId);
-    await activateTab(launcherTabId(projectId), mode);
+    await openNewTab(projectId, mode ?? "push");
   } catch (err) {
     launcherRelease();
-    toast(`could not open the launcher: ${err.message}`);
+    toast(`could not open the project: ${err.message}`);
     return;
   }
   launcherRelease();
@@ -1219,7 +1265,8 @@ async function openProjectLauncher(projectId, mode = "push") {
 // everything that project can open (its blueprints) and everything it had open
 // before (its recents), above the shell's own conversation. Arriving here creates
 // nothing: no session exists until the user sends a message or picks a row.
-function buildProjectHomeView(projectId) {
+function buildProjectHomeView(tab) {
+  const projectId = tab.projectId;
   const view = document.createElement("div");
   view.className = "view view-home";
   // The handwritten wordmark, huge and faint, behind the whole page — the shell's
@@ -1239,17 +1286,17 @@ function buildProjectHomeView(projectId) {
   lists.setAttribute("slot", "before");
   view.homeListsEl = lists;
 
-  mountHomeChat(view, projectId, lists);
-  void fillHomeLists(lists, projectId);
+  mountHomeChat(view, tab, lists);
+  void fillHomeLists(lists, projectId, tab);
   return view;
 }
 
-// mountHomeChat puts an empty conversation on a project's home page: no session, so
-// nothing is created until the user sends. The first message creates the session,
-// which the shell opens in a tab of its own — and then this page goes back to
-// empty, because that conversation is now that tab: asking here again starts a new
-// one instead of appending to a conversation the user has already left.
-function mountHomeChat(view, projectId, lists) {
+// mountHomeChat puts an empty conversation on a draft's home page: no session, so
+// nothing is created until the user sends. The first message creates the session
+// and *this* tab becomes it (adoptSession) — the conversation does not move to a
+// second tab, and the home lists are not part of a conversation, so they go.
+function mountHomeChat(view, tab, lists) {
+  const projectId = tab.projectId;
   const chat = document.createElement("engineer-chat");
   chat.className = "home-chat";
   chat.setAttribute("project", projectId);
@@ -1258,8 +1305,20 @@ function mountHomeChat(view, projectId, lists) {
   chat.addEventListener("engineer-session", (event) => {
     const sessionId = String(event.detail?.sessionId ?? "");
     if (!sessionId) return;
-    void openSessionFromLauncher(sessionId);
-    view.replaceChild(mountHomeChat(view, projectId, lists), chat);
+    // The conversation stays in this element and in this tab: what goes is the
+    // home around it — the lists are a place to start from, not part of a
+    // conversation — and the tab stops being a draft.
+    lists.remove();
+    view.querySelector(".home-mark")?.remove();
+    view.classList.remove("view-home");
+    void adoptSession(tab, sessionId);
+  });
+  // The first turn's summary is the tab bar's name, same as on a page.
+  chat.addEventListener("engineer-title", (event) => {
+    const title = String(event.detail?.title ?? "").trim();
+    if (!title || title === tab.name) return;
+    tab.name = title;
+    renderTabs();
   });
   view.appendChild(chat);
   return chat;
@@ -1332,7 +1391,7 @@ function homeSection(title, promise, emptyText, rowOf) {
 // fillHomeLists (re)reads the two sections. Everything on them is that project's:
 // the query carries its id, and log answers for that project alone. A section
 // that cannot be read says why instead of pretending the project is empty.
-async function fillHomeLists(lists, projectId) {
+async function fillHomeLists(lists, projectId, tab = null) {
   const project = projectList.find((p) => p.projectId === projectId);
   const name = project?.name || project?.path || projectId;
   const path = project?.path || "";
@@ -1347,7 +1406,7 @@ async function fillHomeLists(lists, projectId) {
         launcherRow({
           name: b.name,
           desc: b.desc,
-          onOpen: () => void openBlueprintFromLauncher(b, projectId),
+          onOpen: () => void browseBlueprint(b, projectId, tab),
         }),
     ),
   );
@@ -1382,26 +1441,34 @@ function launcherHead(title, path) {
   return head;
 }
 
-// openBlueprintFromLauncher makes a new agent from a blueprint inside a project
-// and puts it on screen as a tab of its own — the same two writes main's
-// session-new does, from the UI. `ai/new` has already written the session row
-// (kind, project, blueprint, title).
-async function openBlueprintFromLauncher(b, projectId) {
+// browseBlueprint opens a blueprint's page — it does not make a session. Clicking a
+// row is looking, not asking: nothing is written until the page's conversation
+// sends its first message, and then that tab becomes the session.
+//
+// From a draft's home page it opens in that same tab (a new page in the browser
+// sense, the way a link replaces what the tab shows); from anywhere else it takes a
+// new draft tab of that project.
+async function browseBlueprint(b, projectId, fromTab = null) {
   if (launcherHold) return;
+  const active = openTabs.find((t) => t.id === activeTabId);
+  const host = [fromTab, active].find((t) => t && t.kind === "new" && !t.blueprint);
   launcherHoldOn();
   try {
-    const res = await fetch(`${AI_BASE}/ai/new`, {
-      method: "POST",
-      headers: { "Content-Type": "application/yaml" },
-      body: yaml.dump({ blueprint: b.slug, projectId }),
-    });
-    const data = yaml.load(await res.text()) || {};
-    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-    const sessionId = data.sessionId;
-    await logSessionOn([sessionId]);
-    // refreshWorkspace puts the tab up; the page inside it loads a moment later.
-    await refreshWorkspace();
-    await waitForTabPaint(openTabs.find((t) => t.sessionId === sessionId));
+    let tab = host;
+    if (!tab) {
+      tab = draftTab(projectId, b.slug);
+      openTabs.push(tab);
+    } else {
+      tab.blueprint = b.slug;
+      tab.name = b.slug;
+      // The home page it was showing is gone with the navigation.
+      tab.el?.parentNode?.removeChild(tab.el);
+      tab.el = null;
+      tab.frameEl = null;
+    }
+    expandGroup(projectId);
+    await activateTab(tab.id, "push");
+    await waitForTabPaint(tab);
     launcherRelease();
     launcherClose("replace");
   } catch (err) {
@@ -1539,12 +1606,18 @@ async function restoreRoute() {
     await openEngineerLauncher(null);
     return;
   }
-  const projectPage = path.match(/^\/project\/([^/]+)\/new$/);
+  const projectPage = path.match(/^\/project\/([^/]+)\/(?:new|blueprint\/([^/]+))$/);
   if (projectPage) {
     const tab = openTabs.find((t) => t.id === activeTabId) || mainTab;
     activeTabId = tab.id;
     showTab(tab);
-    await openProjectLauncher(decodeURIComponent(projectPage[1]), null);
+    const projectId = decodeURIComponent(projectPage[1]);
+    const slug = projectPage[2] ? decodeURIComponent(projectPage[2]) : "";
+    try {
+      await openNewTab(projectId, null, slug);
+    } catch (err) {
+      toast(`could not open page: ${err.message}`);
+    }
     return;
   }
   if (path === "/") {

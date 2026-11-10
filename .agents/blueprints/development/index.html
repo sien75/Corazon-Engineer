@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Development</title>
+  <!-- Theme before first paint, from the same key the shell uses, so there is no light flash. -->
+  <script>
+    (function () {
+      var t = "light";
+      try {
+        var stored = localStorage.getItem("engineer.theme");
+        if (["light", "dark", "warm", "cold", "slate"].includes(stored)) t = stored;
+      } catch (e) {}
+      document.documentElement.setAttribute("data-theme", t);
+      document.documentElement.style.colorScheme = t === "dark" ? "dark" : "light";
+    })();
+  </script>
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/vendor/highlight.css">
+  <style>
+    html, body { height: 100%; }
+    body { margin: 0; height: 100vh; overflow: hidden; font-size: 13px; line-height: 1.6;
+           font-family: var(--font); color: var(--fg); background: var(--bg);
+           display: grid; grid-template-columns: 250px minmax(0, 1fr) minmax(320px, 27vw);
+           grid-template-rows: auto minmax(0, 1fr); }
+    header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 10px;
+             padding: 10px 16px; border-bottom: 1px solid var(--border); }
+    header h1 { font-size: 14px; margin: 0; }
+    header .hint { color: var(--fg-muted); font-size: 12px; }
+    #list, #main, engineer-chat { min-height: 0; }
+    #list { border-right: 1px solid var(--border); padding: 8px 6px 24px; overflow: auto; }
+    #list h2 { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-muted);
+               margin: 6px 8px 4px; font-weight: 600; }
+    .item { display: block; width: 100%; text-align: left; font: inherit; font-size: 12px; cursor: pointer;
+            border: 0; background: none; color: var(--fg); padding: 3px 8px; border-radius: 5px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item:hover { background: var(--surface-3); }
+    .item.on { background: var(--accent-bg); color: var(--accent); }
+    #main { display: flex; flex-direction: column; overflow: hidden; }
+
+    /* the flow: one box per stage, connected left to right */
+    #flow { flex: 0 0 auto; display: flex; align-items: stretch; gap: 0; padding: 16px 20px 12px;
+            border-bottom: 1px solid var(--border); overflow-x: auto; }
+    .step { position: relative; flex: 1 1 0; min-width: 118px; border: 1px solid var(--border);
+            border-radius: 7px; background: var(--surface-2); padding: 8px 10px; cursor: pointer;
+            text-align: left; font: inherit; color: var(--fg); }
+    .step + .step { margin-left: 26px; }
+    .step + .step::before { content: ""; position: absolute; left: -26px; top: 50%; width: 26px;
+                            height: 1px; background: var(--border-strong); }
+    .step + .step::after { content: ""; position: absolute; left: -6px; top: 50%; margin-top: -4px;
+                           border: 4px solid transparent; border-left-color: var(--border-strong); }
+    .step.done { border-color: var(--accent-border); background: var(--accent-bg); }
+    .step.done + .step::before, .step.done + .step::after { background: var(--accent-border);
+                           border-left-color: var(--accent-border); }
+    .step.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .step .n { font-size: 10px; color: var(--fg-muted); letter-spacing: .07em; }
+    .step .label { font-size: 13px; font-weight: 600; }
+    .step .state { font-size: 11px; color: var(--fg-muted); }
+    .step.done .state { color: var(--accent); }
+
+    #panel { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 16px 22px 36px; }
+    #panel .doc-title { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+    #panel .doc-path { color: var(--fg-muted); font-size: 11.5px; font-family: var(--font-mono);
+                       margin-bottom: 14px; }
+    #panel .note { color: var(--fg-muted); font-size: 12px; margin: 0 0 12px; }
+    .prose { overflow-wrap: anywhere; }
+    .prose h1 { font-size: 16px; } .prose h2 { font-size: 14px; } .prose h3 { font-size: 13px; }
+    .prose pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 5px;
+                 padding: 10px; overflow: auto; font-family: var(--font-mono); font-size: 11.5px; }
+    .prose code { font-family: var(--font-mono); font-size: 11.5px; background: var(--code-bg);
+                  padding: 1px 4px; border-radius: 3px; }
+    .prose pre code { background: none; padding: 0; }
+    .prose table { border-collapse: collapse; font-size: 12px; }
+    .prose th, .prose td { border: 1px solid var(--border); padding: 3px 8px; text-align: left; }
+    .prose a { color: var(--accent); }
+    .prose blockquote { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border);
+                        color: var(--fg-muted); }
+    .files { list-style: none; margin: 0; padding: 0; }
+    .files li { margin: 0 0 2px; }
+    .files button { font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 5px; cursor: pointer;
+                    border: 0; background: none; color: var(--accent); text-align: left;
+                    font-family: var(--font-mono); }
+    .files button:hover { background: var(--surface-3); }
+    .hint { color: var(--fg-muted); }
+    engineer-chat { display: block; height: 100%; border-left: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Development</h1>
+    <span class="hint" id="stat">loading…</span>
+  </header>
+  <nav id="list"></nav>
+  <main id="main">
+    <div id="flow"></div>
+    <div id="panel"><p class="hint">Pick an iteration.</p></div>
+  </main>
+  <engineer-chat></engineer-chat>
+  <script type="module" src="/components/chat.js"></script>
+  <script type="module">
+    import { ENGINEER } from "/config.js";
+    import yaml from "/vendor/js-yaml.js";
+    import MarkdownIt from "/vendor/markdown-it.js";
+    import DOMPurify from "/vendor/dompurify.js";
+    import hljs from "/vendor/highlight.js";
+
+    const { static: STATIC, log: LOG } = ENGINEER;
+    const HEAD = { "Content-Type": "application/yaml" };
+    const md = new MarkdownIt({
+      linkify: true,
+      highlight: (code, lang) => {
+        if (lang && hljs.getLanguage(lang)) {
+          try { return hljs.highlight(code, { language: lang }).value; } catch (e) {}
+        }
+        return "";
+      },
+    });
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+    async function call(base, path, body) {
+      const r = await fetch(base + path, { method: "POST", headers: HEAD, body: yaml.dump(body) });
+      const text = await r.text();
+      if (!r.ok) throw new Error(text.trim() || path + ": " + r.status);
+      return text.trim() ? yaml.load(text) : {};
+    }
+
+    // The page is served either under a session (/agent/<sessionId>/) or, while it is
+    // only being browsed, under a project (/agent/p/<projectId>/<slug>/). The project
+    // is what every read below needs, so it comes first.
+    const pathParts = location.pathname.split("/").filter(Boolean);
+    const pageProject = pathParts[1] === "p" ? decodeURIComponent(pathParts[2] || "") : "";
+    const sid = pageProject ? "" : (pathParts[1] || "");
+    let PID = "";
+    let files = [];
+    let iterations = [];
+    let current = "";            // the selected iteration path
+    let stage = "design";        // the selected stage of the flow
+
+    // The five stages an iteration goes through, in order. Which of them the iteration's own record
+    // covers is read from its headings — the page sees files, not history, so that is the only
+    // honest "how far did this go".
+    const STAGES = [
+      { key: "design", label: "Design", re: /^(目标|问题|背景|goal|problem|context|why)/i,
+        what: "the iteration record" },
+      { key: "develop", label: "Develop", re: /(方案|形状|设计|实施|改动|接口|代码|方案设计|plan|shape|design|change|contract|schema)/i,
+        what: "what is to be built" },
+      { key: "test", label: "Test", re: /(验证|验收|测试|自测|verif|test|accept)/i,
+        what: "test cases" },
+      { key: "release", label: "Release", re: /(发布|部署|打包|上线|交付|release|deploy|pack|ship)/i,
+        what: "pack / deploy" },
+    ];
+
+    const typeOf = (path) => {
+      if (path.startsWith("development/")) return "development";
+      if (path.startsWith("how-to/")) return "how-to";
+      return "";
+    };
+
+    // ---------- left: the iterations ----------
+    function label(path) {
+      return path.split("/").pop().replace(/\.md$/, "");
+    }
+
+    function drawList() {
+      const box = $("list");
+      box.textContent = "";
+      const h = document.createElement("h2");
+      h.textContent = `Iterations ${iterations.length}`;
+      box.appendChild(h);
+      for (const path of iterations) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "item" + (path === current ? " on" : "");
+        b.title = path;
+        b.textContent = label(path);
+        b.addEventListener("click", () => void selectIteration(path));
+        box.appendChild(b);
+      }
+    }
+
+    // ---------- flow ----------
+    function headingsOf(text) {
+      return [...String(text).matchAll(/^#{1,4}\s*(.+)$/gm)].map((m) => m[1].trim());
+    }
+
+    // done: the stage's own words appear in the record's headings; upTo: the last one that does.
+    function stagesOf(text) {
+      const heads = headingsOf(text);
+      return STAGES.map((s) => ({ ...s, done: s.key === "design" || heads.some((h) => s.re.test(h)) }));
+    }
+
+    function drawFlow(stages) {
+      const box = $("flow");
+      box.textContent = "";
+      const upTo = stages.reduce((last, s, i) => (s.done ? i : last), 0);
+      stages.forEach((s, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "step" + (s.done ? " done" : "") + (s.key === stage ? " on" : "");
+        b.innerHTML = `<span class="n">STEP ${i + 1}</span><br>
+          <span class="label">${esc(s.label)}</span><br>
+          <span class="state">${s.done ? (i === upTo ? "up to here" : "in the record") : "not in the record"}</span>`;
+        b.addEventListener("click", () => {
+          stage = s.key;
+          drawFlow(stages);
+          void drawPanel();
+        });
+        box.appendChild(b);
+      });
+    }
+
+    // ---------- panel ----------
+    let docText = "";
+    let stages = [];
+
+    async function selectIteration(path) {
+      current = path;
+      stage = "design";
+      drawList();
+      $("panel").innerHTML = `<p class="hint">loading ${esc(path)}…</p>`;
+      try {
+        const data = await call(STATIC, "/static/query-detail", { id: path, type: "development", projectId: PID });
+        docText = String(data.development ?? "");
+        stages = stagesOf(docText);
+        drawFlow(stages);
+        await drawPanel();
+      } catch (err) {
+        $("panel").innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+      }
+    }
+
+    async function drawPanel() {
+      const s = STAGES.find((x) => x.key === stage) || STAGES[0];
+      if (stage === "test" || stage === "release") {
+        await showFiles(stage);
+        return;
+      }
+      $("panel").innerHTML = `
+        <p class="doc-title">${esc(label(current))}</p>
+        <p class="doc-path">${esc(current)}</p>
+        <p class="note">The iteration record is the design and the plan; the page shows it whole, so both
+          steps read the same document.</p>
+        <div class="prose">${DOMPurify.sanitize(md.render(docText))}</div>`;
+      $("panel").scrollTop = 0;
+    }
+
+    async function showFiles(kind) {
+      const prefix = kind === "test" ? "development/testing/" : "how-to/deploy/";
+      const list = files.filter((p) => p.startsWith(prefix));
+      const title = kind === "test" ? "Test cases" : "Pack and deploy";
+      const note = kind === "test"
+        ? "Every case under development/testing, as it is on disk. The page cannot tell which case was written for this iteration, and it does not invent the link."
+        : "The books and scripts under how-to/deploy. Nothing here is per-iteration either: packing and deploying run from these files.";
+      $("panel").innerHTML = `
+        <p class="doc-title">${esc(title)}</p>
+        <p class="doc-path">${esc(prefix)} · ${list.length} files</p>
+        <p class="note">${esc(note)}</p>
+        <ul class="files">${list.map((p) =>
+          `<li><button type="button" data-open="${esc(p)}">${esc(p.slice(prefix.length))}</button></li>`).join("")}</ul>`;
+      for (const b of $("panel").querySelectorAll("[data-open]")) {
+        b.addEventListener("click", () => void openFile(b.dataset.open));
+      }
+    }
+
+    async function openFile(path) {
+      const type = typeOf(path);
+      $("panel").innerHTML = `<p class="hint">loading ${esc(path)}…</p>`;
+      try {
+        if (!type) throw new Error("cannot read " + path);
+        const data = await call(STATIC, "/static/query-detail", { id: path, type, projectId: PID });
+        $("panel").innerHTML = `
+          <p class="doc-title">${esc(path.split("/").pop())}</p>
+          <p class="doc-path">${esc(path)}</p>
+          <div class="prose">${DOMPurify.sanitize(md.render(String(data[type] ?? "")))}</div>`;
+        $("panel").scrollTop = 0;
+      } catch (err) {
+        $("panel").innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+      }
+    }
+
+    // ---------- boot ----------
+    try {
+      PID = pageProject || (await call(LOG, "/log/session/detail", { sessionId: sid })).projectId;
+      const data = await call(STATIC, "/static/query", { projectId: PID });
+      files = [...(data.development || []), ...(data["how-to"] || [])];
+      iterations = files
+        .filter((p) => /^development\/iterations\/.+\.md$/.test(p))
+        .sort((a, b) => b.localeCompare(a));
+      const tests = files.filter((p) => p.startsWith("development/testing/"));
+      const deploys = files.filter((p) => p.startsWith("how-to/deploy/"));
+      $("stat").textContent = `${iterations.length} iterations · ${tests.length} test files · ${deploys.length} deploy files`;
+      drawList();
+      if (iterations.length) await selectIteration(iterations[0]);
+    } catch (err) {
+      $("stat").textContent = "read failed";
+      $("panel").innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+    }
+  </script>
+</body>
+</html>
