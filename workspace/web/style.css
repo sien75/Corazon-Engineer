@@ -380,6 +380,7 @@ html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
    what the project can open (blueprints, recents) sits at the top of its scroll
    area, in the message column, and scrolls with the messages. */
 .view-home {
+  position: relative;
   background: var(--surface);
 }
 /* The slotted lists take the message column's own geometry (max-width 880px,
@@ -388,10 +389,13 @@ html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
 .home-lists {
   display: block;
   box-sizing: border-box;
+  /* The composer's box, exactly: same 880px column, and the 5px inset plus a row's
+     own 8px padding puts a list's text on the composer's text edge (its 1px border
+     + 12px padding). One column, no second width to line up against. */
   width: 100%;
   max-width: 880px;
   margin-inline: auto;
-  padding: 24px 0 0 12px;
+  padding: 24px 0 0 5px;
 }
 /* One conversation filling the tab: composer at the bottom, everything above it
    scrolling. */
@@ -407,11 +411,21 @@ html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
 /* The project home's masthead: the handwritten "Corazón Engineer". It is a mask,
    so it is drawn in whatever the theme's text colour is. */
 .home-mark {
-  width: 120px;
-  height: 120px;
-  margin: 4px 0 10px 8px;
+  /* The project home's watermark: the handwritten "Corazón Engineer", huge and
+     faint, behind everything the page draws. It is a mask, so it is drawn in the
+     theme's own text colour — no second, inverted copy for the dark themes — and
+     it never takes a pointer or a place in the layout. */
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(66%, 760px);
+  height: min(66%, 760px);
+  /* Centred on the same axis as everything else, lifted a little so the mark does
+     not sit exactly on the middle of the lists. */
+  transform: translateY(-8%);
   background: currentColor;
-  opacity: .9;
+  opacity: .06;
+  pointer-events: none;
   -webkit-mask: url("/assets/corazon-engineer.png") center / contain no-repeat;
   mask: url("/assets/corazon-engineer.png") center / contain no-repeat;
 }
@@ -421,7 +435,8 @@ html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
   width: 100%;
   max-width: none;
   margin: 0 0 8px;
-  padding: 0 12px 8px 0;
+  /* 8px, like a row's own padding: the title sits on the rows' text edge. */
+  padding: 0 0 8px 8px;
 }
 .home-lists .launcher-sec {
   max-width: none;

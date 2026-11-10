@@ -1222,30 +1222,47 @@ async function openProjectLauncher(projectId, mode = "push") {
 function buildProjectHomeView(projectId) {
   const view = document.createElement("div");
   view.className = "view view-home";
+  // The handwritten wordmark, huge and faint, behind the whole page — the shell's
+  // mark in the theme's text colour (a mask, so it needs no second, inverted copy
+  // for the dark themes).
+  const mark = document.createElement("div");
+  mark.className = "home-mark";
+  mark.setAttribute("aria-hidden", "true");
+  view.appendChild(mark);
+
+  // The lists ride inside the conversation's own scroll area (`slot="before"`), in
+  // the message column: they scroll with the messages instead of occupying a pane
+  // of their own, and the composer stays where a composer is. They are one element
+  // the page keeps, so a new conversation on this page carries them over.
+  const lists = document.createElement("div");
+  lists.className = "home-lists";
+  lists.setAttribute("slot", "before");
+  view.homeListsEl = lists;
+
+  mountHomeChat(view, projectId, lists);
+  void fillHomeLists(lists, projectId);
+  return view;
+}
+
+// mountHomeChat puts an empty conversation on a project's home page: no session, so
+// nothing is created until the user sends. The first message creates the session,
+// which the shell opens in a tab of its own — and then this page goes back to
+// empty, because that conversation is now that tab: asking here again starts a new
+// one instead of appending to a conversation the user has already left.
+function mountHomeChat(view, projectId, lists) {
   const chat = document.createElement("engineer-chat");
   chat.className = "home-chat";
   chat.setAttribute("project", projectId);
   chat.setAttribute("autofocus", "");
-
-  // The lists go inside the conversation's own scroll area (`slot="before"`), in
-  // the message column: they scroll with the messages instead of occupying a
-  // pane of their own, and the composer stays where a composer is.
-  const lists = document.createElement("div");
-  lists.className = "home-lists";
-  lists.setAttribute("slot", "before");
   chat.appendChild(lists);
-  view.homeListsEl = lists;
-  // The element creates the session on the first message and says so here; from
-  // then on it is an ordinary conversation, in a tab of its own.
   chat.addEventListener("engineer-session", (event) => {
     const sessionId = String(event.detail?.sessionId ?? "");
-    if (sessionId) void openSessionFromLauncher(sessionId);
+    if (!sessionId) return;
+    void openSessionFromLauncher(sessionId);
+    view.replaceChild(mountHomeChat(view, projectId, lists), chat);
   });
   view.appendChild(chat);
-  view.homeChatEl = chat;
-
-  void fillHomeLists(lists, projectId);
-  return view;
+  return chat;
 }
 
 // HOME_LIMIT is how many rows a home section shows before asking whether to show
@@ -1320,14 +1337,6 @@ async function fillHomeLists(lists, projectId) {
   const name = project?.name || project?.path || projectId;
   const path = project?.path || "";
   lists.innerHTML = "";
-  // The masthead: the handwritten wordmark, drawn in the current text colour (a
-  // mask, like the tab bar's mark) so it follows the theme instead of shipping a
-  // second, inverted copy for the dark one.
-  const mark = document.createElement("div");
-  mark.className = "home-mark";
-  mark.setAttribute("role", "img");
-  mark.setAttribute("aria-label", "Corazon Engineer");
-  lists.appendChild(mark);
   lists.appendChild(launcherHead(name, path));
   lists.appendChild(
     homeSection(
