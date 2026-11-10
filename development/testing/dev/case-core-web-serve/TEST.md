@@ -14,7 +14,7 @@ the app gets working addresses to call.
 
 Source of truth for behaviour and CLI: `workspace/web/server` (Go), started as the
 `serve-web` subcommand of the merged `engineer` binary.
-`atoms/web.yaml` declares the frontend; the server is its runtime part, same atom.
+`structure/atoms/web.yaml` declares the frontend; the server is its runtime part, same atom.
 
 ## Setup
 

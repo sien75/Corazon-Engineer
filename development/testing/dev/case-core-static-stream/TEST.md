@@ -58,26 +58,26 @@ curl -N -X POST http://localhost:8880/static/stream \
 Terminal B (change files directly — writes go through the shell, not an API):
 
 ```bash
-mkdir -p .engineer/.playground/notes
-printf '# event test\n' > .engineer/.playground/notes/stream-test.md
+mkdir -p .engineer/.playground/humanwrite/notes
+printf '# event test\n' > .engineer/.playground/humanwrite/notes/stream-test.md
 sleep 2
-printf '# event test updated\n' > .engineer/.playground/notes/stream-test.md
+printf '# event test updated\n' > .engineer/.playground/humanwrite/notes/stream-test.md
 sleep 2
-rm .engineer/.playground/notes/stream-test.md
+rm .engineer/.playground/humanwrite/notes/stream-test.md
 ```
 
-Expected: terminal A receives, in order, an `add` then an `update` then a `remove` event — consecutive `data:` lines forming one YAML doc each, containing `seq`, `ts`, `kind: schema`, `payload.projectId` (the mock project's id), `payload.type: notes`, `payload.id: notes/stream-test.md`, and (on add/update) `payload.notes` holding the raw file content.
+Expected: terminal A receives, in order, an `add` then an `update` then a `remove` event — consecutive `data:` lines forming one YAML doc each, containing `seq`, `ts`, `kind: schema`, `payload.projectId` (the mock project's id), `payload.type: humanwrite`, `payload.id: humanwrite/notes/stream-test.md`, and (on add/update) `payload.humanwrite` holding the raw file content.
 
 ## 2. atom changes are emitted as parsed objects
 
 Terminal B:
 
 ```bash
-printf '\n# touched\n' >> .engineer/.playground/atoms/demo-worker.yaml
+printf '\n# touched\n' >> .engineer/.playground/structure/atoms/demo-worker.yaml
 sleep 2
 ```
 
-Expected: terminal A receives an `update` event with `payload.type: atom` and `payload.id: atoms/demo-worker.yaml`; `payload.atom` is the parsed atom object (`name: demo-worker`), not a raw string.
+Expected: terminal A receives an `update` event with `payload.type: atom` and `payload.id: structure/atoms/demo-worker.yaml`; `payload.atom` is the parsed atom object (`name: demo-worker`), not a raw string.
 
 ## 3. event kinds filter
 
@@ -88,7 +88,7 @@ curl -N -X POST http://localhost:8880/static/stream \
   --data-binary "$(printf 'projectId: %s\nkinds: how-to' "$PROJECT")"
 ```
 
-Terminal B: touch a notes file again.
+Terminal B: touch a humanwrite file again.
 
 Expected: connection established (with `: heartbeat` comments), but the `kind=schema` events are not pushed (filtered out).
 
@@ -100,7 +100,7 @@ curl -N -X POST http://localhost:8880/static/stream \
   -H 'Content-Type: application/yaml' --data-binary 'projectId: p_ffffffffffff'
 ```
 
-Terminal B: touch a notes file again.
+Terminal B: touch a humanwrite file again.
 
 Expected: the subscription is accepted, but no event for the mock project arrives —
 events are published per project and filtered by the `projectId` the subscriber

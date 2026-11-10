@@ -6,7 +6,7 @@ An **engineering agent** on top of the coding agent.
 
 Turns a system into a small, readable schema — atoms, edges, contracts, development and how-to — and presents it in an appropriate visualization, so a change can be designed, built, verified and operated at the engineering dimension.
 
-![Corazon Engineer — architecture graph and agent conversation](notes/corazon-v0_1_0.png)
+![Corazon Engineer — architecture graph and agent conversation](humanwrite/notes/corazon-v0_1_0.png)
 
 ## How to use it
 
@@ -51,7 +51,7 @@ engineer uninstall           # uninstall the software
 
 ## Background
 
-Why a layer above the coding agent, and how the prototype works — see [notes/share-corazon.md](notes/share-corazon.md).
+Why a layer above the coding agent, and how the prototype works — see [humanwrite/notes/share-corazon.md](humanwrite/notes/share-corazon.md).
 
 ## License
 

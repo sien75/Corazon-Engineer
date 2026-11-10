@@ -1,4 +1,4 @@
-<!-- Service usage reference, derived from the schema (atoms/ + contracts/). Keep in sync when the schema changes. -->
+<!-- Service usage reference, derived from the schema (structure/atoms/ + structure/contracts/). Keep in sync when the schema changes. -->
 
 # log
 

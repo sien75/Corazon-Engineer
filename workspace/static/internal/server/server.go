@@ -288,10 +288,10 @@ func (s *Server) handleSchemaQuery(w http.ResponseWriter, r *http.Request) {
 		"atoms":       atoms,
 		"edges":       edges,
 		"how-to":      schema.ListEntries(root, "how-to"),
-		"contracts":   schema.ListEntries(root, "contracts"),
+		"contracts":   schema.ListEntries(root, schema.TypeDirs["contract"]),
 		"development": schema.ListEntries(root, "development"),
-		"docs":        schema.ListEntries(root, "docs"),
-		"notes":       schema.ListEntries(root, "notes"),
+		"docs":        schema.ListEntries(root, schema.TypeDirs["docs"]),
+		"humanwrite":  schema.ListEntries(root, schema.TypeDirs["humanwrite"]),
 		"skills":      schema.ListEntries(root, schema.TypeDirs["skill"]),
 		"blueprints":  schema.ListEntries(root, schema.TypeDirs["blueprint"]),
 	})
@@ -347,7 +347,7 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		resp["contract"] = doc
-	default: // how-to, development, docs, notes — raw text
+	default: // how-to, development, docs, humanwrite — raw text
 		data, err := os.ReadFile(path)
 		if err != nil {
 			writeErr(w, http.StatusNotFound, "not_found", "file not found: "+req.ID)

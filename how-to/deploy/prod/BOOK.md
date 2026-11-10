@@ -98,11 +98,10 @@ for f in $(grep -oE '(href|src)="/[^"]+"' "$OUT/web/index.html" \
 done
 
 # 4. tool content — published parts only: agents/ (AI capability description) and
-#    docs/. Everything else (schema, development, how-to, ...) is dev-time internal
+#    structure/docs/ (lands as docs/ in the package). Everything else (schema, development, how-to, ...) is dev-time internal
 #    and never ships.
-for d in agents docs; do
-  [ -d "$d" ] && cp -R "$d" "$OUT/"
-done
+[ -d agents ] && cp -R agents "$OUT/"
+[ -d structure/docs ] && cp -R structure/docs "$OUT/docs"
 
 # 5. installer — copied in as a real file, never generated from this BOOK
 cp how-to/deploy/prod/install.sh "$OUT/install.sh"

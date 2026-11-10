@@ -6,16 +6,17 @@ The schema consists of **what it is** and **how to do it**:
 
 ```
 What it is — define the system structure
-├── Atom layer      atoms/       atomic project        — yaml
-├── Edge layer      edges/       connection definition  — yaml
-├── Contract        contracts/   interface contract     — yaml
-├── Workspace       workspace/   atom code (checkout)   — code
-├── Docs            docs/        external-facing docs   — prose
-└── Notes           notes/       internal annotations    — prose
+├── Structure       structure/              the description of the system
+│   ├── Atom layer      atoms/       atomic project        — yaml
+│   ├── Edge layer      edges/       connection definition  — yaml
+│   ├── Contract        contracts/   interface contract     — yaml
+│   └── Docs            docs/        documentation of the above — prose
+└── Workspace       workspace/   atom code (checkout)   — code
 
 How to work on it
-├── Development    development/  development material (plans + iterations + testing) — prose
-└── How-to         how-to/       how to build & operate (deploy + operation)         — prose
+├── Development    development/  development material (iterations + testing) — prose
+├── How-to         how-to/       how to build & operate (deploy + operation)  — prose
+└── Humanwrite     humanwrite/   what people wrote by hand (per-iteration discussion + notes) — prose
 ```
 
 `workspace/` holds the atoms' implementation code. An atom links its upstream repo via `repo` and its local checkout via `path`; the code may be checked out under `workspace/` (the default) or anywhere `path` points — it does not have to live inside this repository.
@@ -24,7 +25,7 @@ How to work on it
 
 ## File Organization
 
-A root `engineer.yaml` holds project-level metadata only. `atoms/` / `edges/` / `development/` / `how-to/` / `docs/` / `notes/` are discovered by directory convention; `contracts/` is a content directory. Discovery of content entities under `atoms/`, `edges/` and `contracts/` is **recursive** — any `*.yaml` at any depth is picked up. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are **special entries**: they do not participate in the directory's sibling structure (they are not content entities).
+A root `engineer.yaml` holds project-level metadata only. `structure/atoms/` / `structure/edges/` / `development/` / `how-to/` / `structure/docs/` / `humanwrite/` are discovered by directory convention; `structure/contracts/` is a content directory. Discovery of content entities under `structure/atoms/`, `structure/edges/` and `structure/contracts/` is **recursive** — any `*.yaml` at any depth is picked up. `include`/`exclude` appear only when deviating. Entries whose name starts with `.` are **special entries**: they do not participate in the directory's sibling structure (they are not content entities).
 
 ```yaml
 # engineer.yaml — root meta only, does NOT enumerate data files
@@ -34,31 +35,33 @@ version: 1.0
 include:
   - ../shared-atoms/billing-service.yaml   # pull in an atom from outside
 exclude:
-  - atoms/experimental-service.yaml         # skip a file
+  - structure/atoms/experimental-service.yaml   # skip a file
 ```
 
 ```
 project/
 ├── engineer.yaml               # Root meta only (project, version, include/exclude)
-├── atoms/                     # **/*.yaml → atom (recursive)
-│   ├── user-service.yaml
-│   ├── notification-service.yaml
-│   └── ...
-├── edges/                     # **/*.yaml → edge (recursive)
-│   ├── user-to-notification.yaml
-│   └── ...
-├── contracts/                 # content files (interface contract yaml, recursive)
-│   ├── create-user-api.yaml
-│   ├── user-created-event.yaml
-│   ├── postgres-client.yaml
-│   ├── redis-client.yaml
-│   └── ...
+├── structure/                 # the description of the system
+│   ├── atoms/                 # **/*.yaml → atom (recursive)
+│   │   ├── user-service.yaml
+│   │   ├── notification-service.yaml
+│   │   └── ...
+│   ├── edges/                 # **/*.yaml → edge (recursive)
+│   │   ├── user-to-notification.yaml
+│   │   └── ...
+│   ├── contracts/             # content files (interface contract yaml, recursive)
+│   │   ├── create-user-api.yaml
+│   │   ├── user-created-event.yaml
+│   │   ├── postgres-client.yaml
+│   │   ├── redis-client.yaml
+│   │   └── ...
+│   └── docs/                  # *.md → documentation of the structure
 ├── workspace/                 # local code repositories (checkouts)
-├── docs/                      # *.md → external-facing doc
-├── notes/                     # *.md → internal annotation (marker + thread, anchored to entity)
+├── humanwrite/                # what people wrote by hand — plain file tree, no format convention
+│   ├── 2608/ 2609/ ...        # human discussion / raw notes, one dir per iteration number
+│   └── notes/                 # free-form notes
 ├── development/               # plain file tree: development material (layout defined by development/README.md)
 │   ├── README.md              # the development tree's own conventions — read first
-│   ├── plans/                 # human discussion / raw notes, one dir per iteration number
 │   ├── iterations/            # the AI-generated plan per requirement
 │   └── testing/               # E2E tests
 └── how-to/                    # plain file tree: deploy + operation (layout defined by how-to/README.md)
@@ -71,7 +74,7 @@ project/
 
 ## Atom Layer
 
-Describes a minimal independent project/service/repository, under `atoms/`. Format:
+Describes a minimal independent project/service/repository, under `structure/atoms/`. Format:
 
 ```yaml
 atoms:
@@ -118,14 +121,14 @@ atoms:
 
 - `interfaces.provides` / `interfaces.consumes` declare the atom's interfaces by role: `provides` = capabilities this atom exposes (others call this atom), `consumes` = capabilities this atom depends on (this atom calls others)
 - `role` is the atom's role in the architecture (service | database | cache | queue | storage | gateway | scheduler | worker | proxy), see ./enum.md
-- Common interface fields: `id` / `channel` / `protocol` / `contract` (pointing to a contract file under `contracts/`)
+- Common interface fields: `id` / `channel` / `protocol` / `contract` (pointing to a contract file under `structure/contracts/`; the path is written relative to `structure/`, e.g. `./contracts/x.yaml`)
 - Protocol-specific fields go under `extend` (free-form object; shape varies by protocol — http uses `path/method`, redis uses `command/topic`, kafka uses `topic`, etc.).
 
 ---
 
 ## Edge Layer
 
-Defines how atoms connect, under `edges/`. Format:
+Defines how atoms connect, under `structure/edges/`. Format:
 
 ```yaml
 edges:
@@ -143,7 +146,7 @@ edges:
 
 ## Contract Files — Interface Contracts
 
-Describe an interface's input/output/errors, under `contracts/`. Referenced by atom `interfaces` and tests. Format:
+Describe an interface's input/output/errors, under `structure/contracts/`. Referenced by atom `interfaces` and tests. Format:
 
 ```yaml
 id: ai-ask
@@ -177,23 +180,22 @@ errors:
 
 ---
 
-## Docs Files — External-Facing Docs
+## Docs Files — Documentation of the Structure
 
-External-facing docs, under `docs/`. Plain markdown files, no format convention.
+Documentation that describes the atoms, edges and contracts (and is published with the tool), under `structure/docs/`. Plain markdown files, no format convention.
 
 ---
 
-## Notes Files — Internal Annotations
+## Humanwrite Files — Hand-Written Material
 
-Internal markers and discussions targeting an entity, under `notes/`. Plain markdown files, no format convention.
+What people wrote by hand, under `humanwrite/`. A plain file tree, no format convention: one dir per iteration number (`2608/`, `2609/`, ...) holding the human discussion and raw notes behind that iteration, plus `notes/` for free-form notes. The AI-generated plan of an iteration is **not** here — it is `development/iterations/`.
 
 ---
 
 ## Development Files — Development Material
 
-Development material, under `development/`. A plain file tree (like `how-to/`); its layout is defined by `development/README.md`. Three modules:
+Development material, under `development/`. A plain file tree (like `how-to/`); its layout is defined by `development/README.md`. Two modules:
 
-- **`plans/`** — human discussion and raw notes, one dir per iteration number.
 - **`iterations/`** — the AI-generated plan per requirement, one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created in Phase 1 and kept updated through the iteration.
 - **`testing/`** — E2E tests from the real user's point of view, exercising the business system through its UI / API.
 

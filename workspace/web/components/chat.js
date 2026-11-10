@@ -1199,7 +1199,7 @@ function wire(host, root, id, RT) {
   // ---------- history (回放 log 里的对话：main 和页面一样) ----------
 
   // resumeState 一次 /ai/resume 拿两件事：水位（lastSeq）和这一轮还在不在跑（active）。
-  // 契约（contracts/ai-resume.yaml）写明 active 时客户端应当重新接管 /ai/stream。
+  // 契约（structure/contracts/ai-resume.yaml）写明 active 时客户端应当重新接管 /ai/stream。
   // 拿不到（404 / 网络）就返回 null，挂载退回原来的行为。
   async function resumeState() {
     try {

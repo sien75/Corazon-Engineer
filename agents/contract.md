@@ -1,6 +1,6 @@
 # Contract Specification
 
-This specification defines the writing conventions for interface contracts under `contracts/`. Goal: **human-readable, body is data, zero machine-schema vocabulary**.
+This specification defines the writing conventions for interface contracts under `structure/contracts/`. Goal: **human-readable, body is data, zero machine-schema vocabulary**.
 
 ---
 

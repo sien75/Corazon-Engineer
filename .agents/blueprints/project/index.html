@@ -89,7 +89,7 @@
     .preview.rec { flex: 1 0 260px; min-height: 240px; }
     pre { margin: 0; padding: 12px; font-size: 12px;
           white-space: pre-wrap; word-break: break-word; }
-    /* Markdown bodies (README / SKILL.md / iterations / plans) — prose, so it is
+    /* Markdown bodies (README / SKILL.md / iterations / humanwrite) — prose, so it is
        set looser than the page's own chrome: bigger steps between blocks and
        between the lines inside one. */
     .md { padding: 20px 22px; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
@@ -253,7 +253,7 @@
       return block(text, key || type) || text;
     }
 
-    /* A file body: markdown is rendered (README / SKILL / iterations / plans),
+    /* A file body: markdown is rendered (README / SKILL / iterations / humanwrite),
        anything else keeps its raw text. Both share the pane's scrolling box. */
     const mdEngine = new MarkdownIt({ linkify: true });
     const isMarkdown = (path) => /\.(md|markdown)$/i.test(path);
@@ -368,6 +368,7 @@
           ["how-to", scalarList(text, "how-to").length],
           ["development", scalarList(text, "development").length],
           ["docs", scalarList(text, "docs").length],
+          ["humanwrite", scalarList(text, "humanwrite").length],
           ["skills", scalarList(text, "skills").length],
           ["blueprints", new Set(scalarList(text, "blueprints").map((f) => f.split("/").slice(0, 3).join("/"))).size],
         ]) {
@@ -395,7 +396,7 @@
       /* Contracts: list on the left, file body on the right. */
       async contracts(root) {
         root.append(el("h1", null, "Contracts"),
-          el("p", "hint", "contracts/ is the single source of truth for request / response shapes — change the contract before the code."));
+          el("p", "hint", "structure/contracts/ is the single source of truth for request / response shapes — change the contract before the code."));
         const files = scalarList(await schema(), "contracts");
         masterDetail(root, [{ title: "contracts", files, type: "contract", block: "contract",
           label: (f) => f.replace(/^contracts\//, "") }], "Pick a contract…");
@@ -413,7 +414,7 @@
       /* Iterations: the design record per requirement, plus the test cases. */
       async iterations(root) {
         root.append(el("h1", null, "Iterations"),
-          el("p", "hint", "iterations/ holds the design record per requirement, testing/ the cases; the human discussion behind them is under Plans."));
+          el("p", "hint", "iterations/ holds the design record per requirement, testing/ the cases; the human discussion behind them is under Humanwrite."));
         const files = scalarList(await schema(), "development").sort().reverse();
         const pick = (p) => files.filter((f) => f.startsWith(p));
         masterDetail(root, [
@@ -422,34 +423,34 @@
           { title: "testing", files: files.filter((f) => f.startsWith("development/testing/")),
             type: "development", label: shorten("development/testing/", /\.md$/) },
           { title: "development/", files: pick("development/").filter((f) =>
-              !/^development\/(iterations|plans|testing)\//.test(f)),
+              !/^development\/(iterations|testing)\//.test(f)),
             type: "development", label: shorten("development/") },
         ], "Pick an iteration record…");
       },
 
-      /* Plans: the human discussion and raw notes, one directory per iteration number. */
-      async plans(root) {
-        root.append(el("h1", null, "Plans"),
-          el("p", "hint", "plans/<iteration number>/ is the human discussion and raw notes behind an iteration; the design record itself is in Iterations."));
-        const files = scalarList(await schema(), "development")
-          .filter((f) => f.startsWith("development/plans/"));
-        // One group per iteration-number directory, newest number first; loose files
-        // at the top of plans/ land in an `ungrouped` group rather than disappearing.
+      /* Humanwrite: what people wrote by hand — one directory per iteration number
+         (2608/, 2609/, ...) plus notes/. */
+      async humanwrite(root) {
+        root.append(el("h1", null, "Humanwrite"),
+          el("p", "hint", "humanwrite/<iteration number>/ is the human discussion and raw notes behind an iteration, humanwrite/notes/ the free-form notes; the design record itself is in Iterations."));
+        const files = scalarList(await schema(), "humanwrite");
+        // One group per top-level directory, newest number first; loose files at the
+        // top of humanwrite/ land in an `ungrouped` group rather than disappearing.
         const dirs = new Map();
         for (const f of files) {
-          const rel = f.slice("development/plans/".length);
+          const rel = f.slice("humanwrite/".length);
           const dir = rel.includes("/") ? rel.split("/")[0] : "";
           if (!dirs.has(dir)) dirs.set(dir, []);
           dirs.get(dir).push(f);
         }
         const groups = [...dirs.keys()].sort().reverse().map((dir) => ({
-          title: dir ? "plans/" + dir : "ungrouped",
+          title: dir ? "humanwrite/" + dir : "ungrouped",
           files: dirs.get(dir).sort(),
-          type: "development",
+          type: "humanwrite",
           label: (f) => f.split("/").pop().replace(/\.md$/, ""),
         }));
-        if (!groups.length) groups.push({ title: "plans", files: [], type: "development" });
-        masterDetail(root, groups, "Pick a plan note…");
+        if (!groups.length) groups.push({ title: "humanwrite", files: [], type: "humanwrite" });
+        masterDetail(root, groups, "Pick a note…");
       },
 
       /* Records: test / telemetry / conversation from log. */
@@ -588,7 +589,7 @@
 
     const NAV = [
       ["overview", "Overview"], ["contracts", "Contracts"], ["howto", "How-to"],
-      ["iterations", "Iterations"], ["plans", "Plans"], ["records", "Records"],
+      ["iterations", "Iterations"], ["humanwrite", "Humanwrite"], ["records", "Records"],
       ["resources", "Resources"], ["endpoints", "Endpoints"],
     ];
 
@@ -627,8 +628,8 @@
       overview: (t) => t === "atom" || t === "edge",
       contracts: (t) => t === "contract",
       howto: (t) => t === "how-to",
-      iterations: (t, id) => t === "development" && !/^development\/plans\//.test(id),
-      plans: (t, id) => t === "development" && /^development\/plans\//.test(id),
+      iterations: (t) => t === "development",
+      humanwrite: (t) => t === "humanwrite",
       resources: (t) => t === "skill" || t === "blueprint" || t === "suggested-skill",
     };
 

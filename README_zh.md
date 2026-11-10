@@ -6,7 +6,7 @@
 
 把系统变成一份朴素、好读的 schema —— atoms、edges、contracts、development 与 how-to —— 并使用合适的可视化方式展示出来，让一次变更能在「工程维度」被设计、构建、验证和运维。
 
-![Corazon Engineer —— 架构图与 Agent 对话](notes/corazon-v0_1_0.png)
+![Corazon Engineer —— 架构图与 Agent 对话](humanwrite/notes/corazon-v0_1_0.png)
 
 ## 怎么用
 
@@ -51,7 +51,7 @@ engineer uninstall           # 卸载软件
 
 ## 背景
 
-为什么需要 Coding Agent 之上的一层，以及这个原型的设计思路 —— 见 [notes/share-corazon_zh.md](notes/share-corazon_zh.md)。
+为什么需要 Coding Agent 之上的一层，以及这个原型的设计思路 —— 见 [humanwrite/notes/share-corazon_zh.md](humanwrite/notes/share-corazon_zh.md)。
 
 ## 许可证
 

@@ -5,7 +5,7 @@
 「空订阅读流」挪水位、然后画历史，`running` 一直是 false：不显示 stop，也不开流，
 直到用户自己发一条消息——用户看到的正是「你在跑着，但是我这里不显示 stop 按钮了」。
 
-`contracts/ai-resume.yaml` 早就给了两个字段：`lastSeq`（水位）和 `active`
+`structure/contracts/ai-resume.yaml` 早就给了两个字段：`lastSeq`（水位）和 `active`
 （`a resuming client should reattach to /ai/stream when true`）。这个用例就钉这两件事：
 
 1. `active: true` 时，**没点过任何东西**的页面也显示 stop；

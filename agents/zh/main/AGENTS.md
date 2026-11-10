@@ -124,21 +124,21 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 ## 目录约定
 
 - `engineer.yaml` —— 项目根标记(项目名、版本)。
-- `atoms/` —— 一个 atom 一个 YAML:它是什么、提供什么、消费什么。
-- `edges/` —— atom 之间的连接。
-- `contracts/` —— atom 引用的接口契约;请求/响应形状的内部真相。
+- `structure/atoms/` —— 一个 atom 一个 YAML:它是什么、提供什么、消费什么。
+- `structure/edges/` —— atom 之间的连接。
+- `structure/contracts/` —— atom 引用的接口契约;请求/响应形状的内部真相。
 - `workspace/` —— atom 的源码(本地 checkout)。它不必放在本仓库里:atom 的 `repo` / `path` 指向上游与 checkout 位置。
 - `how-to/` —— 系统怎么构建和操作:构建 / 部署配方,以及连接 / 观测资源;普通文件树,组织方式因项目而异;`how-to/README.md` 是它的概述。
-- `docs/` —— 普通意义上的文档。
+- `structure/docs/` —— 对 atoms / edges / contracts 的说明文档,普通意义上的文档。
 - `agents/` —— 项目的 Agent 说明:`main/`(本文件)与 `sub/`(blueprint agent 的),加上 schema / contract / enum 参考。
 - `development/` —— 开发过程的产出:设计 / 迭代记录与 E2E 测试;普通文件树,组织方式因项目而异;`development/README.md` 是它的概述。
 - `.agents/` —— Agent 以文件形式保留、供其它 Agent 读取的项目资源:`skills/<slug>/SKILL.md`(保留的 skill)与 `blueprints/<slug>/`(页面)。
-- `notes/` —— 自由笔记。
+- `humanwrite/` —— 人工手写的内容:`<迭代编号>/`(人工的讨论与原始笔记,如 `2611/`)与 `notes/`(自由笔记)。
 - `.engineer/` —— 项目的本地私有数据(数据库、运行数据、日志)。Git 忽略。永不提交。
 
 ## 参考
 
-- `../schema.md` —— schema 的结构(atoms / edges / contracts / development / how-to / docs / notes)。
+- `../schema.md` —— schema 的结构(structure / development / how-to / humanwrite)。
 - `../contract.md` —— 写契约文件的约定。
 - `../enum.md` —— 枚举值(channel / protocol / runtime_type / role)。
 - `../how-to.md` —— 与用户一起编写和维护项目的 how-to 内容:完整的初始化路径,按顺序五步。项目还没有 how-to 时通读;只写或修订其中一部分时读对应那一步。现实与 how-to 漂移时,先修 how-to —— 不要默默绕过。

@@ -10,16 +10,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var ObjectTypes = []string{"atom", "edge", "how-to", "development", "contract", "docs", "notes", "skill", "blueprint"}
+var ObjectTypes = []string{"atom", "edge", "how-to", "development", "contract", "docs", "humanwrite", "skill", "blueprint"}
 
 var TypeDirs = map[string]string{
-	"atom":        "atoms",
-	"edge":        "edges",
+	"atom":        "structure/atoms",
+	"edge":        "structure/edges",
 	"how-to":      "how-to",
-	"contract":    "contracts",
+	"contract":    "structure/contracts",
 	"development": "development",
-	"docs":        "docs",
-	"notes":       "notes",
+	"docs":        "structure/docs",
+	"humanwrite":  "humanwrite",
 	"skill":       ".agents/skills",
 	"blueprint":   ".agents/blueprints",
 }
@@ -50,19 +50,19 @@ func TypeOf(rel string) string {
 	return ""
 }
 
-// LoadAtoms reads every *.yaml under atoms/ (recursively) and returns the full atom list.
+// LoadAtoms reads every *.yaml under structure/atoms/ (recursively) and returns the full atom list.
 func LoadAtoms(root string) ([]interface{}, error) {
-	return loadStructure(root, "atoms")
+	return loadStructure(root, TypeDirs["atom"], "atoms")
 }
 
-// LoadEdges reads every *.yaml under edges/ (recursively) and returns the full edge list.
+// LoadEdges reads every *.yaml under structure/edges/ (recursively) and returns the full edge list.
 func LoadEdges(root string) ([]interface{}, error) {
-	return loadStructure(root, "edges")
+	return loadStructure(root, TypeDirs["edge"], "edges")
 }
 
-func loadStructure(root, kind string) ([]interface{}, error) {
+func loadStructure(root, dir, kind string) ([]interface{}, error) {
 	out := []interface{}{}
-	for _, rel := range ListEntries(root, kind) {
+	for _, rel := range ListEntries(root, dir) {
 		if !strings.HasSuffix(rel, ".yaml") {
 			continue
 		}

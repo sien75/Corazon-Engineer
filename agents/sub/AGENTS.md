@@ -111,16 +111,16 @@ A Corazon-like project describes atomic projects (atoms), their connections (edg
 ## Directory conventions
 
 - `engineer.yaml` — project root marker (project name, version).
-- `atoms/` — one YAML per atom: what it is, what it provides, what it consumes.
-- `edges/` — connections between atoms.
-- `contracts/` — interface contracts; the internal source of truth for request/response shapes.
+- `structure/atoms/` — one YAML per atom: what it is, what it provides, what it consumes.
+- `structure/edges/` — connections between atoms.
+- `structure/contracts/` — interface contracts; the internal source of truth for request/response shapes.
 - `workspace/` — source code of the atoms (the local checkouts).
 - `how-to/` — how the system is built, launched and operated; `how-to/README.md` is its overview.
-- `docs/` — documentation, in the ordinary sense.
+- `structure/docs/` — documentation of atoms / edges / contracts, in the ordinary sense.
 - `agents/` — the project's Agent instructions: `main/` (the shell's conversation) and `sub/` (this file), plus the schema / contract / enum reference.
 - `development/` — design / iteration records and E2E tests; `development/README.md` is its overview.
 - `.agents/` — project resources: `skills/<slug>/SKILL.md` and `blueprints/<slug>/`.
-- `notes/` — free-form notes.
+- `humanwrite/` — what people wrote by hand: `<iteration number>/` (human discussion and raw notes, e.g. `2611/`) and `notes/` (free-form notes).
 - `.engineer/` — local private data (database, run data, logs). Git-ignored. Never commit it.
 
 ## Reference

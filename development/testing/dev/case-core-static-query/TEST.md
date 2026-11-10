@@ -62,8 +62,8 @@ Expected: 200, body contains:
 - `atoms`: all atoms in full (mock `demo-service` / `demo-worker`, with complete interfaces)
 - `edges`: all edges in full (includes `demo-to-worker`)
 - `how-to`: recursive file list of the how-to tree: `how-to/README.md` and `how-to/deploy/dev/BOOK.md` / `launch.sh`
-- `contracts`: entry list, exactly `[contracts/demo-api.yaml]` (dot-prefixed files are ignored)
-- `development`: recursive file list: `development/note.md` and `development/testing/dev/case-playground-api/desp.yaml` / `TEST.md`; `docs` / `notes` are empty arrays
+- `contracts`: entry list, exactly `[structure/contracts/demo-api.yaml]` (dot-prefixed files are ignored)
+- `development`: recursive file list: `development/note.md` and `development/testing/dev/case-playground-api/desp.yaml` / `TEST.md`; `docs` / `humanwrite` are empty arrays
 
 ## 2. static-query-detail how-to content
 
@@ -82,7 +82,7 @@ Expected: 200, `how-to` is the raw file text starting with `# how-to`.
 PROJECT=$(cat .engineer/.playground-project)
 curl -s -X POST http://localhost:8870/static/query-detail \
   -H 'Content-Type: application/yaml' \
-  --data-binary "$(printf 'projectId: %s\ntype: contract\nid: contracts/demo-api.yaml' "$PROJECT")"
+  --data-binary "$(printf 'projectId: %s\ntype: contract\nid: structure/contracts/demo-api.yaml' "$PROJECT")"
 ```
 
 Expected: 200, `contract.id` is `demo-api`, `contract.response.body.ok` is `boolean`.
@@ -104,7 +104,7 @@ Expected: 200, `development` is the raw markdown starting with `# Playground Not
 PROJECT=$(cat .engineer/.playground-project)
 curl -s -X POST http://localhost:8870/static/query-detail \
   -H 'Content-Type: application/yaml' \
-  --data-binary "$(printf 'projectId: %s\ntype: atom\nid: atoms/demo-service.yaml' "$PROJECT")"
+  --data-binary "$(printf 'projectId: %s\ntype: atom\nid: structure/atoms/demo-service.yaml' "$PROJECT")"
 ```
 
 Expected: 400, `error.code` is `bad_request` (atom is not a leaf file type).
@@ -113,7 +113,7 @@ Expected: 400, `error.code` is `bad_request` (atom is not a leaf file type).
 PROJECT=$(cat .engineer/.playground-project)
 curl -s -X POST http://localhost:8870/static/query-detail \
   -H 'Content-Type: application/yaml' \
-  --data-binary "$(printf 'projectId: %s\ntype: contract\nid: contracts/nope.yaml' "$PROJECT")"
+  --data-binary "$(printf 'projectId: %s\ntype: contract\nid: structure/contracts/nope.yaml' "$PROJECT")"
 ```
 
 Expected: 404, `error.code` is `not_found`.

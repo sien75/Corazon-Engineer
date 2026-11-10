@@ -123,21 +123,21 @@ So: besides the project's own `AGENTS.md`, we recommend also reading `developmen
 ## Directory conventions
 
 - `engineer.yaml` — project root marker (project name, version).
-- `atoms/` — one YAML per atom: what it is, what it provides, what it consumes.
-- `edges/` — connections between atoms.
-- `contracts/` — interface contracts referenced by atoms; the internal source of truth for request/response shapes.
+- `structure/atoms/` — one YAML per atom: what it is, what it provides, what it consumes.
+- `structure/edges/` — connections between atoms.
+- `structure/contracts/` — interface contracts referenced by atoms; the internal source of truth for request/response shapes.
 - `workspace/` — source code of the atoms (the local checkouts). It need not live inside this repository: an atom's `repo` / `path` link the upstream and the checkout location.
 - `how-to/` — how to build and operate the system: build / deploy recipes, plus connections to / observation of resources; a plain file tree whose internal layout is project-specific; `how-to/README.md` is its overview.
-- `docs/` — documentation, in the ordinary sense.
+- `structure/docs/` — documentation of atoms / edges / contracts, in the ordinary sense.
 - `agents/` — the project's Agent instructions: `main/` (this file) and `sub/` (a blueprint agent's), plus the schema / contract / enum reference.
 - `development/` — what the development process produces: design / iteration records and E2E tests; a plain file tree whose internal layout is project-specific; `development/README.md` is its overview.
 - `.agents/` — project resources the Agent keeps as files and other Agents read: `skills/<slug>/SKILL.md` (kept skills) and `blueprints/<slug>/` (pages).
-- `notes/` — free-form notes.
+- `humanwrite/` — what people wrote by hand: `<iteration number>/` (human discussion and raw notes, e.g. `2611/`) and `notes/` (free-form notes).
 - `.engineer/` — local private data of the project (database, run data, logs). Git-ignored. Never commit it.
 
 ## Reference
 
-- `../schema.md` — structure of the schema (atoms / edges / contracts / development / how-to / docs / notes).
+- `../schema.md` — structure of the schema (structure / development / how-to / humanwrite).
 - `../contract.md` — conventions for writing contract files.
 - `../enum.md` — enum values (channel / protocol / runtime_type / role).
 - `../how-to.md` — writing and maintaining the project's how-to content with the user: the complete initialization path, five steps in order. Read it whole when a project has no how-to yet; read the matching step when only part of the material is written or revised. When reality drifts from the how-to, fix the how-to first — never work around it silently.

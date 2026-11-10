@@ -86,7 +86,7 @@ customElements.define("my-view", MyView);
 
 #### 连 static 或 log
 
-地址是个 ES module，用 import 拿，不要写进页面；后面服务的形状在 `docs/static.md` / `docs/log.md`：
+地址是个 ES module，用 import 拿，不要写进页面；后面服务的形状在 `structure/docs/static.md` / `structure/docs/log.md`：
 
 ```js
 import { ENGINEER } from "/config.js";

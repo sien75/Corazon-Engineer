@@ -96,7 +96,7 @@ customElements.define("my-view", MyView);
 #### Reading static or log
 
 The addresses are an ES module, so they are imported and never typed into the page; the shapes of the
-services behind them are in `docs/static.md` / `docs/log.md`:
+services behind them are in `structure/docs/static.md` / `structure/docs/log.md`:
 
 ```js
 import { ENGINEER } from "/config.js";

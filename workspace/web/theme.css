@@ -2,7 +2,7 @@
    The shell links this before style.css; a page (a blueprint rendered in an
    iframe) links it to get the very same variables — `var(--surface)`, `var(--fg)`,
    … — so it follows the theme without copying a single colour. The attribute
-   (`data-theme`) is set by the shell on both documents; see docs/ai.md. */
+   (`data-theme`) is set by the shell on both documents; see structure/docs/ai.md. */
 
 /* ---------- themes ---------- */
 

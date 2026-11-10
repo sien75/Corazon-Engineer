@@ -6,7 +6,7 @@ Three things a user does with the composer without thinking, all of them in
 
 1. **Typing while a run is in flight sends it — it does not wait.** The prompt
    goes out on `/ai/ask` while the run is still streaming, and the service steers
-   it into the run (`contracts/ai-ask.yaml`; the backend has done this since
+   it into the run (`structure/contracts/ai-ask.yaml`; the backend has done this since
    `d23c816`). The composer clears, the user turn is drawn, stop stays offered.
 2. **Esc stops the run**, exactly like the stop button: one `/ai/stop`, the
    composer comes back. On an idle conversation Esc stops nothing.
@@ -23,7 +23,7 @@ keystrokes over a live textarea, so the case runs through a real browser
 A canned provider is what makes it deterministic: **the run has to still be in
 flight when the second Enter and the Esc arrive**, and no real model can be told
 to take exactly that long. The fixture answers the ai endpoints in the shape of
-`contracts/ai-stream.yaml`, holds a "hold …" prompt open for six seconds, and
+`structure/contracts/ai-stream.yaml`, holds a "hold …" prompt open for six seconds, and
 records what the frontend sent so the test can read it back through `/seen`. The
 frontend still runs its own path: real keys, real clicks, real `/ai/ask` and
 `/ai/stop` over the wire.

@@ -1,4 +1,4 @@
-<!-- Service usage reference, derived from the schema (atoms/ + contracts/). Keep in sync when the schema changes. -->
+<!-- Service usage reference, derived from the schema (structure/atoms/ + structure/contracts/). Keep in sync when the schema changes. -->
 
 # static
 
@@ -61,7 +61,7 @@ edges:
       to_interface: string
 how-to:
     - string
-notes:
+humanwrite:
     - string
 skills:
     - string
@@ -93,7 +93,7 @@ Fetch content of a single leaf file
 
 ```yaml
 id: string
-type: how-to | development | contract | docs | notes | skill | blueprint
+type: how-to | development | contract | docs | humanwrite | skill | blueprint
 ```
 
 ### Response (status 200)
@@ -110,9 +110,9 @@ development?: string
 docs?: string
 how-to?: string
 id: string
-notes?: string
+humanwrite?: string
 skill?: string
-type: how-to | development | contract | docs | notes | skill | blueprint
+type: how-to | development | contract | docs | humanwrite | skill | blueprint
 ```
 
 ### Errors
@@ -127,7 +127,7 @@ type: how-to | development | contract | docs | notes | skill | blueprint
 curl -s -X POST <address>/static/query-detail \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
   id: string
-  type: how-to | development | contract | docs | notes | skill | blueprint
+  type: how-to | development | contract | docs | humanwrite | skill | blueprint
 YAML
 ```
 
@@ -192,9 +192,9 @@ payload:
     file: string
     how-to?: string
     id: string
-    notes?: string
+    humanwrite?: string
     op: add | update | remove
-    type: atom | edge | how-to | development | contract | docs | notes
+    type: atom | edge | how-to | development | contract | docs | humanwrite
 seq: number
 ts: string
 ```

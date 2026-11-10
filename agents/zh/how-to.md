@@ -24,8 +24,8 @@
 **写什么**
 
 - `engineer.yaml`
-- `atoms/`
-- `edges/`
+- `structure/atoms/`
+- `structure/edges/`
 
 ---
 
@@ -45,8 +45,8 @@
 **写什么**
 
 - `workspace/`
-- 补充 / 修正 `atoms/`
-- 补充 / 修正 `edges/`
+- 补充 / 修正 `structure/atoms/`
+- 补充 / 修正 `structure/edges/`
 
 ---
 
@@ -64,8 +64,8 @@
 
 **写什么**
 
-- `contracts/`
-- 必要时同步修正相关的 `atoms/` / `edges/`
+- `structure/contracts/`
+- 必要时同步修正相关的 `structure/atoms/` / `structure/edges/`
 
 ---
 

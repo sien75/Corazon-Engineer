@@ -33,7 +33,7 @@ The page's own copy is Chinese, like the user it is written for.
 - The user asks about tools/skills and a picture beats prose → extend this page rather than answer in chat.
 - A tool is added, removed or renamed in `registry.ts` → update `GROUPS` and the stat numbers in
   `index.html` (`17` / `8` / `9`).
-- `docs/ai.md` and the code disagree about tools or skills → trust the code, fix this page, and mention
+- `structure/docs/ai.md` and the code disagree about tools or skills → trust the code, fix this page, and mention
   the drift.
 
 ## Do not

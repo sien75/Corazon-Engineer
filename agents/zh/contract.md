@@ -1,6 +1,6 @@
 # Contract 规范
 
-本规范定义 `contracts/` 目录下接口契约的书写约定。目标:**人读友好,body 即数据,零机器 schema 词汇**。
+本规范定义 `structure/contracts/` 目录下接口契约的书写约定。目标:**人读友好,body 即数据,零机器 schema 词汇**。
 
 ---
 

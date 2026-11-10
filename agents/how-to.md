@@ -24,8 +24,8 @@ Every step has the same three parts: **Do** — what you work out; **Ask** — w
 **Write**
 
 - `engineer.yaml`
-- `atoms/`
-- `edges/`
+- `structure/atoms/`
+- `structure/edges/`
 
 ---
 
@@ -45,8 +45,8 @@ Every step has the same three parts: **Do** — what you work out; **Ask** — w
 **Write**
 
 - `workspace/`
-- add / correct `atoms/`
-- add / correct `edges/`
+- add / correct `structure/atoms/`
+- add / correct `structure/edges/`
 
 ---
 
@@ -64,8 +64,8 @@ Every step has the same three parts: **Do** — what you work out; **Ask** — w
 
 **Write**
 
-- `contracts/`
-- the related `atoms/` / `edges/` when they have to follow
+- `structure/contracts/`
+- the related `structure/atoms/` / `structure/edges/` when they have to follow
 
 ---
 

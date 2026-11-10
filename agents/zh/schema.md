@@ -6,16 +6,17 @@ schema 由「**是什么**」与「**怎么做**」组成：
 
 ```
 是什么 —— 定义系统结构
-├── Atom 层       atoms/      原子项目   —— yaml
-├── Edge 层       edges/      连接定义   —— yaml
-├── Contract      contracts/  接口契约   —— yaml
-├── Workspace     workspace/  原子代码   —— 代码
-├── Docs          docs/       对外文档   —— 散文
-└── Notes         notes/      内部批注   —— 散文
+├── Structure     structure/            系统的描述
+│   ├── Atom 层       atoms/      原子项目   —— yaml
+│   ├── Edge 层       edges/      连接定义   —— yaml
+│   ├── Contract      contracts/  接口契约   —— yaml
+│   └── Docs          docs/       对上述内容的说明文档 —— 散文
+└── Workspace     workspace/  原子代码   —— 代码
 
 怎么工作
-├── Development   development/  开发过程材料（plans + iterations + testing）—— 散文
-└── How-to        how-to/       怎么构建与操作（deploy + operation）        —— 散文
+├── Development   development/  开发过程材料（iterations + testing）—— 散文
+├── How-to        how-to/       怎么构建与操作（deploy + operation）  —— 散文
+└── Humanwrite    humanwrite/   人工手写的内容（按迭代的讨论 + 笔记）—— 散文
 ```
 
 `workspace/` 放各 atom 的实现代码。atom 通过 `repo` 关联上游仓库、通过 `path` 关联本地检出;代码可以放在 `workspace/`(默认),也可以放在 `path` 指向的任意位置 —— **不一定要在这个仓库里**。
@@ -24,7 +25,7 @@ schema 由「**是什么**」与「**怎么做**」组成：
 
 ## 文件组织
 
-根 `engineer.yaml` 只放项目级 meta。`atoms/` / `edges/` / `development/` / `how-to/` / `docs/` / `notes/` 靠目录约定自动发现；`contracts/` 为内容文件目录。`atoms/`、`edges/`、`contracts/` 下内容实体按**递归**发现——任意深度下的 `*.yaml` 都会被加载与校验。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目都是**特殊条目**——它们不参与该目录的并列结构（不作为内容实体）。
+根 `engineer.yaml` 只放项目级 meta。`structure/atoms/` / `structure/edges/` / `development/` / `how-to/` / `structure/docs/` / `humanwrite/` 靠目录约定自动发现；`structure/contracts/` 为内容文件目录。`structure/atoms/`、`structure/edges/`、`structure/contracts/` 下内容实体按**递归**发现——任意深度下的 `*.yaml` 都会被加载与校验。`include`/`exclude` 仅在偏离约定时才写。任何目录下以 `.` 开头的条目都是**特殊条目**——它们不参与该目录的并列结构（不作为内容实体）。
 
 ```yaml
 # engineer.yaml —— 只放根 meta，不枚举数据文件
@@ -34,31 +35,33 @@ version: 1.0
 include:
   - ../shared-atoms/billing-service.yaml   # 从外部引入一个 atom
 exclude:
-  - atoms/experimental-service.yaml         # 跳过某个文件
+  - structure/atoms/experimental-service.yaml   # 跳过某个文件
 ```
 
 ```
 project/
 ├── engineer.yaml               # 仅根 meta（project、version、include/exclude）
-├── atoms/                     # **/*.yaml → atom（递归）
-│   ├── user-service.yaml
-│   ├── notification-service.yaml
-│   └── ...
-├── edges/                     # **/*.yaml → edge（递归）
-│   ├── user-to-notification.yaml
-│   └── ...
-├── contracts/                 # 内容文件（接口 contract yaml，递归）
-│   ├── create-user-api.yaml
-│   ├── user-created-event.yaml
-│   ├── postgres-client.yaml
-│   ├── redis-client.yaml
-│   └── ...
+├── structure/                 # 系统的描述
+│   ├── atoms/                 # **/*.yaml → atom（递归）
+│   │   ├── user-service.yaml
+│   │   ├── notification-service.yaml
+│   │   └── ...
+│   ├── edges/                 # **/*.yaml → edge（递归）
+│   │   ├── user-to-notification.yaml
+│   │   └── ...
+│   ├── contracts/             # 内容文件（接口 contract yaml，递归）
+│   │   ├── create-user-api.yaml
+│   │   ├── user-created-event.yaml
+│   │   ├── postgres-client.yaml
+│   │   ├── redis-client.yaml
+│   │   └── ...
+│   └── docs/                  # *.md → 结构的说明文档
 ├── workspace/                 # 本地代码仓库（检出）
-├── docs/                      # *.md → 对外文档
-├── notes/                     # *.md → 内部批注（标记 + thread，锚定实体）
+├── humanwrite/                # 人工手写的内容 —— 普通文件树，不做格式约定
+│   ├── 2608/ 2609/ ...        # 人工的讨论与原始笔记，按迭代编号分目录
+│   └── notes/                 # 自由笔记
 ├── development/               # 普通文件树：开发过程材料（布局由 development/README.md 定义）
 │   ├── README.md              # development 树自身的约定 —— 先读
-│   ├── plans/                 # 人工的讨论与原始笔记，按迭代编号分目录
 │   ├── iterations/            # AI 生成的方案，按需求一个 md
 │   └── testing/               # E2E 测试
 └── how-to/                    # 普通文件树：deploy + operation（布局由 how-to/README.md 定义）
@@ -71,7 +74,7 @@ project/
 
 ## Atom 层 — 原子项目
 
-描述一个最小独立项目/服务/仓库，位于 `atoms/`。格式：
+描述一个最小独立项目/服务/仓库，位于 `structure/atoms/`。格式：
 
 ```yaml
 atoms:
@@ -118,14 +121,14 @@ atoms:
 
 - `interfaces.provides` / `interfaces.consumes` 按角色声明接口：`provides` = 本 atom 提供的能力（别人调本 atom）,`consumes` = 本 atom 依赖的能力（本 atom 调别人）
 - `role` 是 atom 在架构中的角色（service | database | cache | queue | storage | gateway | scheduler | worker | proxy），见 ./enum.md
-- 接口公共字段：`id` / `channel` / `protocol` / `contract`（指向 `contracts/` 下的契约文件）
+- 接口公共字段：`id` / `channel` / `protocol` / `contract`（指向 `structure/contracts/` 下的契约文件；路径相对 `structure/` 书写，如 `./contracts/x.yaml`）
 - 协议特有字段统一放 `extend`（自由对象，形态随协议而变：http 用 `path/method`，redis 用 `command/topic`，kafka 用 `topic` 等）。
 
 ---
 
 ## Edge 层 — 连接定义
 
-定义原子之间的组合方式，位于 `edges/`。格式：
+定义原子之间的组合方式，位于 `structure/edges/`。格式：
 
 ```yaml
 edges:
@@ -143,7 +146,7 @@ edges:
 
 ## Contract 文件 — 接口契约
 
-描述接口的输入输出与错误，位于 `contracts/`。被 atom 的 `interfaces` 和 test 引用。格式：
+描述接口的输入输出与错误，位于 `structure/contracts/`。被 atom 的 `interfaces` 和 test 引用。格式：
 
 ```yaml
 id: ai-ask
@@ -177,23 +180,22 @@ errors:
 
 ---
 
-## Docs 文件 — 对外文档
+## Docs 文件 — 结构说明文档
 
-对外文档，位于 `docs/`。为普通 markdown 文件，不做格式约定。
+对 atoms、edges、contracts 的说明文档（随工具一起发布），位于 `structure/docs/`。为普通 markdown 文件，不做格式约定。
 
 ---
 
-## Notes 文件 — 内部批注
+## Humanwrite 文件 — 人工手写内容
 
-针对某个实体的内部标记与讨论，位于 `notes/`。为普通 markdown 文件，不做格式约定。
+人工手写的内容，位于 `humanwrite/`。普通文件树，不做格式约定：按迭代编号分目录（`2608/`、`2609/`……），放该迭代背后的人工讨论与原始笔记；另有 `notes/` 放自由笔记。迭代的 AI 方案**不在**这里 —— 在 `development/iterations/`。
 
 ---
 
 ## Development 文件 — 开发过程材料
 
-开发过程材料，位于 `development/`。为普通文件树（同 `how-to/`），布局由 `development/README.md` 定义。三个模块：
+开发过程材料，位于 `development/`。为普通文件树（同 `how-to/`），布局由 `development/README.md` 定义。两个模块：
 
-- **`plans/`** —— 人工的讨论与原始笔记，按迭代编号分目录。
 - **`iterations/`** —— AI 生成的方案，一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`，阶段一创建、随迭代更新。
 - **`testing/`** —— 从真实用户视角的 E2E 测试，通过 UI / API 操作业务系统验证功能。
 

@@ -19,8 +19,8 @@ response:
       # kind=schema: content snapshot of the changed file, shape matches the type below
       projectId: string  # p_<12 hex> — the project the changed file belongs to
       op: add | update | remove
-      type: atom | edge | how-to | development | contract | docs | notes
-      id: string  # changed file path, e.g. "contracts/ai-ask.yaml"
+      type: atom | edge | how-to | development | contract | docs | humanwrite
+      id: string  # changed file path, e.g. "structure/contracts/ai-ask.yaml"
       file: string  # changed file; coincides with id
 
       atom?:  # when type=atom
@@ -68,7 +68,7 @@ response:
 
       docs?: string  # when type=docs
 
-      notes?: string  # when type=notes
+      humanwrite?: string  # when type=humanwrite
 
       # kind=how-to | test | development (execution events, reserved): payload shape TBD when execution lands
 

@@ -97,16 +97,16 @@ Corazon Engineer 是运行中的系统。它的 schema 是普通文件树,其它
 ## 目录约定
 
 - `engineer.yaml` —— 项目根标记(项目名、版本)。
-- `atoms/` —— 一个 atom 一个 YAML:它是什么、提供什么、消费什么。
-- `edges/` —— atom 之间的连接。
-- `contracts/` —— 接口契约;请求/响应形状的内部真相。
+- `structure/atoms/` —— 一个 atom 一个 YAML:它是什么、提供什么、消费什么。
+- `structure/edges/` —— atom 之间的连接。
+- `structure/contracts/` —— 接口契约;请求/响应形状的内部真相。
 - `workspace/` —— atom 的源码(本地 checkout)。
 - `how-to/` —— 系统怎么构建、启动和操作;`how-to/README.md` 是它的概述。
-- `docs/` —— 普通意义上的文档。
+- `structure/docs/` —— 对 atoms / edges / contracts 的说明文档,普通意义上的文档。
 - `agents/` —— 项目的 Agent 说明:`main/`(外壳里的对话)与 `sub/`(本文件),加上 schema / contract / enum 参考。
 - `development/` —— 设计 / 迭代记录与 E2E 测试;`development/README.md` 是它的概述。
 - `.agents/` —— 项目资源:`skills/<slug>/SKILL.md` 与 `blueprints/<slug>/`。
-- `notes/` —— 自由笔记。
+- `humanwrite/` —— 人工手写的内容:`<迭代编号>/`(人工的讨论与原始笔记,如 `2611/`)与 `notes/`(自由笔记)。
 - `.engineer/` —— 本地私有数据(数据库、运行数据、日志)。Git 忽略。永不提交。
 
 ## 参考
