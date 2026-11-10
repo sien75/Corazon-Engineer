@@ -1,0 +1,3 @@
+id: core-web-home-recents
+description: a Recents row on a project home opens the conversation in that same (draft) tab instead of adding a tab beside it, and a session that already has a tab is brought up rather than copied
+atoms: [web, log, ai]

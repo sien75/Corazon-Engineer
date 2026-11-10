@@ -1412,14 +1412,14 @@ async function fillHomeLists(lists, projectId, tab = null) {
   );
   lists.appendChild(
     homeSection(
-      "Recent",
+      "Recents",
       recentEntries(projectId),
       "nothing yet",
       (r) =>
         launcherRow({
           name: r.title || r.sessionId,
           desc: r.desc,
-          onOpen: () => void openSessionFromLauncher(r.sessionId),
+          onOpen: () => void openSessionFromLauncher(r.sessionId, tab),
         }),
     ),
   );
@@ -1480,19 +1480,37 @@ async function browseBlueprint(b, projectId, fromTab = null) {
 // openSessionFromLauncher brings an existing session back. A closed tab is
 // reopened, never re-created: a tab is the session, so a second copy of it is not
 // something the workspace can represent.
-async function openSessionFromLauncher(sessionId) {
+//
+// Clicking the row from a draft's home replaces what *that* tab shows, the way a
+// blueprint row does: the home was a place to start from, not a document to keep,
+// so the draft becomes the session's tab instead of a second tab being added
+// beside it. A session that already has a tab is brought up instead — taking the
+// draft would leave two tabs of one conversation.
+async function openSessionFromLauncher(sessionId, fromTab = null) {
   if (launcherHold) return;
+  const active = openTabs.find((t) => t.id === activeTabId);
+  const host = [fromTab, active].find((t) => t && t.kind === "new" && !t.sessionId);
   launcherHoldOn();
   try {
-    if (!openTabs.some((t) => t.sessionId === sessionId)) {
+    let tab = openTabs.find((t) => t.sessionId === sessionId);
+    if (!tab && host) {
+      // The row names a session that no tab holds: this draft takes it on. The id
+      // goes into the open list where the draft stands, so the tab bar keeps its
+      // order, and ai resumes the conversation before the tab shows it.
+      const rec = await logSessionMeta(sessionId);
+      await logSessionOn([sessionId], openIndexBefore(host));
+      await aiResume(sessionId);
+      tab = adoptRecentSession(host, sessionId, rec);
+    } else if (!tab) {
       await logSessionOn([sessionId]);
       await refreshWorkspace();
+      tab = openTabs.find((t) => t.sessionId === sessionId);
     }
-    const tab = openTabs.find((t) => t.sessionId === sessionId);
     if (tab) {
-      // refreshWorkspace already activated a tab it just added; one that was
-      // open but in the background is brought up here.
-      if (activeTabId !== tab.id) await activateTab(tab.id);
+      // refreshWorkspace already activated a tab it just added; one that was open
+      // but in the background is brought up here. A draft that took the session on
+      // has a new id, so it is activated too — that is what builds its view.
+      if (activeTabId !== tab.id) await activateTab(tab.id, tab === host ? "replace" : "push");
       await waitForTabPaint(tab);
     }
     launcherRelease();
@@ -1501,6 +1519,37 @@ async function openSessionFromLauncher(sessionId) {
     launcherRelease();
     toast(`could not open: ${err.message}`);
   }
+}
+
+// openIndexBefore is where a session goes in log's open list so that it lands
+// where its tab already stands. The list holds sessions only — main is not in it,
+// and a draft is not either — so what is counted is the session tabs above it.
+function openIndexBefore(tab) {
+  const at = openTabs.indexOf(tab);
+  if (at < 0) return -1;
+  return openTabs.slice(0, at).filter((t) => t.sessionId && !t.main).length;
+}
+
+// adoptRecentSession is the take-over for a session that already exists: the draft
+// stops being a draft and becomes that session's tab. Nothing about the
+// conversation changes — no second copy, no new record — the way adoptSession
+// leaves the page it was made in running where it is. It does not bring the tab up:
+// the id has changed, so activating it is the caller's next step (and that is what
+// builds the view, the draft having thrown its own away).
+function adoptRecentSession(tab, sessionId, rec) {
+  tab.kind = rec.kind || "sub";
+  tab.sessionId = sessionId;
+  tab.id = sessionId;
+  tab.projectId = rec.projectId || tab.projectId;
+  tab.blueprint = rec.blueprint || tab.blueprint || "";
+  tab.name = rec.title || tab.name || sessionId;
+  // The home page goes with the navigation: a conversation has no lists above it,
+  // and the empty conversation on it was never a session.
+  tab.el?.parentNode?.removeChild(tab.el);
+  tab.el = null;
+  tab.frameEl = null;
+  renderTabs();
+  return tab;
 }
 
 tabAddEl.addEventListener("click", (event) => {
