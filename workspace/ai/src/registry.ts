@@ -63,7 +63,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 // pageLine is the last thing a sub agent is told: which directory its page lives
 // in. The prompt carries the README; the path is what makes "change the page" an
-// action rather than a wish.
+// action rather than a wish — and for a page the tool ships, saying where it does
+// *not* live is what keeps the agent from claiming an edit it cannot make.
 function pageLine(slug: string): string {
   return `Your page: .agents/blueprints/${slug}/ — that directory is what /agent/<sessionId>/ serves, for every agent made from this blueprint. Edit its files (index.html and anything beside it) and ask the user to reload; the change lands in this project's working tree.`;
 }
@@ -293,7 +294,10 @@ export class Registry {
     const tail = blueprint ? `${readme ?? ""}\n\n${pageLine(blueprint)}` : undefined;
     // The name the tab bar draws before a word has been said; the conversation
     // itself replaces it on its first turn (see maybeTitle).
-    const title = blueprint ? blueprintTitle(project, blueprint) : "main";
+    // A sub agent with no blueprint is the project's own chat (its home page):
+    // there is no page to name it after, so it starts as "chat" and the first
+    // turn's summary renames it like any other.
+    const title = blueprint ? blueprintTitle(project, blueprint) : kind === "main" ? "main" : "chat";
     await this.writeSession(id, kind, projectID, blueprint ?? "", title, model, image);
     return this.build(id, [], kind, project, tail, title, model, image);
   }

@@ -24,8 +24,10 @@
 //
 // /agent/<sessionId>/ serves the blueprint directory of the project that session
 // belongs to (log knows the session's project and blueprint; log's project row
-// knows the folder). A page is not copied per agent, so every agent of one
-// blueprint shares it — an edit reaches all of them on reload.
+// knows the folder) — or, when the slug is one the tool ships (an asset directory
+// under --assets, e.g. `pure-chat`), that page, with the project not consulted at
+// all. A page is not copied per agent, so every agent of one blueprint shares
+// it — an edit reaches all of them on reload.
 //
 // The path is a session id, not a slug, because a session is more than its page
 // — it has the conversation. /agent/… is where the page's directory is, and the

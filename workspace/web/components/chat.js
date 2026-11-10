@@ -8,9 +8,11 @@
 //   <engineer-chat session="s_…" autofocus></engineer-chat>
 //
 // `session` is optional: without it the element reads /agent/<sessionId>/ from
-// the page's own URL (which is what a blueprint page wants). The ai address comes
-// from /config.js, which the element imports itself — a page does not have to do
-// anything for the conversation to work.
+// the page's own URL (which is what a blueprint page wants). `project` mounts the
+// project's own chat instead: no session exists yet, and the first message creates
+// one — the shell is told through the `engineer-session` event. The ai address
+// comes from /config.js, which the element imports itself, so a page does not have
+// to do anything for the conversation to work.
 //
 // Events (bubbling, for the shell): "engineer-tool" with { name, isError } after
 // every tool call — main's session-* tools are what make the shell re-read the
@@ -25,6 +27,10 @@ const TEMPLATE = `
 <link rel="stylesheet" href="/components/chat.css">
 <div class="pane">
   <div class="scroll">
+    <!-- Content a host wants above the conversation (the shell puts a project's
+         blueprints and recents here): it scrolls with the messages, in the same
+         column. Empty for a blueprint page. -->
+    <slot name="before"></slot>
     <div class="ai-messages"></div>
   </div>
   <div class="ai-input">
@@ -69,9 +75,11 @@ class EngineerChat extends HTMLElement {
 
   async #mount(root) {
     const id = this.getAttribute("session") || sessionFromUrl();
-    if (!id) {
+    // A project's own chat has neither: the session is made on the first message.
+    const project = this.getAttribute("project") || "";
+    if (!id && !project) {
       root.querySelector(".ai-messages").textContent =
-        "engineer-chat: no session (give `session`, or serve the page at /agent/<sessionId>/)";
+        "engineer-chat: no session (give `session` or `project`, or serve the page at /agent/<sessionId>/)";
       return;
     }
     const rt = await runtime();
@@ -80,7 +88,7 @@ class EngineerChat extends HTMLElement {
         "engineer-chat: no ai address (is /config.js reachable?)";
       return;
     }
-    this.#cleanup = wire(this, root, id, rt);
+    this.#cleanup = wire(this, root, id, rt, project);
   }
 
   focus() {
@@ -97,7 +105,9 @@ class EngineerChat extends HTMLElement {
 
 // wire is the conversation itself: ask / stream / render / stop, all scoped to
 // this element. `host` is the custom element (for events), `root` its shadow root.
-function wire(host, root, id, RT) {
+// `project` is set when the element is a project's home page: `id` is then empty
+// until the first message creates the session.
+function wire(host, root, id, RT, project = "") {
   const AI = RT.ai;
   const LOG = RT.log;
 
@@ -725,10 +735,41 @@ function wire(host, root, id, RT) {
     finish();
   }
 
+  // ---------- 会话：第一次发送时才建 ----------
+  //
+  // 项目的首页挂的是「没有 session、有 project」的这个元素：用户还没说话之前什么
+  // 都不该存在，所以这里什么都不建。第一条消息发出时才 POST /ai/new（这个项目自己
+  // 的对话：没有 blueprint，也就没有页面），建好后告诉外壳 —— 它把这条会话作为一
+  // 个 tab 打开。
+  async function createSession() {
+    try {
+      const res = await fetch(AI + "/ai/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/yaml" },
+        body: yaml.dump({ projectId: project, kind: "sub" }),
+      });
+      const data = yaml.load(await res.text()) || {};
+      if (!res.ok) {
+        fail(data.error?.message || `HTTP ${res.status}`);
+        return false;
+      }
+      id = String(data.sessionId ?? "");
+      host.dispatchEvent(
+        new CustomEvent("engineer-session", { detail: { sessionId: id }, bubbles: true }),
+      );
+      return Boolean(id);
+    } catch (err) {
+      fail(String(err?.message || err));
+      return false;
+    }
+  }
+
   // ---------- 发一轮 ----------
 
   async function ask(blocks) {
     if (!blocks.length) return;
+    // Home page, first message: the conversation exists from here on.
+    if (!id && !(await createSession())) return;
     // 已经在跑：这一条是插话。服务端把它 steer 进正在跑的那一轮，流还是原来那条，
     // 所以这里不重开 pump、不动 running / tools，只把上面那段收尾。
     const steer = running;
@@ -911,9 +952,11 @@ function wire(host, root, id, RT) {
         // 1/11/21 轮之后服务端会给这个会话起个新名字，并把它随这一轮的流送下来
         // （流为此一直开到名字生成完）。页面不改自己：tab 上的名字是外壳的事，
         // 这里只把它交出去。
+        // 事件发在元素自己身上并冒泡：页面里的用法到 document（外壳在 iframe 的
+        // document 上听），外壳里内联的用法到元素本身（外壳在元素上听）。
         if (ev.title) {
-          document.dispatchEvent(
-            new CustomEvent("engineer-title", { detail: { title: String(ev.title) } }),
+          host.dispatchEvent(
+            new CustomEvent("engineer-title", { detail: { title: String(ev.title) }, bubbles: true }),
           );
         }
         return;
@@ -1313,7 +1356,9 @@ function wire(host, root, id, RT) {
   // 水位从 lastSeq 来，因为它说的是「这个会话已经发出过的事件」，比空订阅读流便宜，
   // 也不怕那一轮把流占着。resume 不可用（没有会话 / ai 不在）才退回空订阅：
   // 从 since=0 读一遍、什么都不画，只记下水位数，免得第一次发送把整轮重放进视图。
-  const ready = (async () => {
+  // Nothing to take over when there is no session yet (the home page): the first
+  // message creates it, and from then on this element is an ordinary conversation.
+  const ready = !id ? Promise.resolve() : (async () => {
     const resumed = await resumeState();
     if (!root.host.hasAttribute("no-history")) await replayHistory();
     if (resumed?.lastSeq != null) {

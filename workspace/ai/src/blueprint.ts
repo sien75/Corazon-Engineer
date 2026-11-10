@@ -4,6 +4,10 @@
 // anything else the page needs: css, js, images, subdirectories. Relative URLs
 // work because the whole directory, and only it, is what gets served.
 //
+// The project's own home page (the `+` in its group) is not a blueprint at all:
+// it is the shell's own view and never reaches this module — a session made from
+// it has no slug, so there is no page to read and no README to append.
+//
 // There is no per-agent copy: the web server serves the prototype directory
 // itself at /agent/<sessionId>/, resolving the session to its slug through log.
 // One page per blueprint, shared by every agent made from it — an edit is
@@ -20,10 +24,12 @@ const BLUEPRINT_DIR = path.join(".agents", "blueprints");
 const README = "README.md";
 const HTML = "index.html";
 
-// The page's <title>, cached per slug: a tab is named after the page it shows, and
-// the name is written once when the session is made so the shell can draw the tab
-// bar before anything is loaded. Relative to what the file says, not what the
-// browser renders — a title changed by script is not the tab's name.
+// The page's <title>, cached per directory: a tab is named after the page it shows,
+// and the name is written once when the session is made so the shell can draw the
+// tab bar before anything is loaded. Relative to what the file says, not what the
+// browser renders — a title changed by script is not the tab's name. Keyed by the
+// directory rather than the slug, because one slug can be two pages (a project's
+// and the tool's).
 const titleCache = new Map<string, string>();
 
 function decodeEntities(s: string): string {
@@ -38,18 +44,19 @@ function decodeEntities(s: string): string {
 // blueprintTitle is the display name a session made from this blueprint gets:
 // the page's <title>, "" when the page has none or cannot be read.
 export function blueprintTitle(root: string, slug: string): string {
-  const cached = titleCache.get(slug);
+  const dir = path.join(root, BLUEPRINT_DIR, slug);
+  const cached = titleCache.get(dir);
   if (cached !== undefined) return cached;
   let title = "";
   try {
-    const html = readFileSync(path.join(root, BLUEPRINT_DIR, slug, HTML), "utf8");
+    const html = readFileSync(path.join(dir, HTML), "utf8");
     const bare = html.replace(/<!--[\s\S]*?-->/g, "");
     const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(bare);
     title = m ? decodeEntities(m[1]).replace(/\s+/g, " ").trim() : "";
   } catch {
     title = "";
   }
-  titleCache.set(slug, title);
+  titleCache.set(dir, title);
   return title;
 }
 

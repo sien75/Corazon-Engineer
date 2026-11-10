@@ -206,6 +206,27 @@ function tabFromSession(rec) {
   };
 }
 
+// makeChatView is one inline conversation: the shell's own <engineer-chat>, bound
+// to a session. main is this view; so is a project's own chat, which has no
+// blueprint page to load.
+function makeChatView(tab) {
+  const chat = document.createElement("engineer-chat");
+  chat.setAttribute("session", tab.sessionId);
+  chat.className = "view view-main";
+  // A conversation with no page has nothing to name it: the first turn's summary
+  // arrives as this event — the same one an iframe page forwards — and it is the
+  // tab bar's name to change, not the pane's.
+  if (!tab.main) {
+    chat.addEventListener("engineer-title", (event) => {
+      const title = String(event.detail?.title ?? "").trim();
+      if (!title || title === tab.name) return;
+      tab.name = title;
+      renderTabs();
+    });
+  }
+  return chat;
+}
+
 // makeMainTab builds main: the shell's own conversation, always there and never
 // in the open list.
 function makeMainTab(sessionId) {
@@ -222,9 +243,7 @@ function makeMainTab(sessionId) {
   // main is the shell's own conversation: one <engineer-chat>, the same element
   // a blueprint page mounts. Every element replays its records from log on mount,
   // so a rebuilt main tab shows the conversation again.
-  const chat = document.createElement("engineer-chat");
-  chat.setAttribute("session", sessionId);
-  chat.className = "view view-main";
+  const chat = makeChatView(tab);
   // main's tools change the workspace; the element only reports them.
   chat.addEventListener("engineer-tool", (event) => {
     const d = event.detail || {};
@@ -245,7 +264,14 @@ function viewOf(tab) {
   if (tab.el) return tab.el;
   if (tab.main) return null; // built by makeMainTab
   if (tab.kind === "launcher") {
-    tab.el = buildProjectLauncherView(tab.projectId);
+    tab.el = buildProjectHomeView(tab.projectId);
+    return tab.el;
+  }
+  // A conversation with no blueprint has no page to put in a frame: this is the
+  // project's own chat (its home page created it), so the shell's element is the
+  // whole view — exactly what main is.
+  if (!tab.blueprint) {
+    tab.el = makeChatView(tab);
     return tab.el;
   }
   const frame = document.createElement("iframe");
@@ -520,11 +546,11 @@ async function activateTab(id, mode = "push") {
   expandGroup(tab.projectId);
   launcherClose();
   // A launcher tab is a live list (blueprints + that project's recents), not a
-  // document: rebuild it each time it comes back on stage, so a session created
-  // while it was in the background shows up in Recent.
-  if (tab.kind === "launcher") {
-    tab.el?.parentNode?.removeChild(tab.el);
-    tab.el = null;
+  // document: its lists are re-read each time it comes back on stage, so a session
+  // created while it was in the background shows up in Recent. The conversation
+  // below them is kept — coming back to it must not throw away a draft.
+  if (tab.kind === "launcher" && tab.el?.homeListsEl) {
+    void fillHomeLists(tab.el.homeListsEl, tab.projectId);
   }
   activeTabId = tab.id;
   showTab(tab);
@@ -1189,21 +1215,122 @@ async function openProjectLauncher(projectId, mode = "push") {
   launcherClose();
 }
 
-// buildProjectLauncherView draws the page a launcher tab shows. Everything on it
-// is that project's: the query carries its id, and log answers for that project
-// alone. The sections fill in as they arrive; a section that cannot be read says
-// why instead of pretending the project is empty.
-function buildProjectLauncherView(projectId) {
+// buildProjectHomeView draws a project's home page — the `+` in its group. It is
+// everything that project can open (its blueprints) and everything it had open
+// before (its recents), above the shell's own conversation. Arriving here creates
+// nothing: no session exists until the user sends a message or picks a row.
+function buildProjectHomeView(projectId) {
   const view = document.createElement("div");
-  view.className = "view view-launcher";
+  view.className = "view view-home";
+  const chat = document.createElement("engineer-chat");
+  chat.className = "home-chat";
+  chat.setAttribute("project", projectId);
+  chat.setAttribute("autofocus", "");
+
+  // The lists go inside the conversation's own scroll area (`slot="before"`), in
+  // the message column: they scroll with the messages instead of occupying a
+  // pane of their own, and the composer stays where a composer is.
+  const lists = document.createElement("div");
+  lists.className = "home-lists";
+  lists.setAttribute("slot", "before");
+  chat.appendChild(lists);
+  view.homeListsEl = lists;
+  // The element creates the session on the first message and says so here; from
+  // then on it is an ordinary conversation, in a tab of its own.
+  chat.addEventListener("engineer-session", (event) => {
+    const sessionId = String(event.detail?.sessionId ?? "");
+    if (sessionId) void openSessionFromLauncher(sessionId);
+  });
+  view.appendChild(chat);
+  view.homeChatEl = chat;
+
+  void fillHomeLists(lists, projectId);
+  return view;
+}
+
+// HOME_LIMIT is how many rows a home section shows before asking whether to show
+// the rest: a project's home is for the recent and the useful, not for scrolling
+// through everything that ever ran.
+const HOME_LIMIT = 20;
+
+// homeSection is one section of the project home — two columns of rows, the first
+// HOME_LIMIT of them, and a button that reveals the remainder. The board overlay
+// keeps launcherSectionOf (one column, everything): this one sits in the
+// conversation's column, where a 100-row list would push the composer out of
+// sight.
+function homeSection(title, promise, emptyText, rowOf) {
+  const sec = document.createElement("section");
+  sec.className = "launcher-sec home-sec";
+  const pending = document.createElement("div");
+  pending.className = "launcher-empty";
+  pending.textContent = "…";
+  sec.appendChild(pending);
+
+  const build = (rows, err) => {
+    sec.replaceChildren();
+    const h = document.createElement("h3");
+    h.textContent = err ? title : `${title} · ${rows.length}`;
+    sec.appendChild(h);
+    if (err) {
+      const e = document.createElement("div");
+      e.className = "launcher-error";
+      e.textContent = err.message;
+      sec.appendChild(e);
+      return;
+    }
+    if (!rows.length) {
+      const e = document.createElement("div");
+      e.className = "launcher-empty";
+      e.textContent = emptyText;
+      sec.appendChild(e);
+      return;
+    }
+    const grid = document.createElement("div");
+    grid.className = "home-grid";
+    const show = (count) => {
+      grid.replaceChildren(...rows.slice(0, count).map(rowOf));
+    };
+    show(Math.min(rows.length, HOME_LIMIT));
+    sec.appendChild(grid);
+    if (rows.length > HOME_LIMIT) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "home-more";
+      more.textContent = `展开 (+${rows.length - HOME_LIMIT})`;
+      more.addEventListener("click", () => {
+        show(rows.length);
+        more.remove();
+      });
+      sec.appendChild(more);
+    }
+  };
+
+  promise.then(
+    (rows) => build(rows, null),
+    (err) => build([], err),
+  );
+  return sec;
+}
+
+// fillHomeLists (re)reads the two sections. Everything on them is that project's:
+// the query carries its id, and log answers for that project alone. A section
+// that cannot be read says why instead of pretending the project is empty.
+async function fillHomeLists(lists, projectId) {
   const project = projectList.find((p) => p.projectId === projectId);
   const name = project?.name || project?.path || projectId;
   const path = project?.path || "";
-  view.appendChild(
-    launcherHead(name, path, () => void openEngineerLauncher()),
-  );
-  view.appendChild(
-    launcherSectionOf(
+  lists.innerHTML = "";
+  // The masthead: the handwritten wordmark, drawn in the current text colour (a
+  // mask, like the tab bar's mark) so it follows the theme instead of shipping a
+  // second, inverted copy for the dark one.
+  const mark = document.createElement("div");
+  mark.className = "home-mark";
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", "Corazon Engineer");
+  lists.appendChild(mark);
+  lists.appendChild(launcherHead(name, path));
+  lists.appendChild(
+    homeSection(
       "Blueprints",
       blueprintEntries(projectId),
       "no blueprints in this project",
@@ -1215,8 +1342,8 @@ function buildProjectLauncherView(projectId) {
         }),
     ),
   );
-  view.appendChild(
-    launcherSectionOf(
+  lists.appendChild(
+    homeSection(
       "Recent",
       recentEntries(projectId),
       "nothing yet",
@@ -1228,26 +1355,21 @@ function buildProjectLauncherView(projectId) {
         }),
     ),
   );
-  return view;
 }
 
-// launcherHead is the project launcher's title: the project's name, the folder it
-// lives in, and the way back to the board.
-function launcherHead(title, path, onBack) {
+// launcherHead is the project home's title: the project's name and the folder it
+// lives in. There is no way back — the `+` is a tab of this project's group, and
+// the board is the shell's own `+` at the end of the bar.
+function launcherHead(title, path) {
   const head = document.createElement("div");
   head.className = "launcher-head";
-  const back = document.createElement("button");
-  back.type = "button";
-  back.className = "row-btn";
-  back.textContent = "← projects";
-  back.addEventListener("click", onBack);
   const name = document.createElement("span");
   name.className = "launcher-title";
   name.textContent = title;
   const dir = document.createElement("span");
   dir.className = "launcher-path";
   dir.textContent = path;
-  head.append(back, name, dir);
+  head.append(name, dir);
   return head;
 }
 

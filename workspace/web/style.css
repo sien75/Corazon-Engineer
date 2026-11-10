@@ -376,14 +376,92 @@ html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
   display: none;
 }
 
-/* A project's launcher page lives in a tab of its group, so it is a scrollable
-   view rather than the full-page overlay the Engineer launcher is. It has to be
-   written after `.view` — same specificity, and that rule's `overflow: hidden`
-   would otherwise win and clip a long list of recents with no way to scroll. */
-.view-launcher {
-  overflow-y: auto;
-  padding: 32px 24px 48px;
+/* A project's home page lives in a tab of its group, and it is one conversation:
+   what the project can open (blueprints, recents) sits at the top of its scroll
+   area, in the message column, and scrolls with the messages. */
+.view-home {
   background: var(--surface);
+}
+/* The slotted lists take the message column's own geometry (max-width 880px,
+   12px text inset — see chat.css `.ai-messages`), so a row's text starts on the
+   same edge as a message and they scroll together. */
+.home-lists {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 880px;
+  margin-inline: auto;
+  padding: 24px 0 0 12px;
+}
+/* One conversation filling the tab: composer at the bottom, everything above it
+   scrolling. */
+.home-chat {
+  display: block;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* The home page's lists sit in the message column, so they take its left text
+   edge rather than the board overlay's centred 760px box, and their spacing is
+   the conversation's, not the overlay's. */
+/* The project home's masthead: the handwritten "Corazón Engineer". It is a mask,
+   so it is drawn in whatever the theme's text colour is. */
+.home-mark {
+  width: 120px;
+  height: 120px;
+  margin: 4px 0 10px 8px;
+  background: currentColor;
+  opacity: .9;
+  -webkit-mask: url("/assets/corazon-engineer.png") center / contain no-repeat;
+  mask: url("/assets/corazon-engineer.png") center / contain no-repeat;
+}
+
+.home-lists .launcher-head {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  margin: 0 0 8px;
+  padding: 0 12px 8px 0;
+}
+.home-lists .launcher-sec {
+  max-width: none;
+  margin-inline: 0;
+}
+.home-lists .launcher-sec h3 {
+  padding: 6px 8px 4px;
+}
+
+/* Two columns of rows: blueprints and recents are lists of things to open, and a
+   single column turned a hundred of them into a wall. */
+.home-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: start;
+}
+.home-grid .launcher-item {
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+}
+
+/* The rest of a long list, on request. */
+.home-more {
+  margin-top: 4px;
+  padding: 4px 8px;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.home-more:hover {
+  color: var(--fg);
+}
+.home-lists .launcher-sec + .launcher-sec {
+  margin-top: 6px;
 }
 
 /* A page view is the blueprint's own document. */

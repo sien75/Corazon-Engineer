@@ -188,6 +188,23 @@ is shared, so deleting one conversation does not delete it. (Deleting the
 conversation's records — `session-delete` — is what removes the session row; then
 the URL is a 404. That is `case-core-session-delete`.)
 
+## 7b. without a blueprint: the project's own chat
+
+`kind: sub` 不给 blueprint 就是项目自己的对话（项目的 `+` 页发第一条消息时建的）：没有页面、没有
+README 追加，session 行的 blueprint 为空，tab 名先叫 `chat`；`/agent/<id>/` 没有页可服务，是 404。
+
+```bash
+CHAT=$(curl -s -X POST http://localhost:8971/ai/new \
+  -H 'Content-Type: application/yaml' --data-binary "$(printf 'projectId: %s\nkind: sub' "$PROJECT")" \
+  | sed -n 's/^sessionId: //p')
+curl -s -X POST http://localhost:8970/log/session/detail \
+  -H 'Content-Type: application/yaml' --data-binary "sessionId: $CHAT"
+curl -s -o /dev/null -w '%{http_code}\n' "http://localhost:8972/agent/$CHAT/"
+```
+
+Expected: `sessionId: s_<hex>`；会话行 `kind: sub`、`blueprint: ""`、`title: chat`；`404` —— 这一页由
+外壳自己画，不经过 `/agent/`。
+
 ## 8. teardown
 
 ```bash

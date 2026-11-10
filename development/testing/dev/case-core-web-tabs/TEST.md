@@ -204,9 +204,9 @@ check("a project row carries edit / eye / remove, the icons drawn not typed",
 
 // 3. edit opens the project's launcher in a tab of its group
 await page.click("#launcher .project-row .edit");
-await page.waitForSelector("#panes .view-launcher .launcher-sec", { state: "visible" });
+await page.waitForSelector("#panes .view-home .launcher-sec", { state: "visible" });
 // The page fills in as its two lists arrive; read it once a row is on it.
-await page.waitForSelector(".view-launcher .launcher-sec:first-of-type .launcher-item", { state: "visible" });
+await page.waitForSelector(".view-home .launcher-sec:first-of-type .launcher-item", { state: "visible" });
 b = await bar();
 const launcherTab = b.tabs.find((t) => t.launcher);
 check("edit put a launcher tab in the project's group and activated it",
@@ -214,14 +214,15 @@ check("edit put a launcher tab in the project's group and activated it",
     groupOf(b, "tabs")?.expanded, { bar: b });
 check("the launcher tab is addressed by the project",
   new URL(await page.url()).pathname === `/project/${PROJECT}/new`, { path: new URL(await page.url()).pathname });
-// 它也没有 ×，所以两边一样宽（和 main 同一条规则）。
+// 它也没有 ×，所以两边一样宽；而且它必须 8px —— 没打开时那枚图标和打开后的
+// 这一格是同一个按钮（style.css 的 `.tab.launcher`），宽度不能在点击时跳。
 check("the launcher icon tab is padded equally too",
-  JSON.stringify(await pads("#tabs .tab.launcher")) === JSON.stringify({ left: 10, right: 10 }),
+  JSON.stringify(await pads("#tabs .tab.launcher")) === JSON.stringify({ left: 8, right: 8 }),
   { pads: await pads("#tabs .tab.launcher") });
 const launcherView = await page.evaluate(() => ({
-  head: document.querySelector(".view-launcher .launcher-title")?.textContent.trim(),
-  sections: [...document.querySelectorAll(".view-launcher .launcher-sec h3")].map((h) => h.textContent.trim()),
-  blueprints: [...document.querySelectorAll(".view-launcher .launcher-sec:first-of-type .launcher-item .name")]
+  head: document.querySelector(".view-home .launcher-title")?.textContent.trim(),
+  sections: [...document.querySelectorAll(".view-home .launcher-sec h3")].map((h) => h.textContent.trim()),
+  blueprints: [...document.querySelectorAll(".view-home .launcher-sec:first-of-type .launcher-item .name")]
     .map((n) => n.textContent.trim()),
 }));
 check("the project launcher shows Blueprints and Recent for that project",
@@ -229,7 +230,7 @@ check("the project launcher shows Blueprints and Recent for that project",
     launcherView.sections[1].startsWith("Recent") && launcherView.blueprints[0] === "Probe Page", launcherView);
 
 // 3b. picking a blueprint makes a session and a tab in the same group
-await page.click(".view-launcher .launcher-sec:first-of-type .launcher-item");
+await page.click(".view-home .launcher-sec:first-of-type .launcher-item");
 await page.waitForFunction((n) => document.querySelectorAll("#tabs .tab:not(.main):not(.launcher)").length === n,
   base.length + 1, { timeout: 30_000 });
 const opened = (await openIds()).find((id) => !base.includes(id));
@@ -303,12 +304,17 @@ check("the group is still there after its last session tab closed",
 
 // 5. the launcher tab's Recent reopens the same session
 await page.click("#tabs .tab.launcher");
-await page.waitForSelector(".view-launcher .launcher-sec", { state: "visible" });
+await page.waitForSelector(".view-home .launcher-sec", { state: "visible" });
+// 列表是每次回到这一页时重读的（不是随视图重建），所以等那一行自己出现。
+await page.waitForFunction(() =>
+  [...document.querySelectorAll(".view-home .launcher-sec")][1]
+    ?.querySelector(".launcher-item .name")?.textContent.trim() === "Probe Page",
+  null, { timeout: 15_000 });
 const recentName = await page.evaluate(() =>
-  [...document.querySelectorAll(".view-launcher .launcher-sec")][1]
+  [...document.querySelectorAll(".view-home .launcher-sec")][1]
     ?.querySelector(".launcher-item .name")?.textContent.trim());
 check("Recent lists the closed session by its title", recentName === "Probe Page", { recentName });
-await page.click("loc=css:.view-launcher .launcher-sec:nth-of-type(2) .launcher-item:nth-of-type(1)");
+await page.click("loc=css:.view-home .launcher-sec:nth-of-type(2) .launcher-item:nth-of-type(1)");
 await page.waitForFunction((n) => document.querySelectorAll("#tabs .tab:not(.main):not(.launcher)").length === n,
   base.length + 1, { timeout: 15_000 });
 check("reopening puts the same session back in the open list", (await openIds()).includes(opened),
@@ -402,7 +408,7 @@ check("a restored tab is addressed by its session",
 // 9b. the launcher at the end of the group: clicking it brings its page back, and
 // there is no way to close it
 await page.click("#tabs .tab.launcher");
-await page.waitForSelector(".view-launcher .launcher-sec .launcher-item", { state: "visible" });
+await page.waitForSelector(".view-home .launcher-sec .launcher-item", { state: "visible" });
 const launcherHere = await page.evaluate(() => {
   const t = document.querySelector("#tabs .tab.launcher");
   return { active: t?.classList.contains("active"), closable: !!t?.querySelector(".tab-close") };
@@ -413,7 +419,7 @@ check("the launcher still has no close button", !launcherHere.closable, launcher
 
 // 10. a project route restores its launcher tab after a reload
 await page.goto(`${WEB}/project/${PROJECT}/new`);
-await page.waitForSelector(".view-launcher .launcher-sec", { state: "visible" });
+await page.waitForSelector(".view-home .launcher-sec", { state: "visible" });
 b = await bar();
 check("reloading the project route restores its launcher tab, expanded",
   b.tabs.some((t) => t.launcher && t.active) && groupOf(b, "tabs")?.expanded, { bar: b });
