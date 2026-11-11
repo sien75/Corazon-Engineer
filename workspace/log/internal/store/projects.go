@@ -106,7 +106,7 @@ func (s *Store) AddProject(path, name string) (Project, error) {
 	if name == "" {
 		// No name given: the folder name is what a user recognizes. The web server
 		// reads engineer.yaml's `project:` before it gets here; this is the fallback
-		// for a direct caller (and for the launcher's migration).
+		// for a direct caller.
 		name = filepath.Base(path)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)

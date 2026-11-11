@@ -277,8 +277,7 @@ export function serve(registry: Registry, addr: string): void {
             return errRes(404, "not_found", "session not found");
           }
           // The page belongs to the blueprint and is shared, so deleting an
-          // agent leaves it alone (a legacy per-agent copy is cleaned up by
-          // the registry).
+          // agent leaves it alone.
           return yamlRes({ sessionId: id });
         }
 

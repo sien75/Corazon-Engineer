@@ -2,9 +2,7 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -15,8 +13,7 @@ import (
 //
 // There is no tab row and no tab id any more: a tab is one open session, so
 // "tab" is a word for the container in the UI and nothing else. A session with no
-// row is read as "sub": the table starts out backfilled from records, so older
-// projects need no migration of their own.
+// row is read as "sub".
 type Session struct {
 	SessionID string `yaml:"sessionId"`
 	Kind      string `yaml:"kind"`
@@ -86,40 +83,6 @@ func (c Current) Body() map[string]interface{} {
 	}
 }
 
-// hasColumn reports whether a table has a column. It is how a database written by
-// an older build is recognised before it is migrated.
-func (s *Store) hasColumn(table, column string) (bool, error) {
-	rows, err := s.db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, kind string
-		var notNull, pk int
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &kind, &notNull, &dflt, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
-}
-
-// hasTable reports whether a table exists. It is how a database written by an
-// older build is recognised before it is migrated.
-func (s *Store) hasTable(table string) (bool, error) {
-	var name string
-	err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	return err == nil, err
-}
-
 func (s *Store) createWorkspaceTables() error {
 	for _, stmt := range []string{
 		`CREATE TABLE IF NOT EXISTS sessions (
@@ -149,31 +112,6 @@ func (s *Store) createWorkspaceTables() error {
 			return err
 		}
 	}
-	// A database that predates a column gets it in place: pages are resolved
-	// through blueprint and the tab bar draws title, so every project started
-	// before those must not fall over. "duplicate column name" is the
-	// already-migrated case.
-	for _, stmt := range []string{
-		`ALTER TABLE sessions ADD COLUMN blueprint TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE sessions ADD COLUMN image_model TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE sessions ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`,
-		// The workspace used to be a row of its own; what it held belongs on the
-		// session: where it sits on the tab bar, whether it is main, and when it
-		// last took part in a workspace change (which is what current/updatedAt is).
-		`ALTER TABLE sessions ADD COLUMN open_index INTEGER NOT NULL DEFAULT -1`,
-		`ALTER TABLE sessions ADD COLUMN is_main INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE sessions ADD COLUMN touched_at TEXT NOT NULL DEFAULT ''`,
-		// A board written before groups existed gets the eye's column in place:
-		// every project it holds was drawn in the titlebar, so visible is the
-		// honest default.
-		`ALTER TABLE projects ADD COLUMN visible INTEGER NOT NULL DEFAULT 1`,
-	} {
-		if _, err := s.db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			return err
-		}
-	}
 	for _, stmt := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_session_project ON sessions(project_id)`,
 		// One row per open position and one main at most: the pair of partial
@@ -186,57 +124,7 @@ func (s *Store) createWorkspaceTables() error {
 			return err
 		}
 	}
-	// Backfill: a project that predates this table has sessions only in records.
-	if _, err := s.db.Exec(`INSERT OR IGNORE INTO sessions (session_id, kind, created_at)
-		SELECT session_id, 'sub', MIN(created_at) FROM records
-		WHERE kind = 'conversation' AND session_id IS NOT NULL AND session_id <> ''
-		GROUP BY session_id`); err != nil {
-		return err
-	}
-	return s.migrateFromCurrent()
-}
-
-// migrateFromCurrent moves the workspace row a database written before this
-// change kept in `current` onto the session rows it pointed at, then drops the
-// table: which sessions are open, in what order, and which one is main are
-// properties of a session, not a row of their own. A database that has no
-// `current` table is already in the new shape.
-func (s *Store) migrateFromCurrent() error {
-	has, err := s.hasTable("current")
-	if err != nil || !has {
-		return err
-	}
-	var openRaw, mainSession string
-	if err := s.db.QueryRow(`SELECT open_sessions, main_session FROM current WHERE id = 1`).
-		Scan(&openRaw, &mainSession); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		// An older build named the column open_tabs and held tab ids there. Those
-		// ids are not sessions, so nothing can be mapped without the tab table —
-		// the order is dropped and the conversations stay reachable by list.
-		openRaw, mainSession = "", ""
-	}
-	var open []string
-	if openRaw != "" {
-		_ = json.Unmarshal([]byte(openRaw), &open)
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	for i, id := range open {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if _, err := s.db.Exec(`UPDATE sessions SET open_index = ?, touched_at = ? WHERE session_id = ?`,
-			i, now, id); err != nil {
-			return err
-		}
-	}
-	if mainSession = strings.TrimSpace(mainSession); mainSession != "" {
-		if _, err := s.db.Exec(`UPDATE sessions SET is_main = 1, touched_at = ? WHERE session_id = ?`,
-			now, mainSession); err != nil {
-			return err
-		}
-	}
-	_, err = s.db.Exec(`DROP TABLE current`)
-	return err
+	return nil
 }
 
 func contains(list []string, want string) bool {

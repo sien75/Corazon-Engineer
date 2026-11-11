@@ -55,8 +55,7 @@ export const TITLE_SYSTEM_PROMPT =
   "Chinese one a Chinese title. Keep it short: at most 10 characters in Chinese, 2 to 4 words " +
   "in English. Output the title only: no quotes, no trailing punctuation, no explanation.";
 
-// textOf returns the prose of one record: text blocks only. A legacy row (no raw
-// pi message) keeps its projection, which is already text-or-[image].
+// textOf returns the prose of one record: text blocks only.
 function textOf(r: StoredRecord): string {
   const content = r.raw?.content;
   if (Array.isArray(content)) {

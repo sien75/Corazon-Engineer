@@ -502,9 +502,8 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 
 // ---------- log/test/query | log/telemetry/query | log/{test,telemetry}/detail ----------
 //
-// The kind comes from the endpoint, so no body has to name it. A read still spans
-// the bucket's own table and `records`, where the rows written before the split
-// live — an old test run must not disappear because the table moved.
+// The kind comes from the endpoint, so no body has to name it; a read goes to
+// the bucket's own table.
 
 func (s *Server) recordQuery(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

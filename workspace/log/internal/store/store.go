@@ -75,10 +75,6 @@ func Open(home string) (*Store, error) {
 	// replays, a test row is one run, a telemetry row is one observation. Keeping
 	// them apart is what lets each be read, indexed and eventually pruned on its
 	// own; the columns are identical so one reader can still span them.
-	//
-	// `records` also holds the test / telemetry rows written before the split. They
-	// are not migrated: a read spans the tables, so old rows stay visible where they
-	// are.
 	for _, table := range recordTables {
 		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS ` + table + ` (
 		id TEXT PRIMARY KEY,
@@ -114,7 +110,7 @@ func Open(home string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// recordTables is every table a record can live in, newest kinds included.
+// recordTables is every table a record can live in.
 var recordTables = []string{"records", "tests", "telemetries"}
 
 // tableForKind is where a newly written record goes.
@@ -129,26 +125,23 @@ func tableForKind(kind string) string {
 	}
 }
 
-// tablesForKind is where a kind can be read from: its own table plus `records`,
-// which still holds the rows written before the split. A read that names no kind
-// spans all three.
+// tablesForKind is where a kind is read from: its own table. A read that names
+// no kind spans all three.
 func tablesForKind(kind string) []string {
 	switch kind {
 	case "conversation":
 		return []string{"records"}
 	case "test":
-		return []string{"records", "tests"}
+		return []string{"tests"}
 	case "telemetry":
-		return []string{"records", "telemetries"}
+		return []string{"telemetries"}
 	default:
 		return recordTables
 	}
 }
 
 // recordSource is the one FROM a reader can use whatever the kind: the tables
-// that may hold it, stacked. Filtering by kind afterwards is what keeps a row of
-// `records` from appearing twice when it also exists in a split table
-// (impossible today, but the union is the safe shape).
+// that may hold it, stacked.
 func recordSource(kind string) string {
 	parts := make([]string, 0, len(tablesForKind(kind)))
 	for _, table := range tablesForKind(kind) {
@@ -334,7 +327,7 @@ func (s *Store) ListSessions(pageNum int, projectID string) ([]map[string]interf
 		COALESCE(
 			(SELECT r2.payload FROM records r2
 				WHERE r2.kind = 'conversation' AND r2.session_id = s.session_id
-					AND (r2.payload LIKE '%msgKind: user%' OR r2.payload LIKE '%role: user%')
+					AND r2.payload LIKE '%role: user%'
 				ORDER BY r2.rowid ASC LIMIT 1),
 			(SELECT r3.payload FROM records r3
 				WHERE r3.kind = 'conversation' AND r3.session_id = s.session_id
@@ -422,31 +415,22 @@ func (s *Store) SessionMessages(sessionID string) ([]map[string]interface{}, err
 			return nil, err
 		}
 		var p struct {
-			Seq     int                      `yaml:"seq"`
-			Role    string                   `yaml:"role"`
-			MsgKind string                   `yaml:"msgKind"`
-			Content string                   `yaml:"content"`
-			Raw     interface{}              `yaml:"raw"`
-			Blocks  []map[string]interface{} `yaml:"blocks"`
+			Seq     int         `yaml:"seq"`
+			Role    string      `yaml:"role"`
+			Content string      `yaml:"content"`
+			Raw     interface{} `yaml:"raw"`
 		}
 		if err := yaml.Unmarshal([]byte(payloadText), &p); err != nil {
 			continue
 		}
-		role := p.Role
-		if role == "" {
-			role = p.MsgKind // legacy rows carry msgKind
-		}
 		msg := map[string]interface{}{
 			"seq":       p.Seq,
-			"role":      role,
+			"role":      p.Role,
 			"content":   p.Content,
 			"createdAt": createdAt,
 		}
 		if p.Raw != nil {
 			msg["raw"] = p.Raw
-		}
-		if len(p.Blocks) > 0 {
-			msg["blocks"] = p.Blocks
 		}
 		messages = append(messages, msg)
 	}

@@ -636,8 +636,8 @@ func handleProjectAdd(w http.ResponseWriter, r *http.Request, logBase string) {
 }
 
 // projectName reads the display name out of the project marker, falling back to
-// the folder name. The migration does the same reading for the project it
-// registers — the marker, not the path, is what a user recognizes.
+// the folder name. The marker, not the path, is what a user
+// recognizes.
 func projectName(dir string) string {
 	if data, err := os.ReadFile(filepath.Join(dir, "engineer.yaml")); err == nil {
 		var doc struct {

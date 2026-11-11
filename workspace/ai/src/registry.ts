@@ -514,20 +514,8 @@ export class Registry {
       // that is replayed as-is is fatal rather than cosmetic — the provider
       // rejects the whole request, and every later prompt replays it again.
       const context = sanitizeHistory(id, history.slice(lastCompactionIndex(history)));
-      // Legacy rows (written before records carried pi's raw message) name no
-      // api/provider/model, and there is no process-wide model to borrow: it is
-      // pi's choice per session. Borrow the last shape this session really used
-      // so replayed context keeps the form the provider sent it in.
-      const last = [...history]
-        .reverse()
-        .find((m) => m.raw && m.role === "assistant")?.raw as any;
-      const legacy = {
-        api: last?.api,
-        provider: last?.provider,
-        model: last?.model,
-      };
       for (const m of context) {
-        const msg = this.toAgentMessage(m, legacy);
+        const msg = this.toAgentMessage(m);
         if (msg) sessionManager.appendMessage(msg);
       }
       // Which model this session runs, three layers deep. In the session first:
@@ -713,17 +701,9 @@ export class Registry {
   }
 
   // toAgentMessage converts a stored record back into a pi AgentMessage so a
-  // resumed session carries the prior conversation as LLM context. New rows
-  // carry the raw pi message (images externalized as refs, re-inlined here);
-  // legacy rows carry only text/image blocks and are reconstructed — `legacy` is
-  // the last api/provider/model this session really used.
-  private toAgentMessage(
-    m: StoredRecord,
-    legacy: { api?: string; provider?: string; model?: string } = {},
-  ): any {
-    // A model switch is stored where a rebuild can find it, not replayed as
-    // something the model said.
-    if (m.role === "model") return undefined;
+  // resumed session carries the prior conversation as LLM context. A row carries
+  // the raw pi message (images externalized as refs, re-inlined here).
+  private toAgentMessage(m: StoredRecord): any {
     if (m.raw) {
       if (m.role === "compaction") {
         return {
@@ -735,48 +715,7 @@ export class Registry {
       }
       return inlineImages(m.raw, (sha) => loadImage(this.opts.home, sha));
     }
-    const blocks: any[] =
-      m.blocks && m.blocks.length
-        ? m.blocks
-        : m.content.trim()
-          ? [{ type: "text", text: m.content }]
-          : [];
-    const timestamp = Date.now();
-    if (m.role === "assistant") {
-      const text = blocks
-        .filter((b) => b.type === "text" && b.text)
-        .map((b) => b.text)
-        .join("\n");
-      if (!text.trim()) return undefined;
-      return {
-        role: "assistant",
-        content: [{ type: "text", text }],
-        api: legacy.api ?? "openai-completions",
-        provider: legacy.provider ?? "unknown",
-        model: legacy.model ?? "unknown",
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        stopReason: "stop",
-        timestamp,
-      };
-    }
-    const content: any[] = [];
-    for (const b of blocks) {
-      if (b.type === "text") {
-        if (b.text) content.push({ type: "text", text: b.text });
-      } else if (b.type === "image" && b.sha256) {
-        const img = loadImage(this.opts.home, b.sha256);
-        if (img) content.push({ type: "image", data: img.data, mimeType: img.mimeType });
-      }
-    }
-    if (!content.length) return undefined;
-    return { role: "user", content, timestamp };
+    return undefined;
   }
 
   get(id: string): Sess | undefined {
@@ -1225,16 +1164,7 @@ function sanitizeHistory(
   let orphans = 0;
 
   // 1. Keep the first row per seq (a retried write can insert the same seq
-  // twice), and collect the seq numbers actually present. Rows with no seq are
-  // legacy and carry no ordering information to de-duplicate on.
-  //
-  // `model` rows are metadata, not messages: they say which model the session was
-  // switched to. They are no longer written (the session row is the one place a
-  // model choice lives) but conversations recorded before that still carry them.
-  // They are written *during* a tool call — between the assistant message that
-  // asked for it and the result that answers it — so keeping them would break the
-  // pairing below and turn a real tool result into an orphan. Their seq still
-  // counts as present, so a dropped write is still reported.
+  // twice), and collect the seq numbers actually present.
   const deduped: StoredRecord[] = [];
   const seqs = new Set<number>();
   const seen = new Set<number>();
@@ -1248,7 +1178,6 @@ function sanitizeHistory(
       }
       seen.add(r.seq);
     }
-    if (r.role === "model") continue;
     deduped.push(r);
   }
   // A hole is a number no row ever claimed: a write that was lost for good.
@@ -1325,7 +1254,7 @@ function sanitizeHistory(
 
 // toolCallsOf returns the tool calls a stored record makes, in call order. Only
 // assistant records carrying a raw pi message with a content array have them;
-// legacy rows (text/image blocks) and compaction entries make none.
+// compaction entries make none.
 function toolCallsOf(r: StoredRecord): { id: string; name: string }[] {
   if (r.role !== "assistant" || !Array.isArray(r.raw?.content)) return [];
   return r.raw.content

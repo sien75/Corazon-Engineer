@@ -2,9 +2,6 @@ import YAML from "yaml";
 
 // A persisted conversation record. `role` is the pi message role (user /
 // assistant / toolResult) or "compaction" for a context-compaction entry.
-// Conversations recorded before the model choice moved onto the session row may
-// also carry "model" rows, a choice made inside the session; they are not
-// messages — history repair drops them rather than replaying them.
 // `content` is a derived plain-text projection used by the session list preview
 // and search. `raw` is the pi message (or compaction entry) verbatim — the
 // source of truth for replay and context rebuild — except that image bytes are
@@ -14,8 +11,6 @@ export interface StoredRecord {
   role: string;
   content: string;
   raw?: any;
-  // Legacy rows (written before raw storage) carry ordered text/image blocks.
-  blocks?: any[];
 }
 
 // The image block written into `raw` in place of pi's inline base64.
@@ -120,7 +115,7 @@ export function drainRecords(): Promise<void> {
 }
 
 // fetchRecords reads a session's conversation records in order. New rows carry
-// `raw`; legacy rows (msgKind/blocks/content) are returned as-is for fallback.
+// `raw`.
 export async function fetchRecords(
   logBase: string,
   sessionId: string,
@@ -147,11 +142,10 @@ export async function fetchRecords(
     return raw.map((m: any): StoredRecord => {
       const rec: StoredRecord = {
         seq: Number(m?.seq ?? 0),
-        role: String(m?.role ?? m?.msgKind ?? ""),
+        role: String(m?.role ?? ""),
         content: String(m?.content ?? ""),
       };
       if (m?.raw !== undefined && m?.raw !== null) rec.raw = m.raw;
-      if (Array.isArray(m?.blocks) && m.blocks.length) rec.blocks = m.blocks;
       return rec;
     });
   } catch {
