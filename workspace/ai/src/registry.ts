@@ -383,20 +383,20 @@ export class Registry {
   // is the blueprint's, shared with every other agent of it, so it stays.
   async deleteSession(id: string): Promise<void> {
     this.delete(id);
-    const res = await fetch(`${this.opts.logBase}/log/delete`, {
+    const res = await fetch(`${this.opts.logBase}/log/session/delete`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body: YAML.stringify({ sessionId: id }),
     });
     if (!res.ok) {
-      throw new Error(`log/delete: HTTP ${res.status}`);
+      throw new Error(`log/session/delete: HTTP ${res.status}`);
     }
   }
 
   // sessionExists answers "would /ai/resume find this?" — a live session, a row
   // in sessions (an instantiated agent), or recorded history. main's tab-on uses
   // it to tell a real session id from one the model made up, and session-delete
-  // uses it as its guard (log/delete is silent about unknown ids).
+  // uses it as its guard (log/session/delete is silent about unknown ids).
   private async sessionExists(id: string): Promise<boolean> {
     if (this.sessions.has(id)) return true;
     if (await this.sessionMeta(id)) return true;

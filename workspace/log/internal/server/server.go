@@ -25,24 +25,32 @@ type Server struct {
 
 func New(st *store.Store) *Server {
 	s := &Server{store: st, mux: http.NewServeMux(), broker: NewBroker()}
-	s.mux.HandleFunc("POST /log/list", s.handleList)
-	s.mux.HandleFunc("POST /log/delete", s.handleDelete)
-	s.mux.HandleFunc("POST /log/session/messages", s.handleSessionDetail)
-	s.mux.HandleFunc("POST /log/query", s.handleQuery)
-	s.mux.HandleFunc("POST /log/query-detail", s.handleQueryDetail)
-	s.mux.HandleFunc("POST /log/search", s.handleSearch)
-	s.mux.HandleFunc("POST /log/mutation", s.handleMutation)
+	// Every route is named by what it is about — a project, a session, a test run, an
+	// observation — so the file name and the path say the same thing. search and
+	// stream are the two that span every kind, and they are the only two without a
+	// bucket.
+	s.mux.HandleFunc("POST /log/session/list", s.handleSessionList)
+	s.mux.HandleFunc("POST /log/session/delete", s.handleSessionDelete)
+	s.mux.HandleFunc("POST /log/session/messages", s.handleSessionMessages)
+	s.mux.HandleFunc("POST /log/session/detail", s.handleSessionGet)
 	s.mux.HandleFunc("POST /log/session/on", s.handleSessionOn)
 	s.mux.HandleFunc("POST /log/session/off", s.handleSessionOff)
 	s.mux.HandleFunc("POST /log/session/upsert", s.handleSessionUpsert)
-	s.mux.HandleFunc("POST /log/session/detail", s.handleSessionGet)
+	s.mux.HandleFunc("POST /log/session/current/get", s.handleCurrentGet)
+	s.mux.HandleFunc("POST /log/session/current/put", s.handleCurrentPut)
+	s.mux.HandleFunc("POST /log/session/record/add", s.recordAdd("conversation"))
+	s.mux.HandleFunc("POST /log/test/add", s.recordAdd("test"))
+	s.mux.HandleFunc("POST /log/test/query", s.recordQuery("test"))
+	s.mux.HandleFunc("POST /log/test/detail", s.recordDetail("test"))
+	s.mux.HandleFunc("POST /log/telemetry/add", s.recordAdd("telemetry"))
+	s.mux.HandleFunc("POST /log/telemetry/query", s.recordQuery("telemetry"))
+	s.mux.HandleFunc("POST /log/telemetry/detail", s.recordDetail("telemetry"))
 	s.mux.HandleFunc("POST /log/project/list", s.handleProjectList)
 	s.mux.HandleFunc("POST /log/project/get", s.handleProjectGet)
 	s.mux.HandleFunc("POST /log/project/add", s.handleProjectAdd)
 	s.mux.HandleFunc("POST /log/project/remove", s.handleProjectRemove)
 	s.mux.HandleFunc("POST /log/project/visible", s.handleProjectVisible)
-	s.mux.HandleFunc("POST /log/current/get", s.handleCurrentGet)
-	s.mux.HandleFunc("POST /log/current/put", s.handleCurrentPut)
+	s.mux.HandleFunc("POST /log/search", s.handleSearch)
 	s.mux.HandleFunc("POST /log/stream", s.handleStream)
 	return s
 }
@@ -127,42 +135,42 @@ func pageNum(raw interface{}) int {
 	return 1
 }
 
-// ---------- log/mutation ----------
+// ---------- log/session/record/add | log/test/add | log/telemetry/add ----------
+//
+// One handler per bucket, made by one factory: the kind is the endpoint's, not the
+// caller's, so a body can never write a test run into the conversation table. The
+// columns are the same in all three — only which table they land in differs.
 
-func (s *Server) handleMutation(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Op        string      `yaml:"op"`
-		Kind      string      `yaml:"kind"`
-		Env       string      `yaml:"env"`
-		Atom      string      `yaml:"atom"`
-		SessionID string      `yaml:"sessionId"`
-		Payload   interface{} `yaml:"payload"`
+func (s *Server) recordAdd(kind string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Env       string      `yaml:"env"`
+			Atom      string      `yaml:"atom"`
+			SessionID string      `yaml:"sessionId"`
+			Payload   interface{} `yaml:"payload"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		if kind == "conversation" && strings.TrimSpace(req.SessionID) == "" {
+			writeErr(w, http.StatusBadRequest, "bad_request", "sessionId missing")
+			return
+		}
+		rec := store.Record{
+			Kind:      kind,
+			Env:       req.Env,
+			Atom:      req.Atom,
+			SessionID: req.SessionID,
+			Payload:   req.Payload,
+		}
+		rec, err := s.store.Insert(rec)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		s.broker.Publish(rec)
+		writeYAMLResp(w, http.StatusOK, map[string]interface{}{"id": rec.ID, "createdAt": rec.CreatedAt})
 	}
-	if !decode(w, r, &req) {
-		return
-	}
-	if req.Op != "add" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "op must be add")
-		return
-	}
-	if !containsStr([]string{"test", "telemetry", "conversation"}, req.Kind) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "kind must be test | telemetry | conversation")
-		return
-	}
-	rec := store.Record{
-		Kind:      req.Kind,
-		Env:       req.Env,
-		Atom:      req.Atom,
-		SessionID: req.SessionID,
-		Payload:   req.Payload,
-	}
-	rec, err := s.store.Insert(rec)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	s.broker.Publish(rec)
-	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"id": rec.ID, "createdAt": rec.CreatedAt})
 }
 
 // ---------- log/session/on | log/session/off ----------
@@ -445,9 +453,9 @@ func (s *Server) handleCurrentPut(w http.ResponseWriter, r *http.Request) {
 	writeYAMLResp(w, http.StatusOK, cur.Body())
 }
 
-// ---------- log/list ----------
+// ---------- log/session/list ----------
 
-func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PageNum   interface{} `yaml:"pageNum"`
 		ProjectID string      `yaml:"projectId"`
@@ -468,9 +476,9 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---------- log/delete ----------
+// ---------- log/session/delete ----------
 
-func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `yaml:"sessionId"`
 	}
@@ -492,41 +500,63 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---------- log/query ----------
+// ---------- log/test/query | log/telemetry/query | log/{test,telemetry}/detail ----------
+//
+// The kind comes from the endpoint, so no body has to name it. A read still spans
+// the bucket's own table and `records`, where the rows written before the split
+// live — an old test run must not disappear because the table moved.
 
-func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Kind      string      `yaml:"kind"`
-		Env       string      `yaml:"env"`
-		Atom      string      `yaml:"atom"`
-		SessionID string      `yaml:"sessionId"`
-		Start     string      `yaml:"start"`
-		End       string      `yaml:"end"`
-		PageNum   interface{} `yaml:"pageNum"`
+func (s *Server) recordQuery(kind string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Env       string      `yaml:"env"`
+			Atom      string      `yaml:"atom"`
+			SessionID string      `yaml:"sessionId"`
+			Start     string      `yaml:"start"`
+			End       string      `yaml:"end"`
+			PageNum   interface{} `yaml:"pageNum"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		items, hasMore, err := s.store.Query(kind, req.Env, req.Atom, req.SessionID, req.Start, req.End, pageNum(req.PageNum))
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		writeYAMLResp(w, http.StatusOK, map[string]interface{}{
+			"records":  items,
+			"pageNum":  pageNum(req.PageNum),
+			"hasMore":  hasMore,
+			"pageSize": store.PageSize,
+		})
 	}
-	if !decode(w, r, &req) {
-		return
+}
+
+func (s *Server) recordDetail(kind string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID string `yaml:"id"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		if req.ID == "" {
+			writeErr(w, http.StatusBadRequest, "bad_request", "id missing")
+			return
+		}
+		rec, err := s.store.Get(req.ID, kind)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "not_found", "record not found")
+			return
+		}
+		writeYAMLResp(w, http.StatusOK, rec)
 	}
-	if req.Kind != "" && !containsStr([]string{"test", "telemetry", "conversation"}, req.Kind) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "kind must be test | telemetry | conversation")
-		return
-	}
-	items, hasMore, err := s.store.Query(req.Kind, req.Env, req.Atom, req.SessionID, req.Start, req.End, pageNum(req.PageNum))
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
-		"records":  items,
-		"pageNum":  pageNum(req.PageNum),
-		"hasMore":  hasMore,
-		"pageSize": store.PageSize,
-	})
 }
 
 // ---------- log/session/messages ----------
 
-func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `yaml:"sessionId"`
 	}
@@ -546,27 +576,6 @@ func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
 		"sessionId": req.SessionID,
 		"messages":  messages,
 	})
-}
-
-// ---------- log/query-detail ----------
-
-func (s *Server) handleQueryDetail(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID string `yaml:"id"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	if req.ID == "" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "id missing")
-		return
-	}
-	rec, err := s.store.Get(req.ID)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "record not found")
-		return
-	}
-	writeYAMLResp(w, http.StatusOK, rec)
 }
 
 // ---------- log/search ----------

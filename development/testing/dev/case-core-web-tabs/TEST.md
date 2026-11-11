@@ -1,7 +1,7 @@
 # Test: core-web-tabs
 
-tab 条、分组与 launcher。**一个 tab 就是一条开着的 session**（launcher tab 除外）：`current.openSessions`
-里的每个 session id 画成一格，按 session 的 `projectId` 归到项目分组里；main 全局，不属任何分组。
+tab 条、分组与 launcher。**一个 tab 就是一条开着的 session**（launcher tab 除外）：`openSessions`（即
+`open_index` 不为 -1 的 session 行，按序）里的每个 session id 画成一格，按 session 的 `projectId` 归到项目分组里；main 全局，不属任何分组。
 本用例钉住的是：
 
 - boot 之后只有 `main`，`openSessions` 为空；
@@ -21,7 +21,7 @@ Source of truth: `workspace/web/app.js`（分组 tab 条 / launcher / `activateT
 `doRefreshWorkspace` / `syncTabUrl`）、`workspace/web/components/chat.js`（`replayHistory`：
 `/ai/resume` + `/log/session/messages`）、`workspace/web/style.css`（`#tabs .tab`、`.tab-group`、`.view`）、
 `workspace/log`（`current` + `sessions` + `projects`）。不需要模型，ai 用 `--stub`：
-历史用 `/log/mutation`（`kind: conversation`）直接写进 log。
+历史用 `/log/session/record/add` 直接写进 log（会话记录，bucket 由端点决定）。
 
 ## Setup
 
@@ -120,7 +120,7 @@ const post = async (url, body) =>
 const ENGINEER = await page.evaluate(async () => (await import("/config.js")).ENGINEER);
 const projectList = async () => String(await post(`${ENGINEER.log}/log/project/list`, "{}"));
 const PROJECT = (await projectList()).match(/projectId:\s*(\S+)/)[1];
-const current = async () => post(`${ENGINEER.log}/log/current/get`, "{}");
+const current = async () => post(`${ENGINEER.log}/log/session/current/get`, "{}");
 // openSessions comes back as yaml: a flow list when empty, a block list otherwise.
 const openIds = async () => {
   const body = await current();
@@ -272,8 +272,8 @@ check("the tab is an iframe onto /agent/<sessionId>/ and its page loaded",
 
 // 3c. seed two recorded messages: replay reads records, not the model (--stub)
 const seed = (seq, role, raw, content) =>
-  post(`${ENGINEER.log}/log/mutation`,
-    `op: add\nkind: conversation\nsessionId: ${opened}\npayload:\n  seq: ${seq}\n  role: ${role}\n  content: ${JSON.stringify(content)}\n  raw: ${JSON.stringify(raw)}`);
+  post(`${ENGINEER.log}/log/session/record/add`,
+    `sessionId: ${opened}\npayload:\n  seq: ${seq}\n  role: ${role}\n  content: ${JSON.stringify(content)}\n  raw: ${JSON.stringify(raw)}`);
 await seed(1, "user", { role: "user", content: "seed question" }, "seed question");
 await seed(2, "assistant", { role: "assistant", content: [{ type: "text", text: "seed answer" }] },
   "seed answer");

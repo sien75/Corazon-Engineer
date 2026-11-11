@@ -103,7 +103,7 @@ import { ENGINEER } from "/config.js";
 const { static: STATIC, log: LOG } = ENGINEER;
 const yaml = { "Content-Type": "application/yaml" };
 const files = await (await fetch(STATIC + "/static/query", { method: "POST", headers: yaml, body: "{}" })).text();
-const recs = await (await fetch(LOG + "/log/query", { method: "POST", headers: yaml, body: '{"pageNum":1}' })).text();
+const recs = await (await fetch(LOG + "/log/test/query", { method: "POST", headers: yaml, body: '{"pageNum":1}' })).text();
 ```
 
 #### The chat, hidden until the page asks for it

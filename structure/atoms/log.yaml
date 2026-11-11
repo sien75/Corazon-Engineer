@@ -43,12 +43,19 @@ atoms:
           extend:
             path: /log/project/visible
             method: POST
-        - id: log-query
+        - id: log-session-list
           channel: network
           protocol: http
-          contract: ./contracts/log-query.yaml
+          contract: ./contracts/log-session-list.yaml
           extend:
-            path: /log/query
+            path: /log/session/list
+            method: POST
+        - id: log-session-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-detail.yaml
+          extend:
+            path: /log/session/detail
             method: POST
         - id: log-session-messages
           channel: network
@@ -57,47 +64,12 @@ atoms:
           extend:
             path: /log/session/messages
             method: POST
-        - id: log-delete
+        - id: log-session-upsert
           channel: network
           protocol: http
-          contract: ./contracts/log-delete.yaml
+          contract: ./contracts/log-session-upsert.yaml
           extend:
-            path: /log/delete
-            method: POST
-        - id: log-list
-          channel: network
-          protocol: http
-          contract: ./contracts/log-list.yaml
-          extend:
-            path: /log/list
-            method: POST
-        - id: log-query-detail
-          channel: network
-          protocol: http
-          contract: ./contracts/log-query-detail.yaml
-          extend:
-            path: /log/query-detail
-            method: POST
-        - id: log-search
-          channel: network
-          protocol: http
-          contract: ./contracts/log-search.yaml
-          extend:
-            path: /log/search
-            method: POST
-        - id: log-mutation
-          channel: network
-          protocol: http
-          contract: ./contracts/log-mutation.yaml
-          extend:
-            path: /log/mutation
-            method: POST
-        - id: log-stream
-          channel: network
-          protocol: http
-          contract: ./contracts/log-stream.yaml
-          extend:
-            path: /log/stream
+            path: /log/session/upsert
             method: POST
         - id: log-session-on
           channel: network
@@ -113,33 +85,88 @@ atoms:
           extend:
             path: /log/session/off
             method: POST
-        - id: log-session-upsert
+        - id: log-session-delete
           channel: network
           protocol: http
-          contract: ./contracts/log-session-upsert.yaml
+          contract: ./contracts/log-session-delete.yaml
           extend:
-            path: /log/session/upsert
+            path: /log/session/delete
             method: POST
-        - id: log-session-kind
+        - id: log-session-current-get
           channel: network
           protocol: http
-          contract: ./contracts/log-session-kind.yaml
+          contract: ./contracts/log-session-current-get.yaml
           extend:
-            path: /log/session/detail
+            path: /log/session/current/get
             method: POST
-        - id: log-current-get
+        - id: log-session-current-put
           channel: network
           protocol: http
-          contract: ./contracts/log-current-get.yaml
+          contract: ./contracts/log-session-current-put.yaml
           extend:
-            path: /log/current/get
+            path: /log/session/current/put
             method: POST
-        - id: log-current-put
+        - id: log-session-record-add
           channel: network
           protocol: http
-          contract: ./contracts/log-current-put.yaml
+          contract: ./contracts/log-session-record-add.yaml
           extend:
-            path: /log/current/put
+            path: /log/session/record/add
             method: POST
-
+        - id: log-test-add
+          channel: network
+          protocol: http
+          contract: ./contracts/log-test-add.yaml
+          extend:
+            path: /log/test/add
+            method: POST
+        - id: log-test-query
+          channel: network
+          protocol: http
+          contract: ./contracts/log-test-query.yaml
+          extend:
+            path: /log/test/query
+            method: POST
+        - id: log-test-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/log-test-detail.yaml
+          extend:
+            path: /log/test/detail
+            method: POST
+        - id: log-telemetry-add
+          channel: network
+          protocol: http
+          contract: ./contracts/log-telemetry-add.yaml
+          extend:
+            path: /log/telemetry/add
+            method: POST
+        - id: log-telemetry-query
+          channel: network
+          protocol: http
+          contract: ./contracts/log-telemetry-query.yaml
+          extend:
+            path: /log/telemetry/query
+            method: POST
+        - id: log-telemetry-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/log-telemetry-detail.yaml
+          extend:
+            path: /log/telemetry/detail
+            method: POST
+        - id: log-search
+          channel: network
+          protocol: http
+          contract: ./contracts/log-search.yaml
+          extend:
+            path: /log/search
+            method: POST
+        - id: log-stream
+          channel: network
+          protocol: http
+          contract: ./contracts/log-stream.yaml
+          extend:
+            path: /log/stream
+            method: POST
       consumes: []

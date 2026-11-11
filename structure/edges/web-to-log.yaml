@@ -1,9 +1,9 @@
 edges:
-  - id: web-to-log-list
+  - id: web-to-log-session-list
     from: web
-    from_interface: log-list
+    from_interface: log-session-list
     to: log
-    to_interface: log-list
+    to_interface: log-session-list
     channel: network
     protocol: http
     description: the launcher lists recent sessions (title, blueprint, last activity)
@@ -23,27 +23,27 @@ edges:
     channel: network
     protocol: http
     description: the shell closes a tab the user clicked away (the session keeps its records)
-  - id: web-to-log-current-get
+  - id: web-to-log-session-current-get
     from: web
-    from_interface: log-current-get
+    from_interface: log-session-current-get
     to: log
-    to_interface: log-current-get
+    to_interface: log-session-current-get
     channel: network
     protocol: http
     description: the shell reads which sessions are open and the main session on load
-  - id: web-to-log-current-put
+  - id: web-to-log-session-current-put
     from: web
-    from_interface: log-current-put
+    from_interface: log-session-current-put
     to: log
-    to_interface: log-current-put
+    to_interface: log-session-current-put
     channel: network
     protocol: http
     description: the shell repairs the open list (drops session ids that no longer exist) and records a new main session
-  - id: web-to-log-session-kind
+  - id: web-to-log-session-detail
     from: web
-    from_interface: log-session-kind
+    from_interface: log-session-detail
     to: log
-    to_interface: log-session-kind
+    to_interface: log-session-detail
     channel: network
     protocol: http
     description: the shell checks that the main session still exists before starting main on it

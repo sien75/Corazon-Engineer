@@ -59,7 +59,7 @@ async function postRecord(
   for (let attempt = 1; attempt <= RECORD_ATTEMPTS; attempt++) {
     if (attempt > 1) await sleep(RETRY_BACKOFF_MS * 2 ** (attempt - 2));
     try {
-      const res = await fetch(`${logBase}/log/mutation`, {
+      const res = await fetch(`${logBase}/log/session/record/add`, {
         method: "POST",
         headers: { "Content-Type": "application/yaml" },
         body,
@@ -88,12 +88,9 @@ export function record(
   if (!logBase) return;
   const payload: Record<string, unknown> = { seq, role, content };
   if (raw !== undefined) payload.raw = raw;
-  const body = YAML.stringify({
-    op: "add",
-    kind: "conversation",
-    sessionId,
-    payload,
-  });
+  // The conversation bucket is the endpoint's, not the body's: this writer can
+  // only ever produce a conversation row.
+  const body = YAML.stringify({ sessionId, payload });
   // Never let this stage reject: writeTail is a promise chain, so one rejection
   // would skip every later write and silently end the record stream.
   writeTail = writeTail.then(async () => {

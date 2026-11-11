@@ -1,5 +1,5 @@
-id: log-session-kind
-description: Read one conversation's role, the project it belongs to, the blueprint it was made from and its display name (served at POST /log/session/detail); a session with no row is not an error to the caller, but this endpoint answers 404
+id: log-session-detail
+description: Read one conversation's role, the project it belongs to, the blueprint it was made from and its display name (POST /log/session/detail); a session with no row is not an error to the caller, but this endpoint answers 404
 
 request:
   body:

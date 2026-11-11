@@ -155,13 +155,13 @@ async function logCall(path, body = {}) {
   return text ? yaml.load(text) || {} : {};
 }
 
-const logCurrent = () => logCall("/log/current/get");
+const logCurrent = () => logCall("/log/session/current/get");
 const logCurrentPut = (openSessions, mainSession) =>
-  logCall("/log/current/put", { openSessions, mainSession });
+  logCall("/log/session/current/put", { openSessions, mainSession });
 const logSessionOn = (sessionIds, index) =>
   logCall("/log/session/on", typeof index === "number" ? { sessionIds, index } : { sessionIds });
 const logSessionOff = (sessionId) => logCall("/log/session/off", { sessionIds: [sessionId] });
-const logSessionList = (pageNum = 1) => logCall("/log/list", { pageNum });
+const logSessionList = (pageNum = 1) => logCall("/log/session/list", { pageNum });
 const logSessionMeta = (sessionId) => logCall("/log/session/detail", { sessionId });
 
 async function aiResume(id) {
@@ -971,7 +971,7 @@ async function blueprintEntries(projectId) {
 // whose tab is closed is still a thing you can bring back, and bringing it back
 // is the same conversation, not a copy of it.
 async function recentEntries(projectId) {
-  const data = await logCall("/log/list", { pageNum: 1, projectId });
+  const data = await logCall("/log/session/list", { pageNum: 1, projectId });
   return (data.sessions || [])
     .filter((s) => s.kind !== "main")
     .map((s) => ({

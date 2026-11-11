@@ -1,5 +1,5 @@
-id: log-list
-description: List conversation sessions, most recently active first — one entry per session, including one that has not been asked anything yet (count 0)
+id: log-session-list
+description: List conversation sessions (POST /log/session/list), most recently active first — one entry per session, including one that has not been asked anything yet (count 0)
 
 request:
   body:

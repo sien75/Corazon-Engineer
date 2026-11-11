@@ -1,20 +1,12 @@
 edges:
   - id: ai-to-log-write
     from: ai
-    from_interface: log-mutation
+    from_interface: log-session-record-add
     to: log
-    to_interface: log-mutation
+    to_interface: log-session-record-add
     channel: network
     protocol: http
     description: ai writes records (call / observe / conversation) into log after an operation
-  - id: ai-to-log-read
-    from: ai
-    from_interface: log-query
-    to: log
-    to_interface: log-query
-    channel: network
-    protocol: http
-    description: ai queries log records to review history / context
   - id: ai-to-log-session-messages
     from: ai
     from_interface: log-session-messages
@@ -39,19 +31,19 @@ edges:
     channel: network
     protocol: http
     description: session-close (main's tool) takes a session off screen, keeping its records
-  - id: ai-to-log-list
+  - id: ai-to-log-session-list
     from: ai
-    from_interface: log-list
+    from_interface: log-session-list
     to: log
-    to_interface: log-list
+    to_interface: log-session-list
     channel: network
     protocol: http
     description: session-list / main-list (main's tools) read the project's sessions
-  - id: ai-to-log-delete
+  - id: ai-to-log-session-delete
     from: ai
-    from_interface: log-delete
+    from_interface: log-session-delete
     to: log
-    to_interface: log-delete
+    to_interface: log-session-delete
     channel: network
     protocol: http
     description: session-delete (main's tool) removes a conversation's records and its session row
@@ -63,27 +55,27 @@ edges:
     channel: network
     protocol: http
     description: ai records a new conversation's kind, blueprint and display name
-  - id: ai-to-log-session-kind
+  - id: ai-to-log-session-detail
     from: ai
-    from_interface: log-session-kind
+    from_interface: log-session-detail
     to: log
-    to_interface: log-session-kind
+    to_interface: log-session-detail
     channel: network
     protocol: http
     description: resume / session-new read a conversation's kind and blueprint to pick the role spec and the page
-  - id: ai-to-log-current-get
+  - id: ai-to-log-session-current-get
     from: ai
-    from_interface: log-current-get
+    from_interface: log-session-current-get
     to: log
-    to_interface: log-current-get
+    to_interface: log-session-current-get
     channel: network
     protocol: http
     description: session-list / main-new / main-resume (main's tools) read which sessions are open and which is main
-  - id: ai-to-log-current-put
+  - id: ai-to-log-session-current-put
     from: ai
-    from_interface: log-current-put
+    from_interface: log-session-current-put
     to: log
-    to_interface: log-current-put
+    to_interface: log-session-current-put
     channel: network
     protocol: http
     description: main-new / main-resume (main's tools) move log's main-session pointer, writing the open list back untouched

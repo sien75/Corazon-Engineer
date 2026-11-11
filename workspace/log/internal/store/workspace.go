@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -62,10 +63,11 @@ func (s Session) Body() map[string]interface{} {
 	}
 }
 
-// Current is the one row of workspace state: which sessions are open (in display
-// order, main not among them) and which session the shell's own chat is. It is
-// the single source of truth for both — a browser reload reads it back instead of
-// restoring anything from local storage.
+// Current is the workspace as the shell reads it: which sessions are open (in
+// display order, main not among them) and which session the shell's own chat is.
+// Both are columns on the session rows now — a workspace row of its own was a
+// second place for the same truth. current/get still answers in this shape, so a
+// client does not care where it is kept.
 type Current struct {
 	OpenSessions []string `yaml:"openSessions"`
 	MainSession  string   `yaml:"mainSession,omitempty"`
@@ -107,6 +109,17 @@ func (s *Store) hasColumn(table, column string) (bool, error) {
 	return false, rows.Err()
 }
 
+// hasTable reports whether a table exists. It is how a database written by an
+// older build is recognised before it is migrated.
+func (s *Store) hasTable(table string) (bool, error) {
+	var name string
+	err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (s *Store) createWorkspaceTables() error {
 	for _, stmt := range []string{
 		`CREATE TABLE IF NOT EXISTS sessions (
@@ -117,6 +130,9 @@ func (s *Store) createWorkspaceTables() error {
 			title TEXT NOT NULL DEFAULT '',
 			model TEXT NOT NULL DEFAULT '',
 			image_model TEXT NOT NULL DEFAULT '',
+			open_index INTEGER NOT NULL DEFAULT -1,
+			is_main INTEGER NOT NULL DEFAULT 0,
+			touched_at TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS projects (
@@ -127,12 +143,6 @@ func (s *Store) createWorkspaceTables() error {
 			updated_at TEXT NOT NULL,
 			removed_at TEXT NOT NULL DEFAULT '',
 			visible INTEGER NOT NULL DEFAULT 1
-		)`,
-		`CREATE TABLE IF NOT EXISTS current (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			open_sessions TEXT NOT NULL,
-			main_session TEXT NOT NULL DEFAULT '',
-			updated_at TEXT NOT NULL
 		)`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -149,6 +159,12 @@ func (s *Store) createWorkspaceTables() error {
 		`ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN image_model TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`,
+		// The workspace used to be a row of its own; what it held belongs on the
+		// session: where it sits on the tab bar, whether it is main, and when it
+		// last took part in a workspace change (which is what current/updatedAt is).
+		`ALTER TABLE sessions ADD COLUMN open_index INTEGER NOT NULL DEFAULT -1`,
+		`ALTER TABLE sessions ADD COLUMN is_main INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE sessions ADD COLUMN touched_at TEXT NOT NULL DEFAULT ''`,
 		// A board written before groups existed gets the eye's column in place:
 		// every project it holds was drawn in the titlebar, so visible is the
 		// honest default.
@@ -158,121 +174,69 @@ func (s *Store) createWorkspaceTables() error {
 			return err
 		}
 	}
-	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_session_project ON sessions(project_id)`); err != nil {
-		return err
-	}
-	// The workspace used to list tab ids and the current list was called open_tabs;
-	// this is the one-way move to session ids. It runs before the old tab table is
-	// dropped, because the mapping lives there.
-	if err := s.migrateFromTabs(); err != nil {
-		return err
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := s.db.Exec(`INSERT OR IGNORE INTO current (id, open_sessions, main_session, updated_at)
-		VALUES (1, '[]', '', ?)`, now); err != nil {
-		return err
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_session_project ON sessions(project_id)`,
+		// One row per open position and one main at most: the pair of partial
+		// indexes is what makes the derived workspace a single answer, not a list
+		// that can disagree with itself.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_open ON sessions(open_index) WHERE open_index >= 0`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_main ON sessions(is_main) WHERE is_main = 1`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return err
+		}
 	}
 	// Backfill: a project that predates this table has sessions only in records.
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO sessions (session_id, kind, created_at)
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO sessions (session_id, kind, created_at)
 		SELECT session_id, 'sub', MIN(created_at) FROM records
 		WHERE kind = 'conversation' AND session_id IS NOT NULL AND session_id <> ''
-		GROUP BY session_id`)
+		GROUP BY session_id`); err != nil {
+		return err
+	}
+	return s.migrateFromCurrent()
+}
+
+// migrateFromCurrent moves the workspace row a database written before this
+// change kept in `current` onto the session rows it pointed at, then drops the
+// table: which sessions are open, in what order, and which one is main are
+// properties of a session, not a row of their own. A database that has no
+// `current` table is already in the new shape.
+func (s *Store) migrateFromCurrent() error {
+	has, err := s.hasTable("current")
+	if err != nil || !has {
+		return err
+	}
+	var openRaw, mainSession string
+	if err := s.db.QueryRow(`SELECT open_sessions, main_session FROM current WHERE id = 1`).
+		Scan(&openRaw, &mainSession); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		// An older build named the column open_tabs and held tab ids there. Those
+		// ids are not sessions, so nothing can be mapped without the tab table —
+		// the order is dropped and the conversations stay reachable by list.
+		openRaw, mainSession = "", ""
+	}
+	var open []string
+	if openRaw != "" {
+		_ = json.Unmarshal([]byte(openRaw), &open)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for i, id := range open {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, err := s.db.Exec(`UPDATE sessions SET open_index = ?, touched_at = ? WHERE session_id = ?`,
+			i, now, id); err != nil {
+			return err
+		}
+	}
+	if mainSession = strings.TrimSpace(mainSession); mainSession != "" {
+		if _, err := s.db.Exec(`UPDATE sessions SET is_main = 1, touched_at = ? WHERE session_id = ?`,
+			now, mainSession); err != nil {
+			return err
+		}
+	}
+	_, err = s.db.Exec(`DROP TABLE current`)
 	return err
-}
-
-// migrateFromTabs turns a database written before this change into the current
-// shape, once:
-//
-//   - current.open_tabs (tab ids) is renamed to current.open_sessions;
-//   - each open tab keeps exactly one of the sessions it held (the earliest) as
-//     its open session — a tab that showed several panes cannot be one tab any
-//     more, and the others stay reachable through the session list;
-//   - the tabs table and sessions.tab_id go.
-//
-// A database that already has open_sessions is left alone, except for dropping a
-// tabs table a previous run may have left behind.
-func (s *Store) migrateFromTabs() error {
-	renamed, err := s.hasColumn("current", "open_tabs")
-	if err != nil {
-		return err
-	}
-	if renamed {
-		// A tab id list in a column that is going to hold session ids: read it
-		// first, map it, then write the result into the renamed column.
-		openTabs, err := s.legacyOpenTabs()
-		if err != nil {
-			return err
-		}
-		openSessions, err := s.legacySessionsOfTabs(openTabs)
-		if err != nil {
-			return err
-		}
-		if _, err := s.db.Exec(`ALTER TABLE current RENAME COLUMN open_tabs TO open_sessions`); err != nil {
-			return err
-		}
-		if err := s.writeOpenSessions(openSessions); err != nil {
-			return err
-		}
-	}
-	if _, err := s.db.Exec(`DROP TABLE IF EXISTS tabs`); err != nil {
-		return err
-	}
-	hasTabID, err := s.hasColumn("sessions", "tab_id")
-	if err != nil {
-		return err
-	}
-	if hasTabID {
-		if _, err := s.db.Exec(`ALTER TABLE sessions DROP COLUMN tab_id`); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// legacyOpenTabs reads the tab id list a pre-session-ids database kept.
-func (s *Store) legacyOpenTabs() ([]string, error) {
-	var raw string
-	if err := s.db.QueryRow(`SELECT open_tabs FROM current WHERE id = 1`).Scan(&raw); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var ids []string
-	if raw == "" || json.Unmarshal([]byte(raw), &ids) != nil {
-		return nil, nil
-	}
-	return ids, nil
-}
-
-// legacySessionsOfTabs maps each old tab id to the one session it keeps: the
-// earliest bound to it. A tab with no session row is dropped — it had no
-// conversation to put on screen.
-func (s *Store) legacySessionsOfTabs(tabIDs []string) ([]string, error) {
-	out := make([]string, 0, len(tabIDs))
-	for _, tabID := range tabIDs {
-		tabID = strings.TrimSpace(tabID)
-		if tabID == "" {
-			continue
-		}
-		var sessionID string
-		err := s.db.QueryRow(`SELECT session_id FROM sessions WHERE tab_id = ?
-			ORDER BY created_at ASC, session_id ASC LIMIT 1`, tabID).Scan(&sessionID)
-		if err == sql.ErrNoRows {
-			continue
-		}
-		if err != nil {
-			// The column is gone already (the migration ran before): nothing to map.
-			if strings.Contains(err.Error(), "no such column") {
-				return nil, nil
-			}
-			return nil, err
-		}
-		if !contains(out, sessionID) {
-			out = append(out, sessionID)
-		}
-	}
-	return out, nil
 }
 
 func contains(list []string, want string) bool {
@@ -282,20 +246,6 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// writeOpenSessions replaces the stored open list during a migration.
-func (s *Store) writeOpenSessions(sessionIDs []string) error {
-	if sessionIDs == nil {
-		sessionIDs = []string{}
-	}
-	data, err := json.Marshal(sessionIDs)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`UPDATE current SET open_sessions = ?, updated_at = ? WHERE id = 1`,
-		string(data), time.Now().UTC().Format(time.RFC3339))
-	return err
 }
 
 // UpsertSession stores a session's kind, project, blueprint, display name and
@@ -340,47 +290,87 @@ func (s *Store) GetSession(sessionID string) (Session, error) {
 	return out, err
 }
 
-// Current returns the workspace row.
+// Current reads the workspace out of the session rows: the open ones in display
+// order, and the one marked main. updatedAt is the latest change any of them took
+// part in, so a client can tell a stale answer from a fresh one.
 func (s *Store) Current() (Current, error) {
-	var out Current
-	var openSessions string
-	err := s.db.QueryRow(`SELECT open_sessions, main_session, updated_at FROM current WHERE id = 1`).
-		Scan(&openSessions, &out.MainSession, &out.UpdatedAt)
+	out := Current{OpenSessions: []string{}}
+	rows, err := s.db.Query(`SELECT session_id FROM sessions WHERE open_index >= 0
+		ORDER BY open_index ASC`)
 	if err != nil {
 		return Current{}, err
 	}
-	if openSessions == "" {
-		openSessions = "[]"
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return Current{}, err
+		}
+		out.OpenSessions = append(out.OpenSessions, id)
 	}
-	if err := json.Unmarshal([]byte(openSessions), &out.OpenSessions); err != nil {
-		out.OpenSessions = []string{}
+	if err := rows.Err(); err != nil {
+		return Current{}, err
 	}
-	if out.OpenSessions == nil {
-		out.OpenSessions = []string{}
+	var mainSession sql.NullString
+	if err := s.db.QueryRow(`SELECT session_id FROM sessions WHERE is_main = 1 LIMIT 1`).
+		Scan(&mainSession); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Current{}, err
 	}
+	out.MainSession = mainSession.String
+	var touched sql.NullString
+	if err := s.db.QueryRow(`SELECT MAX(touched_at) FROM sessions`).Scan(&touched); err != nil {
+		return Current{}, err
+	}
+	out.UpdatedAt = touched.String
 	return out, nil
 }
 
-// PutCurrent replaces the workspace row: the open session ids (in display order)
-// and the main session. It is the repair/reorder path; opening and closing a
-// session has its own helpers below and does not need it.
+// PutCurrent replaces the workspace: the open session ids (in display order) and
+// the main session. Both are columns on the session rows, so the whole thing is
+// one transaction — writing the open list and the main pointer separately would
+// leave a moment where a reload sees neither.
+//
+// An id with no session row is ignored rather than stored: there is nothing to
+// draw behind it, which is exactly what the old open list could not express.
 func (s *Store) PutCurrent(openSessions []string, mainSession string) (Current, error) {
-	if openSessions == nil {
-		openSessions = []string{}
-	}
 	ids := make([]string, 0, len(openSessions))
 	for _, id := range openSessions {
 		if id = strings.TrimSpace(id); id != "" {
 			ids = append(ids, id)
 		}
 	}
-	data, err := json.Marshal(ids)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return Current{}, err
 	}
-	_, err = s.db.Exec(`UPDATE current SET open_sessions = ?, main_session = ?, updated_at = ? WHERE id = 1`,
-		string(data), strings.TrimSpace(mainSession), time.Now().UTC().Format(time.RFC3339))
-	if err != nil {
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.Exec(`UPDATE sessions SET open_index = -1, touched_at = ? WHERE open_index >= 0`, now); err != nil {
+		return Current{}, err
+	}
+	seen := map[string]bool{}
+	pos := 0
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if _, err := tx.Exec(`UPDATE sessions SET open_index = ?, touched_at = ? WHERE session_id = ?`,
+			pos, now, id); err != nil {
+			return Current{}, err
+		}
+		pos++
+	}
+	if _, err := tx.Exec(`UPDATE sessions SET is_main = 0, touched_at = ? WHERE is_main = 1`, now); err != nil {
+		return Current{}, err
+	}
+	if main := strings.TrimSpace(mainSession); main != "" {
+		if _, err := tx.Exec(`UPDATE sessions SET is_main = 1, touched_at = ? WHERE session_id = ?`,
+			now, main); err != nil {
+			return Current{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return Current{}, err
 	}
 	return s.Current()

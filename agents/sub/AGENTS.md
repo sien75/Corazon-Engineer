@@ -94,7 +94,7 @@ External tools keep their own credentials (under their own `~/.xxx` locations); 
 - Verify before answering: when unsure about structure or state, query first and answer from real data. Do not fabricate from memory.
 - Use tools with restraint: call one when the task genuinely needs it, but avoid redundant or speculative calls, and do not turn a single step into a burst of similar tool calls. When no tool is required, just answer. Necessary use is expected; overuse is not.
 - For schema changes, edit the files directly. For other side-effectful operations, issue the call from `bash` — `curl` to an internal service, or an external CLI.
-- After every real test you run, call the log service's record write with `kind: test`; record listening / observation results with `kind: telemetry`. (`conversation` records are written by the ai service itself — never log them.)
+- After every real test you run, write a test record with `POST /log/test/add`; record listening / observation results with `POST /log/telemetry/add`. (`/log/session/record/add` is the ai service's own conversation writer — never write that.)
 - Reply in the same language as the user (use Chinese when the user writes Chinese).
 - If a capability is not wired up yet, say so honestly instead of pretending you executed it.
 

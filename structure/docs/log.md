@@ -2,15 +2,15 @@
 
 # log
 
-Corazon Engineer log service — owns the engineer home's sqlite state — records (call / observe / conversation), projects (the board of folders the program works on — path, name, and whether it is still on the board, since removal is soft), sessions (each conversation's kind, main or sub, the project it belongs to, the blueprint it drives and its display name) and current (which sessions are open — the shell's tab bar — and which one is main); a tab is not stored: it is one open session, so the open list is all the workspace needs; the home is the program's own data directory, not a project — the program runs anywhere and the folders it serves are rows in projects; exposes log query/detail/search/mutation/stream/list/delete APIs plus the session, project and current ones
+Corazon Engineer log service — owns the engineer home's sqlite state — records in three tables of one shape (conversation, tests, telemetries; the payload of a record is kept as written), projects (the board of folders the program works on — path, name, and whether it is still on the board, since removal is soft), and sessions (each conversation's kind, main or sub, the project it belongs to, the blueprint it drives, its display name, and its place in the workspace — `open_index` for the tab bar, `is_main` for the shell's own chat, both -1 / 0 when it has neither); a tab is not stored: it is one open session, so the workspace is derived from the session rows and there is no current table; the home is the program's own data directory, not a project — the program runs anywhere and the folders it serves are rows in projects; every route is named by what it is about — log-session-*, log-project-*, log-test-*, log-telemetry-* — except log-search and log-stream, which span every kind
 
 - runtime: go 1.22
 
-## log-query
+## log-test-query
 
-- `POST /log/query` (network / http)
+- `POST /log/test/query` (network / http)
 
-Query records (test run / telemetry observe / ai conversation); list view
+List test records, newest first — one page without payloads. The kind is the endpoint's: a body cannot ask for a telemetry row here
 
 ### Request body
 
@@ -18,9 +18,7 @@ Query records (test run / telemetry observe / ai conversation); list view
 atom?: string
 end?: string
 env?: string
-kind?: test | telemetry | conversation
 pageNum?: number
-sessionId?: string
 start?: string
 ```
 
@@ -35,7 +33,7 @@ records:
       createdAt: string
       env?: string
       id: string
-      kind: test | telemetry | conversation
+      kind: test
       summary: string
 ```
 
@@ -47,15 +45,55 @@ records:
 ### Example
 
 ```bash
-curl -s -X POST <address>/log/query \
+curl -s -X POST <address>/log/test/query \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
-  atom?: string
-  end?: string
-  env?: string
-  kind?: test | telemetry | conversation
-  pageNum?: number
-  sessionId?: string
-  start?: string
+env: dev
+pageNum: 1
+YAML
+```
+
+## log-telemetry-query
+
+- `POST /log/telemetry/query` (network / http)
+
+List telemetry records, newest first — the same shape as log-test-query, over the observations table
+
+### Request body
+
+```yaml
+atom?: string
+end?: string
+env?: string
+pageNum?: number
+start?: string
+```
+
+### Response (status 200)
+
+```yaml
+hasMore: boolean
+pageNum: number
+pageSize: 100
+records:
+    - atom?: string
+      createdAt: string
+      env?: string
+      id: string
+      kind: telemetry
+      summary: string
+```
+
+### Errors
+
+- 400 `bad_request` — bad request
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/telemetry/query \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+atom: web_search
 YAML
 ```
 
@@ -162,9 +200,9 @@ curl -s -X POST <address>/log/session/off \
 sessionIds: [s_1a2b3c]
 YAML
 ```
-## log-delete
+## log-session-delete
 
-- `POST /log/delete` (network / http)
+- `POST /log/session/delete` (network / http)
 
 Delete a conversation session's records and its session row (clearing it as main when it was)
 
@@ -189,15 +227,15 @@ sessionId: string
 ### Example
 
 ```bash
-curl -s -X POST <address>/log/delete \
+curl -s -X POST <address>/log/session/delete \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
   sessionId: string
 YAML
 ```
 
-## log-list
+## log-session-list
 
-- `POST /log/list` (network / http)
+- `POST /log/session/list` (network / http)
 
 List conversation sessions, most recently active first — one entry per session, including one that has not been asked anything yet (count 0)
 
@@ -234,17 +272,17 @@ sessions:
 ### Example
 
 ```bash
-curl -s -X POST <address>/log/list \
+curl -s -X POST <address>/log/session/list \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
   pageNum?: number
 YAML
 ```
 
-## log-query-detail
+## log-test-detail
 
-- `POST /log/query-detail` (network / http)
+- `POST /log/test/detail` (network / http)
 
-Fetch a single record's full content
+Fetch one test record's full payload; a row of another kind is not found here, even with a valid id
 
 ### Request body
 
@@ -259,24 +297,63 @@ atom?: string
 createdAt: string
 env?: string
 id: string
-kind: test | telemetry | conversation
-payload: object
-sessionId?: string
+kind: test
+payload:
+    atoms?: [string]
+    case?: string
+    req?: string
+    resp?: string
+    result?: string
 ```
 
 ### Errors
 
-- 400 `bad_request` — bad request
-- 404 `not_found` — record not found
+- 400 `bad_request` — id missing
+- 404 `not_found` — no such test record
 - 500 `internal` — server error
 
 ### Example
 
 ```bash
-curl -s -X POST <address>/log/query-detail \
-  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
-  id: string
-YAML
+curl -s -X POST <address>/log/test/detail -d 'id: <record id>'
+```
+
+## log-telemetry-detail
+
+- `POST /log/telemetry/detail` (network / http)
+
+Fetch one telemetry record's full payload; the same shape as log-test-detail, over the observations table
+
+### Request body
+
+```yaml
+id: string
+```
+
+### Response (status 200)
+
+```yaml
+atom?: string
+createdAt: string
+env?: string
+id: string
+kind: telemetry
+payload:
+    query?: string
+    result?: string
+    signal?: trace | metric | log
+```
+
+### Errors
+
+- 400 `bad_request` — id missing
+- 404 `not_found` — no such telemetry record
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/telemetry/detail -d 'id: <record id>'
 ```
 
 ## log-search
@@ -322,29 +399,58 @@ curl -s -X POST <address>/log/search \
 YAML
 ```
 
-## log-mutation
+## log-session-record-add
 
-- `POST /log/mutation` (network / http)
+- `POST /log/session/record/add` (network / http)
 
-Write a record (ai only); `op` is `add` for now.
-
-Kinds:
-
-- `test` — a runtime test you triggered. `payload`: `case`, `atoms`, `req`, `resp`, `result`.
-- `telemetry` — a listening / observation result. `payload`: `signal` (`trace` | `metric` | `log`), `query`, `result`.
-- `conversation` — written by the ai service itself; never write this kind.
-
-`env` / `atom` optionally tag the record (`sessionId` is for `conversation` only).
+Append one message record to a conversation session — the ai service is the only writer, and the shell replays these back as the conversation. The bucket is the endpoint's, so `kind` is never in the body
 
 ### Request body
 
 ```yaml
 atom?: string
 env?: string
-kind: test | telemetry | conversation
-op: add
+payload: object  # seq, role, content, raw?
+sessionId: string
+```
+
+### Response (status 200)
+
+```yaml
+createdAt: string
+id: string
+```
+
+### Errors
+
+- 400 `bad_request` — sessionId missing
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/session/record/add \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+sessionId: s_1a2b3c
+payload:
+  seq: 1
+  role: user
+  content: hello
+YAML
+```
+
+## log-test-add
+
+- `POST /log/test/add` (network / http)
+
+Append one test record — a runtime test that was actually run, with what it asked, what came back and whether it passed. `payload`: `case`, `atoms`, `req`, `resp`, `result`
+
+### Request body
+
+```yaml
+atom?: string
+env?: string
 payload: object
-sessionId?: string
 ```
 
 ### Response (status 200)
@@ -362,14 +468,55 @@ id: string
 ### Example
 
 ```bash
-curl -s -X POST <address>/log/mutation \
+curl -s -X POST <address>/log/test/add \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
-  atom?: string
-  env?: string
-  kind: test | telemetry | conversation
-  op: add
-  payload: object
-  sessionId?: string
+env: dev
+atom: log
+payload:
+  case: core-log-workspace
+  atoms: [log]
+  req: curl /log/session/on, then /log/session/current/get
+  resp: openSessions holds the id
+  result: pass
+YAML
+```
+
+## log-telemetry-add
+
+- `POST /log/telemetry/add` (network / http)
+
+Append one telemetry record — the result of a listening / observation pass. `payload`: `signal` (`trace` | `metric` | `log`), `query`, `result`
+
+### Request body
+
+```yaml
+atom?: string
+env?: string
+payload: object
+```
+
+### Response (status 200)
+
+```yaml
+createdAt: string
+id: string
+```
+
+### Errors
+
+- 400 `bad_request` — bad request
+- 500 `internal` — server error
+
+### Example
+
+```bash
+curl -s -X POST <address>/log/telemetry/add \
+  -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
+atom: web_search
+payload:
+  signal: log
+  query: last 10 minutes of the web daemon log
+  result: no errors
 YAML
 ```
 
@@ -465,7 +612,7 @@ title: Project overview
 YAML
 ```
 
-## log-session-kind
+## log-session-detail
 
 - `POST /log/session/detail` (network / http)
 
@@ -502,11 +649,11 @@ sessionId: s_1a2b3c
 YAML
 ```
 
-## log-current-get
+## log-session-current-get
 
-- `POST /log/current/get` (network / http)
+- `POST /log/session/current/get` (network / http)
 
-Read the workspace row — which sessions are open (in display order) and which session the shell's own chat is
+Read the workspace — which sessions are open (in display order) and which session the shell's own chat is. Both are columns on the session rows (`open_index`, `is_main`), so this answers from `sessions`, not from a row of its own
 
 ### Request body
 
@@ -519,7 +666,7 @@ Read the workspace row — which sessions are open (in display order) and which 
 ```yaml
 openSessions: [string]  # s_<hex> ids, in display order; never includes main
 mainSession: string  # the main conversation's session id; empty when none
-updatedAt: string
+updatedAt: string  # the latest workspace change any session took part in, RFC3339
 ```
 
 ### Errors
@@ -529,22 +676,22 @@ updatedAt: string
 ### Example
 
 ```bash
-curl -s -X POST <address>/log/current/get \
+curl -s -X POST <address>/log/session/current/get \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
 YAML
 ```
 
-## log-current-put
+## log-session-current-put
 
-- `POST /log/current/put` (network / http)
+- `POST /log/session/current/put` (network / http)
 
-Replace the workspace row; used to repair or reorder the open list (opening and closing a session has its own endpoints)
+Replace the workspace: used to repair or reorder the open list and to point main at a session (opening and closing a session has its own endpoints). An id with no session row is ignored — there would be nothing to draw
 
 ### Request body
 
 ```yaml
 openSessions: [string]  # the whole open list, in display order
-mainSession?: string
+mainSession?: string  # the main conversation's session id
 ```
 
 ### Response (status 200)
@@ -563,7 +710,7 @@ updatedAt: string
 ### Example
 
 ```bash
-curl -s -X POST <address>/log/current/put \
+curl -s -X POST <address>/log/session/current/put \
   -H 'Content-Type: application/yaml' --data-binary @- <<'YAML'
 openSessions: [s_1a2b3c]
 mainSession: s_2d3e4f

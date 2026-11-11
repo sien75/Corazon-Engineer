@@ -1,5 +1,5 @@
-id: log-query-detail
-description: Fetch a single record's full content
+id: log-test-detail
+description: Fetch one test record's full payload (POST /log/test/detail); a row of another kind is not found here, even with a valid id
 
 request:
   body:
@@ -10,14 +10,11 @@ response:
   body:
     id: string
     createdAt: string  # record creation time, RFC3339
-    kind: test | telemetry | conversation
+    kind: test
     env?: string
     atom?: string
     sessionId?: string
-    payload: object  # kind-specific detail
-      # kind=test:       case, atoms, req, resp, result
-      # kind=telemetry:  signal (trace | metric | log), query, result
-      # kind=conversation: seq, msgKind (markdown | ...), content
+    payload: object  # case, atoms, req, resp, result
 
 errors:
   - status: 400

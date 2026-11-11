@@ -66,7 +66,7 @@ PY
   curl -s -N -X POST $AI/ai/stream -d "id: $1" >/dev/null
 }
 sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])'; }
-open_ids() { curl -s -X POST $LOG/log/current/get -d '{}' | sed -n 's/^  - //p'; }
+open_ids() { curl -s -X POST $LOG/log/session/current/get -d '{}' | sed -n 's/^  - //p'; }
 
 MAIN=$(curl -s -X POST $AI/ai/new -d 'kind: main' | sid)
 echo "main=$MAIN"
@@ -95,10 +95,10 @@ the tab came from the tool, not from a `curl` in the shell.
 
 ```bash
 ask $MAIN "Call the session-close tool on session $SUB right now. Do not use bash or curl, do not ask anything — just call the tool and report its reply."
-curl -s -X POST $LOG/log/current/get -d '{}'
+curl -s -X POST $LOG/log/session/current/get -d '{}'
 curl -s -o /dev/null -w 'row: %{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $SUB"
 ask $MAIN "Call the session-open tool on session $SUB right now. Do not use bash or curl, do not ask anything — just call the tool and report its reply."
-curl -s -X POST $LOG/log/current/get -d '{}'
+curl -s -X POST $LOG/log/session/current/get -d '{}'
 ```
 
 Expected: after the close `openSessions` is empty while the row still answers 200

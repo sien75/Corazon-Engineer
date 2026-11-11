@@ -2,7 +2,7 @@
 
 `main-list` 与 `main-resume` 是 main 的工作区工具里唯一一对**只作用于 main 自己**的：前者列 main
 的对话（id / 最后活动 / 消息数 / 首句，当前那段标 `*`），后者按 id 把一段早先的 main 放回屏幕 ——
-`deps.resumeSession` 先把它（重新）变成 live 会话，再 `/log/current/put` 换指针，前端收到
+`deps.resumeSession` 先把它（重新）变成 live 会话，再 `/log/session/current/put` 换指针，前端收到
 `engineer-tool` 帧后跟过去。
 
 用例要钉住：
@@ -89,7 +89,7 @@ start_ai
 LOG=http://localhost:9031
 AI=http://localhost:9033
 for i in $(seq 1 90); do
-  curl -s -o /dev/null -m 2 -X POST $LOG/log/current/get -d '{}' \
+  curl -s -o /dev/null -m 2 -X POST $LOG/log/session/current/get -d '{}' \
     && curl -s -o /dev/null -m 2 -X POST $AI/ai/resume -d 'id: x' \
     && curl -s -o /dev/null -m 2 http://localhost:9030/ && break
   sleep 1
@@ -107,7 +107,7 @@ PY
   curl -s -N -X POST $AI/ai/stream -d "id: $1" >/dev/null
 }
 sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])'; }
-mainid() { curl -s -X POST $LOG/log/current/get -d '{}' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin).get("mainSession") or "")'; }
+mainid() { curl -s -X POST $LOG/log/session/current/get -d '{}' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin).get("mainSession") or "")'; }
 records() { curl -s -X POST $LOG/log/session/messages -d "sessionId: $1"; }
 # last_answer prints the text of the session's final assistant message
 last_answer() {
@@ -137,12 +137,12 @@ SUB=$(curl -s -X POST $AI/ai/new \
   -H 'Content-Type: application/yaml' \
   --data-binary "$(printf 'projectId: %s\nblueprint: demo' "$PROJECT")" | sid)
 # the pointer starts on MAIN1, so section 2's resume of MAIN2 is a real move
-curl -s -o /dev/null -X POST $LOG/log/current/put -d "openSessions: []
+curl -s -o /dev/null -X POST $LOG/log/session/current/put -d "openSessions: []
 mainSession: $MAIN1"
 echo "$MAIN1 $MAIN2 $SUB"
 curl -s -X POST $LOG/log/session/detail -d "sessionId: $MAIN1"
 curl -s -X POST $LOG/log/session/detail -d "sessionId: $SUB"
-curl -s -X POST $LOG/log/current/get -d '{}'
+curl -s -X POST $LOG/log/session/current/get -d '{}'
 ```
 
 Expected: both main ids report `kind: main`, the third `kind: sub` with `blueprint: demo`, and
@@ -203,7 +203,7 @@ ask $MAIN2 "Call the main-resume tool right now with sessionId=$MAIN1. Do not us
 echo "current: $(mainid)  expected: $MAIN1"
 echo -n "tool call: "; records $MAIN2 | grep -c 'name: main-resume' || true
 records $MAIN2 | grep -F "main is now $MAIN1" | head -2
-curl -s -X POST $LOG/log/current/get -d '{}'
+curl -s -X POST $LOG/log/session/current/get -d '{}'
 ```
 
 Expected: `current:` is `$MAIN1`; one `main-resume` call; the result line `main is now <MAIN1>`;
@@ -267,7 +267,7 @@ const checks = [];
 const check = (name, pass, info) => checks.push({ name, pass: !!pass, ...(info ? { info } : {}) });
 
 const mainSession = async () => {
-  const text = await (await fetch(`${LOG}/log/current/get`, { method: "POST", body: "{}" })).text();
+  const text = await (await fetch(`${LOG}/log/session/current/get`, { method: "POST", body: "{}" })).text();
   return (text.match(/^mainSession:\s*(\S+)/m) || [])[1] || "";
 };
 

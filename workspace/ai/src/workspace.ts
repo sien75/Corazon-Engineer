@@ -111,10 +111,10 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
     execute: async () => {
       const current = await logCall<{ openSessions?: string[]; mainSession?: string }>(
         deps.logBase,
-        "/log/current/get",
+        "/log/session/current/get",
         {},
       );
-      const list = await logCall<{ sessions?: any[] }>(deps.logBase, "/log/list", {
+      const list = await logCall<{ sessions?: any[] }>(deps.logBase, "/log/session/list", {
         pageNum: 1,
       });
       const byId = new Map<string, any>();
@@ -421,7 +421,7 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       try {
         current = await logCall<{ openSessions?: string[]; mainSession?: string }>(
           deps.logBase,
-          "/log/current/get",
+          "/log/session/current/get",
           {},
         );
       } catch (err) {
@@ -441,7 +441,7 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
         );
       }
       try {
-        await logCall(deps.logBase, "/log/current/put", {
+        await logCall(deps.logBase, "/log/session/current/put", {
           // The open list is main's business only when a tab changes: write it
           // back untouched, or this call would close every tab.
           openSessions: current.openSessions ?? [],
@@ -487,7 +487,7 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
     execute: async (_id, params) => {
       let list;
       try {
-        list = await logCall(deps.logBase, "/log/list", {
+        list = await logCall(deps.logBase, "/log/session/list", {
           pageNum: Number(params.pageNum) || 1,
         });
       } catch (err) {
@@ -498,7 +498,7 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       let current = "";
       try {
         current = String(
-          (await logCall(deps.logBase, "/log/current/get", {})).mainSession ?? "",
+          (await logCall(deps.logBase, "/log/session/current/get", {})).mainSession ?? "",
         );
       } catch {
         // a missing pointer does not make the list useless
@@ -564,7 +564,7 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
       try {
         current = await logCall<{ openSessions?: string[]; mainSession?: string }>(
           deps.logBase,
-          "/log/current/get",
+          "/log/session/current/get",
           {},
         );
       } catch (err) {
@@ -586,7 +586,7 @@ export function makeWorkspaceTools(deps: WorkspaceDeps) {
         );
       }
       try {
-        await logCall(deps.logBase, "/log/current/put", {
+        await logCall(deps.logBase, "/log/session/current/put", {
           openSessions: current.openSessions ?? [],
           mainSession: sessionId,
         });

@@ -1,7 +1,7 @@
 # Test: core-ai-main-new
 
 `main-new` 是 main 的第 6 个工作区工具：**把 main 换成一段新对话**。工具做两件事 ——
-`/ai/new {kind: main}` 造会话，`/log/current/put` 把 `mainSession` 指针指过去；前端收到
+`/ai/new {kind: main}` 造会话，`/log/session/current/put` 把 `mainSession` 指针指过去；前端收到
 `engineer-tool` 帧后 `refreshWorkspace()`，`doRefreshWorkspace()` 里既有的"main 换了 session
 就跟过去"分支把屏幕换成新会话。
 
@@ -76,7 +76,7 @@ PROJECT=$(cat /tmp/main-new-project)
 LOG=http://localhost:9021
 AI=http://localhost:9023
 for i in $(seq 1 90); do
-  curl -s -o /dev/null -m 2 -X POST $LOG/log/current/get -d '{}' \
+  curl -s -o /dev/null -m 2 -X POST $LOG/log/session/current/get -d '{}' \
     && curl -s -o /dev/null -m 2 -X POST $AI/ai/resume -d 'id: x' \
     && curl -s -o /dev/null -m 2 http://localhost:9020/ && break
   sleep 1
@@ -96,7 +96,7 @@ PY
   curl -s -N -X POST $AI/ai/stream -d "id: $1" >/dev/null
 }
 sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])'; }
-mainid() { curl -s -X POST $LOG/log/current/get -d '{}' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin).get("mainSession") or "")'; }
+mainid() { curl -s -X POST $LOG/log/session/current/get -d '{}' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin).get("mainSession") or "")'; }
 ```
 
 Expected on startup: `serve-web` logs its address on `:9020`, and the ai service does **not** say
@@ -106,7 +106,7 @@ Expected on startup: `serve-web` logs its address on `:9020`, and the ai service
 
 ```bash
 MAIN1=$(curl -s -X POST $AI/ai/new -d 'kind: main' | sid)
-curl -s -o /dev/null -X POST $LOG/log/current/put -d "openSessions: []
+curl -s -o /dev/null -X POST $LOG/log/session/current/put -d "openSessions: []
 mainSession: $MAIN1"
 echo "before: $MAIN1"
 
@@ -114,7 +114,7 @@ ask $MAIN1 "Call the main-new tool right now. Do not use bash or curl, and do no
 
 MAIN2=$(mainid)
 echo "after:  $MAIN2"
-curl -s -X POST $LOG/log/current/get -d '{}'
+curl -s -X POST $LOG/log/session/current/get -d '{}'
 curl -s -X POST $LOG/log/session/detail -d "sessionId: $MAIN2"
 curl -s -o /dev/null -w 'old main: %{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $MAIN1"
 curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN1" | grep -c 'name: main-new' || true
@@ -123,7 +123,7 @@ curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN1" | grep -c 'name
 Expected:
 
 - `after:` is a different, non-empty `s_…` id — the pointer moved;
-- `log/current/get` still shows `openSessions: []` — the tool writes the open list back untouched,
+- `log/session/current/get` still shows `openSessions: []` — the tool writes the open list back untouched,
   it does not close tabs;
 - the new id's `session/detail` says `kind: main` (it is main, not a blueprint agent);
 - `old main: 200` — the previous conversation is still on record (replace, not delete);
@@ -179,7 +179,7 @@ const checks = [];
 const check = (name, pass, info) => checks.push({ name, pass: !!pass, ...(info ? { info } : {}) });
 
 const mainSession = async () => {
-  const text = await (await fetch(`${LOG}/log/current/get`, { method: "POST", body: "{}" })).text();
+  const text = await (await fetch(`${LOG}/log/session/current/get`, { method: "POST", body: "{}" })).text();
   return (text.match(/^mainSession:\s*(\S+)/m) || [])[1] || "";
 };
 

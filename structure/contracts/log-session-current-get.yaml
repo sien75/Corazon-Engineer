@@ -1,0 +1,16 @@
+id: log-session-current-get
+description: Read the workspace (POST /log/session/current/get) — which sessions are open, in display order, and which session the shell's own chat is; both are columns on the session rows, and this is the shape the shell reads them in
+
+request: {}
+
+response:
+  status: 200
+  body:
+    openSessions: [string]  # s_<hex> ids, in display order; empty when nothing is open; never includes main
+    mainSession: string  # the main conversation's session id; empty when none has been created
+    updatedAt: string  # the latest workspace change any session took part in, RFC3339
+
+errors:
+  - status: 500
+    code: internal
+    description: server internal error

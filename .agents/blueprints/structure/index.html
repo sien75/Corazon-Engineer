@@ -27,9 +27,9 @@
     header h1 { font-size: 14px; margin: 0; }
     header .hint { color: var(--fg-muted); font-size: 12px; }
     header .spacer { margin-left: auto; }
-    header button { font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 12px; cursor: pointer;
-                    border: 1px solid var(--border); background: var(--surface-2); color: var(--fg); }
-    header button:hover { border-color: var(--accent-border); color: var(--accent); }
+    header button, #detail-bar button { font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 12px;
+                    cursor: pointer; border: 1px solid var(--border); background: var(--surface-2); color: var(--fg); }
+    header button:hover, #detail-bar button:hover { border-color: var(--accent-border); color: var(--accent); }
     #graph-col, #detail, engineer-chat { min-height: 0; }
     #graph-col { display: flex; flex-direction: column; overflow: hidden;
                  border-right: 1px solid var(--border); }
@@ -50,12 +50,22 @@
     .chip:hover { border-color: var(--accent-border); color: var(--accent); }
     .chip.on { background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent); }
     #detail { overflow: auto; padding: 12px 14px 24px; }
+    /* A contract is reached from inside another view, so the column keeps a way back at its top. */
+    #detail-bar { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 0 0 8px; }
+    #detail-bar[hidden] { display: none; }
     #detail h2 { font-size: 13px; margin: 0 0 2px; }
     #detail h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
                  color: var(--fg-muted); margin: 14px 0 4px; }
     #detail .meta { color: var(--fg-muted); font-size: 12px; }
     #detail .prose { overflow-wrap: anywhere; }
     #detail .prose p { margin: 0 0 8px; }
+    /* "What it is" is often a paragraph: a few lines here, the rest behind the toggle. */
+    #detail .prose.clamp { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+                           overflow: hidden; }
+    #detail .prose.clamp p { margin: 0; }
+    #detail .expand { font: inherit; font-size: 11px; margin: 2px 0 0; padding: 0; border: 0;
+                      background: none; color: var(--accent); cursor: pointer; }
+    #detail .expand[hidden] { display: none; }
     #detail .iface { border-left: 2px solid var(--border); padding-left: 8px; margin: 5px 0; }
     #detail code, #detail pre { font-family: var(--font-mono); font-size: 11.5px; }
     #detail pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 5px;
@@ -76,7 +86,10 @@
     <div id="canvas"></div>
     <div id="contracts"></div>
   </div>
-  <aside id="detail"><p class="hint">Pick a node, a connection, or a contract below.</p></aside>
+  <aside id="detail">
+    <div id="detail-bar" hidden><button type="button" id="back">← Back</button></div>
+    <div id="detail-body"><p class="hint">Pick a node, a connection, or a contract below.</p></div>
+  </aside>
   <engineer-chat></engineer-chat>
   <script type="module" src="/components/chat.js"></script>
   <script type="module">
@@ -256,31 +269,82 @@
     }
 
     // ---------- detail ----------
+    // A click replaces the detail column. The only way back the page keeps is the atom a contract
+    // was opened from: remember that atom, no route to walk.
+    let BACK_ATOM = null;    // atom to come back to; set only by a contract link inside an atom view
+    let NOW_ATOM = null;     // the atom whose view is on screen, so its links know where they came from
+    let DETAIL_NOW = null;   // { html, contract } of what is on screen
+
+    function paintDetail() {
+      const body = $("detail-body");
+      body.innerHTML = DETAIL_NOW ? DETAIL_NOW.html
+        : `<p class="hint">Pick a node, a connection, or a contract below.</p>`;
+      for (const b of body.querySelectorAll("[data-contract]")) {
+        b.onclick = () => void showContract(b.dataset.contract, NOW_ATOM);
+      }
+      // The toggle only shows when the text was actually cut, which is a length question the
+      // browser answers after layout — not whether the description happens to be long.
+      for (const p of body.querySelectorAll("[data-prose]")) {
+        const btn = p.parentElement.querySelector("[data-expand]");
+        if (!btn) continue;
+        btn.hidden = p.scrollHeight <= p.clientHeight + 1;
+        btn.textContent = "Show more";
+        btn.onclick = () => {
+          const collapsed = p.classList.toggle("clamp");
+          btn.textContent = collapsed ? "Show more" : "Show less";
+        };
+      }
+      document.querySelectorAll(".chip.on").forEach((c) => c.classList.remove("on"));
+      const on = DETAIL_NOW?.contract;
+      if (on) document.querySelectorAll(".chip").forEach((c) => { if (c.dataset.contract === on) c.classList.add("on"); });
+      $("detail-bar").hidden = !BACK_ATOM;
+      $("detail").scrollTop = 0;
+    }
+
+    function setDetail(html, contract) {
+      DETAIL_NOW = { html, contract: contract || "" };
+      paintDetail();
+    }
+
+    function back() {
+      if (!BACK_ATOM) return;
+      const atom = BACK_ATOM;
+      BACK_ATOM = null;
+      showAtom(atom);
+    }
+
     function contractLink(path) {
-      if (!path) return "";
       const full = String(path).replace(/^\.\//, "structure/");
       return `<button class="chip" data-contract="${esc(full)}">contract ${esc(full.split("/").pop())}</button>`;
     }
 
     function showAtom(atom) {
-      const iface = (list) => (list || []).map((i) => `
+      NOW_ATOM = atom;
+      BACK_ATOM = null;
+      // Interfaces are listed by name: the schema's order is the author's, not the reader's.
+      const iface = (list) => (list || []).slice()
+        .sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")))
+        .map((i) => `
         <div class="iface">
           <code>${esc(i.id)}</code>
           <div class="meta">${esc(i.protocol)} · ${esc(i.channel)}${i.contract ? " · " + contractLink(i.contract) : ""}</div>
         </div>`).join("");
       const consumes = atom.interfaces?.consumes || [];
       const provides = atom.interfaces?.provides || [];
-      $("detail").innerHTML = `
+      setDetail(`
         <h2>${esc(atom.name)}</h2>
         <div class="meta">${esc(atom.role || "")}${atom.role ? " · " : ""}${esc(atom.runtime_type || "")} ${esc(atom.runtime_version || "")}</div>
-        <h3>What it is</h3><div class="prose">${prose(atom.description)}</div>
+        <h3>What it is</h3>
+        <div class="prose clamp" data-prose>${prose(atom.description)}</div>
+        <button type="button" class="expand" data-expand>Show more</button>
         ${provides.length ? `<h3>Provides ${provides.length}</h3>${iface(provides)}` : ""}
-        ${consumes.length ? `<h3>Consumes ${consumes.length}</h3>${iface(consumes)}` : ""}`;
-      for (const b of $("detail").querySelectorAll("[data-contract]")) b.onclick = () => void showContract(b.dataset.contract);
+        ${consumes.length ? `<h3>Consumes ${consumes.length}</h3>${iface(consumes)}` : ""}`);
     }
 
     // A curve stands for every edge between its two ends, so the detail is the list of them.
     function showPair(key, list) {
+      NOW_ATOM = null;
+      BACK_ATOM = null;
       const [from, to] = key.split("->");
       const rows = list.map((e) => `
         <div class="iface">
@@ -289,33 +353,30 @@
           <div class="prose">${prose(e.description)}</div>
           ${e.contract ? contractLink(e.contract) : ""}
         </div>`).join("");
-      $("detail").innerHTML = `
+      setDetail(`
         <h2>${esc(from)} → ${esc(to)}</h2>
         <div class="meta">${list.length} connection${list.length === 1 ? "" : "s"} between these two atoms</div>
-        ${rows}`;
-      for (const b of $("detail").querySelectorAll("[data-contract]")) b.onclick = () => void showContract(b.dataset.contract);
+        ${rows}`);
     }
 
-    async function showContract(path) {
+    async function showContract(path, from) {
       const id = String(path).replace(/^\.\//, "structure/");
-      $("detail").innerHTML = `<p class="hint">loading ${esc(id)}…</p>`;
+      BACK_ATOM = from || null;
+      setDetail(`<p class="hint">loading ${esc(id)}…</p>`, id);
       try {
         const data = await call(STATIC, "/static/query-detail", { id, type: "contract", projectId: PID });
         const c = data.contract || {};
         const body = (b) => (b ? `<pre>${esc(yaml.dump(b))}</pre>` : "");
-        $("detail").innerHTML = `
+        DETAIL_NOW = { contract: id, html: `
           <h2>${esc(c.id || id.split("/").pop().replace(/\.yaml$/, ""))}</h2>
           <div class="prose">${prose(c.description)}</div>
           ${c.request ? `<h3>Request</h3>${body(c.request)}` : ""}
           ${c.response ? `<h3>Response</h3>${body(c.response)}` : ""}
-          ${c.errors?.length ? `<h3>Errors</h3>${body(c.errors)}` : ""}`;
+          ${c.errors?.length ? `<h3>Errors</h3>${body(c.errors)}` : ""}` };
       } catch (err) {
-        $("detail").innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+        DETAIL_NOW = { contract: id, html: `<p class="hint">${esc(err.message)}</p>` };
       }
-      document.querySelectorAll(".chip.on").forEach((c) => c.classList.remove("on"));
-      document.querySelectorAll("[data-contract]").forEach((c) => {
-        if (c.dataset.contract === id) c.classList.add("on");
-      });
+      paintDetail();
     }
 
     function drawContracts() {
@@ -335,6 +396,7 @@
     }
 
     $("fit").addEventListener("click", fit);
+    $("back").addEventListener("click", back);
     window.addEventListener("resize", () => graph?.updateSize());
 
     // ---------- boot ----------
@@ -349,7 +411,7 @@
       drawContracts();
     } catch (err) {
       $("stat").textContent = "read failed";
-      $("detail").innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+      $("detail-body").innerHTML = `<p class="hint">${esc(err.message)}</p>`;
     }
   </script>
 </body>

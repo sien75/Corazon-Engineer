@@ -1,5 +1,5 @@
-id: log-delete
-description: Delete a conversation session's records and its session row (clearing it as main when it was)
+id: log-session-delete
+description: Delete a conversation session's records and its session row (POST /log/session/delete); the row carries its place on the tab bar and whether it was main, so both go with it
 
 request:
   body:

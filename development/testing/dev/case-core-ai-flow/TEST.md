@@ -231,12 +231,12 @@ curl -s -X POST http://localhost:8801/ai/stream -d "id: $SID"
 Expected: 404, `error.code` is `not_found`.
 
 `ai-delete` only drops the live in-memory session; the conversation history
-stays in log. Purge it too with `log/delete`:
+stays in log. Purge it too with `log/session/delete`:
 
 ```bash
-curl -s -X POST http://localhost:8800/log/delete -d "sessionId: $SID"
+curl -s -X POST http://localhost:8800/log/session/delete -d "sessionId: $SID"
 ```
 
 Expected: 200, `sessionId` equals `$SID` and `deleted` counts the removed
-conversation rows; afterwards `/log/list` no longer includes `$SID`. A missing
+conversation rows; afterwards `/log/session/list` no longer includes `$SID`. A missing
 `sessionId` returns 400 `bad_request`.

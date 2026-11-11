@@ -1,17 +1,13 @@
-id: log-mutation
-description: Write a record (ai only); op is add for now
+id: log-session-record-add
+description: Append one message record to a conversation session (POST /log/session/record/add); the ai service is the only writer — the shell reads these back as the conversation
 
 request:
   body:
-    op: add  # only add for now
-    kind: test | telemetry | conversation
-    env?: string  # runtime env
-    atom?: string  # related atom
-    sessionId?: string  # kind=conversation
-    payload: object  # kind-specific content
-      # kind=test:       case, atoms, req, resp, result — triggered by a runtime test
-      # kind=telemetry:  signal (trace | metric | log), query, result — listening per runtime telemetry
-      # kind=conversation: seq, role, content, raw
+    sessionId: string  # the conversation this message belongs to
+    env?: string  # runtime env, unused for conversation records
+    atom?: string  # related atom, unused for conversation records
+    payload: object  # the message
+      # seq, role, content, raw
       #   role: user | assistant | toolResult | compaction
       #   content: derived plain-text projection (session list preview / search)
       #   raw: the pi message (or compaction entry) verbatim; the source of truth.

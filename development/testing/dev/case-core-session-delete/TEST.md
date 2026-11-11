@@ -2,19 +2,18 @@
 
 `session-delete` is main's 8th workspace tool: one call hard-deletes a single
 conversation — the live agent, its records in log (`records` rows + the `sessions`
-row, clearing `current.main_session` when it was main). The page is the blueprint's
+row, which is what clears its main flag and its place on the tab bar). The page is the blueprint's
 and is shared with every other agent made from it, so it stays.
 
 Two edges are the point of the case:
 
 - **it refuses the conversation it is running in** (main cannot delete itself);
-- **an unknown id is an error, not a silent success** — `/log/delete` answers 200
+- **an unknown id is an error, not a silent success** — `/log/session/delete` answers 200
   with `deleted: 0` even for an id that never existed, so the tool has to look
   first.
 
-Deleting a session takes its tab with it: `/log/delete` removes the records, the
-session row and the id from `current.openSessions`, so nothing on screen points at
-a conversation that no longer exists. The page is the blueprint's and stays.
+Deleting a session takes its tab with it: `/log/session/delete` removes the records and
+the session row, so nothing on screen points at a conversation that no longer exists. The page is the blueprint's and stays.
 
 ## ⚠️ This case needs a model
 
@@ -73,7 +72,7 @@ cd - >/dev/null
 LOG=http://localhost:8840
 AI=http://localhost:8841
 for i in $(seq 1 90); do
-  curl -s -o /dev/null -m 2 -X POST $LOG/log/current/get -d '{}' \
+  curl -s -o /dev/null -m 2 -X POST $LOG/log/session/current/get -d '{}' \
     && curl -s -o /dev/null -m 2 -X POST $AI/ai/resume -d 'id: x' && break
   sleep 1
 done
@@ -120,7 +119,7 @@ Expected: `kind: main`.
 ask $MAIN "Call the session-delete tool right now with sessionId=$SUB. Do not use bash or curl, and do not ask me anything — just call the tool and report its exact reply."
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $SUB"
 test -f "$ROOT/.agents/blueprints/demo/index.html" && echo "blueprint untouched" || echo "blueprint gone"
-curl -s -X POST $LOG/log/list -d 'pageNum: 1' | python3 -c "
+curl -s -X POST $LOG/log/session/list -d 'pageNum: 1' | python3 -c "
 import sys,yaml
 d=yaml.safe_load(sys.stdin) or {}
 ids=[s['sessionId'] for s in d.get('sessions') or []]
@@ -137,7 +136,7 @@ The tool's reply is in main's records:
 
 ```bash
 curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN" | grep -F "Deleted $SUB"
-curl -s -X POST $LOG/log/current/get -d '{}' | grep -c "$SUB" || true
+curl -s -X POST $LOG/log/session/current/get -d '{}' | grep -c "$SUB" || true
 ```
 
 Expected: one match for `Deleted <id>` (the reply names the session and its title),
@@ -162,13 +161,13 @@ session-detail still `200`; main still answers.
 
 ## 4. an invented id is an error, not a success
 
-`/log/delete` answers `200` with `deleted: 0` for an id that never existed, so this
+`/log/session/delete` answers `200` with `deleted: 0` for an id that never existed, so this
 section is what forces the tool to look before it deletes.
 
 ```bash
 ask $MAIN "Call the session-delete tool right now with sessionId=s_deadbeef00. Do not use bash or curl, and do not ask me anything — just call the tool and report its exact reply."
 curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN" | grep -F "No session s_deadbeef00"
-curl -s -X POST $LOG/log/list -d 'pageNum: 1' | grep -c 'sessionId: s_deadbeef00' || true
+curl -s -X POST $LOG/log/session/list -d 'pageNum: 1' | grep -c 'sessionId: s_deadbeef00' || true
 ```
 
 Expected: one match for `No session s_deadbeef00`; `0` — no row was created or

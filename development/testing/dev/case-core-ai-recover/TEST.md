@@ -107,7 +107,7 @@ bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8813 --home "$HOME_DIR"
   >/tmp/recover-reject.log 2>&1 &
 
 sleep 2
-curl -s -o /dev/null -w 'log %{http_code}\n' -X POST http://localhost:8810/log/list -d ''
+curl -s -o /dev/null -w 'log %{http_code}\n' -X POST http://localhost:8810/log/session/list -d ''
 curl -s -o /dev/null -w 'ai A %{http_code}\n' -X POST http://localhost:8811/ai/new -d 'kind: main'
 curl -s -o /dev/null -w 'ai B %{http_code}\n' -X POST http://localhost:8812/ai/new -d 'kind: main'
 curl -s -o /dev/null -w 'ai C %{http_code}\n' -X POST http://localhost:8813/ai/new -d 'kind: main'
@@ -134,12 +134,10 @@ lost write leaves behind. Row order is insertion order (`seq` 8 appears twice):
 | 8 | user | `again` (byte-identical repeat) | **dropped (duplicate seq)** |
 
 ```bash
-B=http://localhost:8810/log/mutation
+B=http://localhost:8810/log/session/record/add
 row() { curl -s -o /dev/null -X POST "$B" -d "$1"; }
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_bad
+row 'sessionId: s_recover_bad
 payload:
   seq: 1
   role: user
@@ -149,9 +147,7 @@ payload:
     content: [{ type: text, text: hello }]
     timestamp: 1759200000000'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_bad
+row 'sessionId: s_recover_bad
 payload:
   seq: 2
   role: assistant
@@ -168,9 +164,7 @@ payload:
     stopReason: toolUse
     timestamp: 1759200000001'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_bad
+row 'sessionId: s_recover_bad
 payload:
   seq: 3
   role: toolResult
@@ -183,9 +177,7 @@ payload:
     isError: false
     timestamp: 1759200000002'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_bad
+row 'sessionId: s_recover_bad
 payload:
   seq: 4
   role: assistant
@@ -201,9 +193,7 @@ payload:
     stopReason: toolUse
     timestamp: 1759200000003'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_bad
+row 'sessionId: s_recover_bad
 payload:
   seq: 5
   role: toolResult
@@ -216,9 +206,7 @@ payload:
     isError: false
     timestamp: 1759200000004'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_bad
+row 'sessionId: s_recover_bad
 payload:
   seq: 6
   role: assistant
@@ -233,9 +221,7 @@ payload:
     stopReason: stop
     timestamp: 1759200000005'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_bad
+row 'sessionId: s_recover_bad
 payload:
   seq: 7
   role: toolResult
@@ -249,9 +235,7 @@ payload:
     timestamp: 1759200000006'
 
 for i in 1 2; do
-row 'op: add
-kind: conversation
-sessionId: s_recover_bad
+row 'sessionId: s_recover_bad
 payload:
   seq: 8
   role: user
@@ -408,9 +392,7 @@ Now the other half of the damage: a session whose stored rows simply skip number
 one with `seq` 1, 2, 5:
 
 ```bash
-row 'op: add
-kind: conversation
-sessionId: s_recover_hole
+row 'sessionId: s_recover_hole
 payload:
   seq: 1
   role: user
@@ -420,9 +402,7 @@ payload:
     content: [{ type: text, text: hello }]
     timestamp: 1759200000000'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_hole
+row 'sessionId: s_recover_hole
 payload:
   seq: 2
   role: assistant
@@ -437,9 +417,7 @@ payload:
     stopReason: stop
     timestamp: 1759200000001'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_hole
+row 'sessionId: s_recover_hole
 payload:
   seq: 5
   role: user
@@ -471,9 +449,7 @@ conversation, and repairing a healthy `assistant(tc_9)` + `toolResult(tc_9)` pai
 would be a bug of its own.
 
 ```bash
-row 'op: add
-kind: conversation
-sessionId: s_recover_compact
+row 'sessionId: s_recover_compact
 payload:
   seq: 1
   role: user
@@ -483,9 +459,7 @@ payload:
     content: [{ type: text, text: old question }]
     timestamp: 1759200000000'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_compact
+row 'sessionId: s_recover_compact
 payload:
   seq: 2
   role: assistant
@@ -500,9 +474,7 @@ payload:
     stopReason: stop
     timestamp: 1759200000001'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_compact
+row 'sessionId: s_recover_compact
 payload:
   seq: 3
   role: compaction
@@ -513,9 +485,7 @@ payload:
     tokensBefore: 1234
     timestamp: 1759200000002'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_compact
+row 'sessionId: s_recover_compact
 payload:
   seq: 4
   role: user
@@ -525,9 +495,7 @@ payload:
     content: [{ type: text, text: new question }]
     timestamp: 1759200000003'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_compact
+row 'sessionId: s_recover_compact
 payload:
   seq: 5
   role: assistant
@@ -543,9 +511,7 @@ payload:
     stopReason: toolUse
     timestamp: 1759200000004'
 
-row 'op: add
-kind: conversation
-sessionId: s_recover_compact
+row 'sessionId: s_recover_compact
 payload:
   seq: 6
   role: toolResult
@@ -600,7 +566,7 @@ rm -rf .engineer/.recover-test
   very same rows with the pre-change `engineer-ai` binary (the installed one under
   `~/.engineer/apps/current/bin/`). If that binary is on `PATH`, the same A/B can be
   run against the crafted session at any time.
-- The damaged rows are written through `log/mutation` rather than by killing the
+- The damaged rows are written through `log/session/record/add` rather than by killing the
   ai service mid-write: the case must be deterministic, and to the reader of the
   records the two are indistinguishable. As a sanity check the damage found in this
   project's own real log was the same shape — 7 sessions carrying

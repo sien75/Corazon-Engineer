@@ -14,8 +14,8 @@
 
 Source of truth: `workspace/web/app.js`（`openSessionFromLauncher` / `adoptRecentSession` /
 `openIndexBefore` / `fillHomeLists` / `activateTab` / `viewOf`）、`workspace/web/components/chat.js`
-（`replayHistory`）、`workspace/log`（`current` + `session/on|off|detail` + `list`）。不需要模型：
-ai 用 `--stub`，历史用 `/log/mutation`（`kind: conversation`）直接写进 log。
+（`replayHistory`）、`workspace/log`（`session/current/*` + `session/on|off|detail` + `session/list`）。不需要模型：
+ai 用 `--stub`，历史用 `/log/session/record/add` 直接写进 log（会话记录，bucket 由端点决定）。
 
 ## Setup
 
@@ -103,7 +103,7 @@ const post = async (url, body) =>
   (await page.fetch(url, { method: "POST", headers: { "Content-Type": "application/yaml" }, body })).body;
 const ENGINEER = await page.evaluate(async () => (await import("/config.js")).ENGINEER);
 const PROJECT = (await post(`${ENGINEER.log}/log/project/list`, "{}")).match(/projectId:\s*(\S+)/)[1];
-const openIds = async () => String(await post(`${ENGINEER.log}/log/current/get`, "{}"));
+const openIds = async () => String(await post(`${ENGINEER.log}/log/session/current/get`, "{}"));
 
 // A clean bar to start from: whatever an earlier run left open is closed (main is
 // the shell's own conversation and is never closed).
@@ -118,8 +118,8 @@ if (others.length) {
 // it is only a Recents row now, which is what the row has to reopen.
 const made = await post(`${ENGINEER.ai}/ai/new`, `projectId: ${PROJECT}\nkind: sub`);
 const SESSION = String(made).match(/sessionId:\s*(\S+)/)[1];
-await post(`${ENGINEER.log}/log/mutation`,
-  `op: add\nkind: conversation\nsessionId: ${SESSION}\npayload:\n  seq: 1\n  role: user\n  content: ${JSON.stringify("probe question")}\n  raw: ${JSON.stringify({ role: "user", content: "probe question" })}`);
+await post(`${ENGINEER.log}/log/session/record/add`,
+  `sessionId: ${SESSION}\npayload:\n  seq: 1\n  role: user\n  content: ${JSON.stringify("probe question")}\n  raw: ${JSON.stringify({ role: "user", content: "probe question" })}`);
 await post(`${ENGINEER.log}/log/session/off`, `sessionIds:\n  - ${SESSION}`);
 await page.reload();
 await page.waitForSelector("#tabs .tab.main", { state: "visible" });

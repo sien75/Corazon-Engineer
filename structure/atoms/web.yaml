@@ -6,14 +6,7 @@ atoms:
     role: service
 
     interfaces:
-      provides:
-        - id: web-project-add
-          channel: network
-          protocol: http
-          contract: ./contracts/web-project-add.yaml
-          extend:
-            path: /project/add
-            method: POST
+      provides: []   # every endpoint this service answers is called by its own pages, not by another atom
       consumes:
         - id: log-project-list
           channel: network
@@ -106,12 +99,12 @@ atoms:
           extend:
             path: /blobs/{sha256}
             method: GET
-        - id: log-list
+        - id: log-session-list
           channel: network
           protocol: http
-          contract: ./contracts/log-list.yaml
+          contract: ./contracts/log-session-list.yaml
           extend:
-            path: /log/list
+            path: /log/session/list
             method: POST
         - id: log-session-on
           channel: network
@@ -127,24 +120,24 @@ atoms:
           extend:
             path: /log/session/off
             method: POST
-        - id: log-current-get
+        - id: log-session-current-get
           channel: network
           protocol: http
-          contract: ./contracts/log-current-get.yaml
+          contract: ./contracts/log-session-current-get.yaml
           extend:
-            path: /log/current/get
+            path: /log/session/current/get
             method: POST
-        - id: log-current-put
+        - id: log-session-current-put
           channel: network
           protocol: http
-          contract: ./contracts/log-current-put.yaml
+          contract: ./contracts/log-session-current-put.yaml
           extend:
-            path: /log/current/put
+            path: /log/session/current/put
             method: POST
-        - id: log-session-kind
+        - id: log-session-detail
           channel: network
           protocol: http
-          contract: ./contracts/log-session-kind.yaml
+          contract: ./contracts/log-session-detail.yaml
           extend:
             path: /log/session/detail
             method: POST

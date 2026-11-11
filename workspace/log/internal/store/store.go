@@ -71,7 +71,16 @@ func Open(home string) (*Store, error) {
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS records (
+	// Three tables, one shape, one kind each: a conversation row is what the shell
+	// replays, a test row is one run, a telemetry row is one observation. Keeping
+	// them apart is what lets each be read, indexed and eventually pruned on its
+	// own; the columns are identical so one reader can still span them.
+	//
+	// `records` also holds the test / telemetry rows written before the split. They
+	// are not migrated: a read spans the tables, so old rows stay visible where they
+	// are.
+	for _, table := range recordTables {
+		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS ` + table + ` (
 		id TEXT PRIMARY KEY,
 		created_at TEXT NOT NULL,
 		kind TEXT NOT NULL,
@@ -81,16 +90,17 @@ func Open(home string) (*Store, error) {
 		summary TEXT NOT NULL,
 		payload TEXT NOT NULL
 	)`); err != nil {
-		return nil, err
-	}
-	for _, idx := range []string{
-		"CREATE INDEX IF NOT EXISTS idx_kind ON records(kind)",
-		"CREATE INDEX IF NOT EXISTS idx_atom ON records(atom)",
-		"CREATE INDEX IF NOT EXISTS idx_created ON records(created_at)",
-		"CREATE INDEX IF NOT EXISTS idx_session ON records(session_id)",
-	} {
-		if _, err := db.Exec(idx); err != nil {
 			return nil, err
+		}
+		for _, idx := range []string{
+			`CREATE INDEX IF NOT EXISTS idx_` + table + `_kind ON ` + table + `(kind)`,
+			`CREATE INDEX IF NOT EXISTS idx_` + table + `_created ON ` + table + `(created_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_` + table + `_atom ON ` + table + `(atom)`,
+			`CREATE INDEX IF NOT EXISTS idx_` + table + `_session ON ` + table + `(session_id)`,
+		} {
+			if _, err := db.Exec(idx); err != nil {
+				return nil, err
+			}
 		}
 	}
 	st := &Store{db: db}
@@ -103,6 +113,49 @@ func Open(home string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// recordTables is every table a record can live in, newest kinds included.
+var recordTables = []string{"records", "tests", "telemetries"}
+
+// tableForKind is where a newly written record goes.
+func tableForKind(kind string) string {
+	switch kind {
+	case "test":
+		return "tests"
+	case "telemetry":
+		return "telemetries"
+	default:
+		return "records"
+	}
+}
+
+// tablesForKind is where a kind can be read from: its own table plus `records`,
+// which still holds the rows written before the split. A read that names no kind
+// spans all three.
+func tablesForKind(kind string) []string {
+	switch kind {
+	case "conversation":
+		return []string{"records"}
+	case "test":
+		return []string{"records", "tests"}
+	case "telemetry":
+		return []string{"records", "telemetries"}
+	default:
+		return recordTables
+	}
+}
+
+// recordSource is the one FROM a reader can use whatever the kind: the tables
+// that may hold it, stacked. Filtering by kind afterwards is what keeps a row of
+// `records` from appearing twice when it also exists in a split table
+// (impossible today, but the union is the safe shape).
+func recordSource(kind string) string {
+	parts := make([]string, 0, len(tablesForKind(kind)))
+	for _, table := range tablesForKind(kind) {
+		parts = append(parts, `SELECT id, created_at, kind, env, atom, session_id, summary, payload FROM `+table)
+	}
+	return "(" + strings.Join(parts, " UNION ALL ") + ")"
+}
 
 // Insert stores a record and returns it with assigned id / createdAt / summary.
 func (s *Store) Insert(rec Record) (Record, error) {
@@ -127,7 +180,7 @@ func (s *Store) Insert(rec Record) (Record, error) {
 	if err != nil {
 		return rec, err
 	}
-	_, err = s.db.Exec(`INSERT INTO records (id, created_at, kind, env, atom, session_id, summary, payload)
+	_, err = s.db.Exec(`INSERT INTO `+tableForKind(rec.Kind)+` (id, created_at, kind, env, atom, session_id, summary, payload)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.ID, rec.CreatedAt, rec.Kind, nullable(rec.Env), nullable(rec.Atom), nullable(rec.SessionID), rec.Summary, string(payloadText))
 	return rec, err
@@ -185,7 +238,7 @@ func (s *Store) Query(kind, env, atom, sessionID, start, end string, pageNum int
 		where = append(where, "created_at <= ?")
 		args = append(args, end)
 	}
-	rows, err := s.db.Query(`SELECT id, created_at, kind, env, atom, summary FROM records
+	rows, err := s.db.Query(`SELECT id, created_at, kind, env, atom, summary FROM `+recordSource(kind)+`
 		WHERE `+joinWhere(where)+` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
 		append(args, PageSize+1, (pageNum-1)*PageSize)...)
 	if err != nil {
@@ -225,13 +278,22 @@ func (s *Store) Query(kind, env, atom, sessionID, start, end string, pageNum int
 	return items, hasMore, nil
 }
 
-// Get returns a single record with full payload.
-func (s *Store) Get(id string) (Record, error) {
+// Get returns a single record with full payload. kind narrows the search to one
+// bucket ("" means any): a detail endpoint that names a bucket must not answer
+// with a row from another one.
+func (s *Store) Get(id, kind string) (Record, error) {
 	var r Record
 	var env, atom, session sql.NullString
 	var payload string
-	err := s.db.QueryRow(`SELECT id, created_at, kind, env, atom, session_id, summary, payload
-		FROM records WHERE id = ?`, id).Scan(&r.ID, &r.CreatedAt, &r.Kind, &env, &atom, &session, &r.Summary, &payload)
+	query := `SELECT id, created_at, kind, env, atom, session_id, summary, payload
+		FROM ` + recordSource(kind) + ` WHERE id = ?`
+	args := []interface{}{id}
+	if kind != "" {
+		query += ` AND kind = ?`
+		args = append(args, kind)
+	}
+	err := s.db.QueryRow(query+" ORDER BY created_at DESC LIMIT 1", args...).
+		Scan(&r.ID, &r.CreatedAt, &r.Kind, &env, &atom, &session, &r.Summary, &payload)
 	if err != nil {
 		return Record{}, err
 	}
@@ -391,9 +453,9 @@ func (s *Store) SessionMessages(sessionID string) ([]map[string]interface{}, err
 	return messages, rows.Err()
 }
 
-// DeleteSession removes every conversation record belonging to a session, its
-// session row, (when it is the main one) the main-session pointer, and its entry
-// in the open list, and returns the number of deleted records. Doing all of it
+// DeleteSession removes every conversation record belonging to a session and the
+// session row itself (which is what took it off the tab bar and out of main), and
+// returns the number of deleted records. Doing all of it
 // here is what keeps the workspace consistent whoever asks for the delete: an id
 // left in the open list would draw a tab with nothing behind it.
 func (s *Store) DeleteSession(sessionID string) (int64, error) {
@@ -405,13 +467,8 @@ func (s *Store) DeleteSession(sessionID string) (int64, error) {
 	if _, err := s.db.Exec(`DELETE FROM sessions WHERE session_id = ?`, sessionID); err != nil {
 		return 0, err
 	}
-	if _, err := s.db.Exec(`UPDATE current SET main_session = '', updated_at = ?
-		WHERE id = 1 AND main_session = ?`, time.Now().UTC().Format(time.RFC3339), sessionID); err != nil {
-		return 0, err
-	}
-	if err := s.RemoveOpenSessions([]string{sessionID}); err != nil {
-		return 0, err
-	}
+	// The row carried the workspace: its place on the tab bar and whether it was main.
+	// Deleting it is what clears both, so there is no pointer left to repair.
 	return res.RowsAffected()
 }
 
@@ -421,7 +478,7 @@ func (s *Store) Search(q string, pageNum int) ([]map[string]interface{}, bool, e
 		pageNum = 1
 	}
 	like := "%" + q + "%"
-	rows, err := s.db.Query(`SELECT id, created_at, kind, env, atom, summary FROM records
+	rows, err := s.db.Query(`SELECT id, created_at, kind, env, atom, summary FROM `+recordSource("")+`
 		WHERE id LIKE ? OR kind LIKE ? OR env LIKE ? OR atom LIKE ? OR summary LIKE ? OR payload LIKE ?
 		ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
 		like, like, like, like, like, like, PageSize+1, (pageNum-1)*PageSize)
