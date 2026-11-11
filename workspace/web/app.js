@@ -617,8 +617,11 @@ async function closeWorkspaceTab(tab) {
       // Even if log says no, take it off screen; the next refresh will reconcile.
     }
   }
+  // The tab to the left in the same group takes over; the first one falls back to main.
+  const group = openTabs.filter((t) => !t.main && t.projectId === tab.projectId);
+  const left = group[group.indexOf(tab) - 1];
   removeTab(tab);
-  if (activeTabId === tab.id) await activateTab("main", "replace");
+  if (activeTabId === tab.id) await activateTab(left ? left.id : "main", "replace");
   else if (activeTabId === "main") syncTabUrl(mainTab, "replace");
 }
 
