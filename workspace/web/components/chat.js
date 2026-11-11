@@ -525,6 +525,14 @@ function wire(host, root, id, RT, project = "", blueprint = "") {
 
       head.addEventListener("click", () => {
         keepStill(head, () => {
+          // 单例：同一组里一次只开一个详情，点另一个就替换，再点自己才关。
+          if (bd.hidden) {
+            for (const c of block.group?.chips ?? []) {
+              if (c === block || !c.body || c.body.hidden) continue;
+              c.body.hidden = true;
+              c.wrap?.classList?.remove("open");
+            }
+          }
           bd.hidden = !bd.hidden;
           el.classList.toggle("open", !bd.hidden);
           // 面板排到组尾：一律落在卡片下面，不因为组的位置换方向。
@@ -755,7 +763,7 @@ function wire(host, root, id, RT, project = "", blueprint = "") {
   // 都不该存在，所以这里什么都不建。第一条消息发出时才 POST /ai/new（这个项目自己
   // 的对话：没有 blueprint，也就没有页面），建好后告诉外壳 —— 它把这条会话作为一
   // 个 tab 打开。
-  async function createSession() {
+  async function createSession(firstBlocks) {
     try {
       const res = await fetch(AI + "/ai/new", {
         method: "POST",
@@ -769,7 +777,19 @@ function wire(host, root, id, RT, project = "", blueprint = "") {
       }
       id = String(data.sessionId ?? "");
       host.dispatchEvent(
-        new CustomEvent("engineer-session", { detail: { sessionId: id }, bubbles: true }),
+        new CustomEvent("engineer-session", {
+          // firstText: what the first message says. A conversation without a page
+          // has no name yet, and the shell names its tab after this until the
+          // turn's own summary arrives.
+          detail: {
+            sessionId: id,
+            firstText: (firstBlocks || [])
+              .filter((b) => b?.type === "text")
+              .map((b) => String(b.text ?? ""))
+              .join(" "),
+          },
+          bubbles: true,
+        }),
       );
       return Boolean(id);
     } catch (err) {
@@ -783,7 +803,7 @@ function wire(host, root, id, RT, project = "", blueprint = "") {
   async function ask(blocks) {
     if (!blocks.length) return;
     // Home page, first message: the conversation exists from here on.
-    if (!id && !(await createSession())) return;
+    if (!id && !(await createSession(blocks))) return;
     // 已经在跑：这一条是插话。服务端把它 steer 进正在跑的那一轮，流还是原来那条，
     // 所以这里不重开 pump、不动 running / tools，只把上面那段收尾。
     const steer = running;
