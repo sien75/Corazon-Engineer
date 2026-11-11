@@ -1,0 +1,31 @@
+# POST /log/project/list
+
+The project board — every folder the user added in Engineer, in the order it was added; a project that was removed is not listed (its row and its conversations stay in the database)
+
+## Request
+
+```yaml
+body: {}
+```
+
+## Response
+
+```yaml
+status: 200
+body:
+  projects:
+    - projectId: string  # p_<12 hex>; the id every other service resolves a project folder by
+      path: string  # absolute folder path on this machine
+      name: string  # display name, read from the folder's engineer.yaml (`project:`) when it was added, the folder name otherwise
+      createdAt: string  # when it was first added, RFC3339
+      updatedAt: string  # last add / remove / hide, RFC3339
+      visible: boolean  # whether its group is drawn in the titlebar
+```
+
+## Errors
+
+```yaml
+- status: 500
+  code: internal
+  description: server internal error
+```

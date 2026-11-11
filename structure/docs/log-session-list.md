@@ -1,0 +1,44 @@
+# POST /log/session/list
+
+List conversation sessions (POST /log/session/list), most recently active first — one entry per session, including one that has not been asked anything yet (count 0)
+
+## Request
+
+```yaml
+body:
+  pageNum?: number  # page number, 1-based, default 1
+  projectId?: string  # only this project's sessions; empty = every session, main included
+```
+
+## Response
+
+```yaml
+status: 200
+body:
+  sessions:
+    - sessionId: string  # conversation session id
+      kind: main | sub  # the session's role; "sub" when it has no row in sessions
+      projectId: string  # the project it belongs to, "" for main
+      blueprint: string  # slug of the page it drives, "" when it has none
+      title: string  # display name: the blueprint page's <title>, or the title ai summarized from the conversation; "" when none was written
+      model: string  # provider/model-id of the chat model this session runs, "" when the role default in models.yaml applies
+      imageModel: string  # provider/model-id of the image-generation model, "" when the role's `image` in models.yaml applies or none is set
+      createdAt: string  # first message time, or the session row's creation time when nothing was said yet, RFC3339
+      lastAt: string  # latest message time, or createdAt when nothing was said yet, RFC3339
+      count: number  # number of messages in the session
+      preview: string  # first user message content snippet
+  pageNum: number  # echoed page number
+  hasMore: boolean  # whether more pages exist
+  pageSize: 100  # fixed page size, 100 sessions per page
+```
+
+## Errors
+
+```yaml
+- status: 400
+  code: bad_request
+  description: bad request
+- status: 500
+  code: internal
+  description: server error
+```

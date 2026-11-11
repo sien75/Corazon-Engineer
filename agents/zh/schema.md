@@ -184,6 +184,8 @@ errors:
 
 对 atoms、edges、contracts 的说明文档（随工具一起发布），位于 `structure/docs/`。为普通 markdown 文件，不做格式约定。
 
+Corazon Engineer 自己这里只有手写的 `README.md` (简介和使用场景). 随工具发布的接口文档在打包时由 atoms 和 contracts 生成 (`how-to/deploy/gen-docs.ts`): 这份 README 加每个接口一个文件.
+
 ---
 
 ## Humanwrite 文件 — 人工手写内容

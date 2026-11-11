@@ -95,3 +95,11 @@ edges:
     channel: network
     protocol: http
     description: the eye button in the Engineer launcher hides or shows a project's titlebar group; the state is stored so it survives a reload
+  - id: web-to-log-workspace-stream
+    from: web
+    from_interface: log-workspace-stream
+    to: log
+    to_interface: log-workspace-stream
+    channel: network
+    protocol: http
+    description: web subscribes to workspace changes and re-reads the workspace on each event, so tabs follow whoever changed it (main's curl, another window)

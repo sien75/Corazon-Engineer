@@ -56,7 +56,7 @@ PROJECT=$(curl -s -X POST http://localhost:8911/log/project/list | awk '$1=="pro
 
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 8910 --stub \
   --log http://localhost:8911 --static http://localhost:8502 \
-  --agents "$ROOTDIR/agents" \
+  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/chat-scroll-ai.log 2>&1 &)
 
 # web assets

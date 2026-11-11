@@ -1,5 +1,5 @@
 id: log-session-record-add
-description: Append one message record to a conversation session (POST /log/session/record/add); the ai service is the only writer — the shell reads these back as the conversation
+description: Append one message record to a conversation session (POST /log/session/record/add); the ai service is the only writer, an agent never calls this — the shell reads these back as the conversation
 
 request:
   body:

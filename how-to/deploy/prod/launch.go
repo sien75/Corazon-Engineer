@@ -122,6 +122,15 @@ func launch() {
 	// port, both passed down explicitly — a service never picks its own) and the
 	// one everyone else reaches it by (url host — loopback reads as "localhost",
 	// a wildcard bind as this machine's outward IP).
+	// Proxy: two kinds of call leave this stack — its own, which are loopback, and
+	// the provider calls ai makes out (zenmux, deepseek, …). Loopback must bypass
+	// any proxy the user runs (Clash and friends 502 it, which breaks history
+	// reads and record writes), while a gateway a provider is reached through may
+	// be the only way out. So a wildcard NO_PROXY is folded back to just loopback
+	// instead of staying "bypass everything".
+	if err := os.Setenv("no_proxy", loopbackNoProxy(os.Getenv("no_proxy"), os.Getenv("NO_PROXY"))); err == nil {
+		os.Setenv("NO_PROXY", os.Getenv("no_proxy"))
+	}
 	host := urlHost(bind)
 	svcURL := func(name string) string {
 		return "http://" + net.JoinHostPort(host, strconv.Itoa(ports[name]))
@@ -138,6 +147,7 @@ func launch() {
 			args: []string{"--home", data,
 				"--bind", bind, "--port", strconv.Itoa(ports["ai"]),
 				"--agents", filepath.Join(pkg, "agents"),
+				"--docs", filepath.Join(pkg, "docs"),
 				"--log", svcURL("log"), "--static", svcURL("static")}},
 		{name: "web", bin: self,
 			args: []string{"serve-web",
@@ -585,4 +595,28 @@ func mustMkdir(dir string) {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "engineer:", err)
 	os.Exit(1)
+}
+
+// loopbackNoProxy keeps whatever bypass list the user set, minus a wildcard, and
+// always adds the loopback names.
+func loopbackNoProxy(lists ...string) string {
+	seen := map[string]bool{}
+	out := []string{}
+	add := func(h string) {
+		h = strings.TrimSpace(h)
+		if h == "" || h == "*" || seen[h] {
+			return
+		}
+		seen[h] = true
+		out = append(out, h)
+	}
+	for _, h := range []string{"localhost", "127.0.0.1", "::1"} {
+		add(h)
+	}
+	for _, list := range lists {
+		for _, h := range strings.Split(list, ",") {
+			add(h)
+		}
+	}
+	return strings.Join(out, ",")
 }

@@ -45,7 +45,7 @@ PROJECT=$(cat "$ROOT/.project")
 /tmp/engineer serve-static --log http://localhost:9081 --bind 127.0.0.1 --port 9082 >/tmp/session-title-static.log 2>&1 &
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9080 \
   --log http://localhost:9081 --static http://localhost:9082 \
-  --agents "$ROOTDIR/agents" >/tmp/session-title-ai.log 2>&1 &)
+  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/session-title-ai.log 2>&1 &)
 
 LOG=http://localhost:9081
 AI=http://localhost:9080

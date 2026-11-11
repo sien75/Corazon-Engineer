@@ -184,6 +184,8 @@ errors:
 
 Documentation that describes the atoms, edges and contracts (and is published with the tool), under `structure/docs/`. Plain markdown files, no format convention.
 
+In Corazon Engineer itself the only file here is the hand-written `README.md` (intro and usage scenarios). The published interface docs are generated from the atoms and contracts at pack time (`how-to/deploy/gen-docs.ts`): this README plus one file per interface.
+
 ---
 
 ## Humanwrite Files — Hand-Written Material

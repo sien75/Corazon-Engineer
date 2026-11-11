@@ -39,6 +39,8 @@ history.
 
 The launcher binds `127.0.0.1` by default — this is a local tool, not a service on the office network. A service started by hand has **no** default host: `--bind` is required, so nothing is exposed by accident. `ENGINEER_BIND` overrides the bind host: `ENGINEER_BIND=0.0.0.0 how-to/deploy/dev/launch.sh` opens the stack to the whole network, `ENGINEER_BIND=<this machine's IP>` binds one interface (that is also the form that makes the printed addresses usable from another machine).
 
+**The proxy variable is normalized, not inherited as given.** Two kinds of call leave the stack: its own, which are loopback, and the provider calls ai makes out (zenmux, deepseek, …). Loopback must bypass whatever proxy the user runs — Clash and friends answer 502 for it, which breaks history reads and record writes — while a provider behind a gateway may only be reachable *through* that proxy. So both launchers keep the bypass list the user set, drop a wildcard `*` from it, and always add `localhost,127.0.0.1,::1`. Running an E2E case with `NO_PROXY='*'` in the shell therefore no longer cuts off a gateway-only provider.
+
 Logs and pids live under `.engineer/dev/`.
 
 Which model a conversation runs is decided in three layers, and they come in two slots — `chat` (the conversation) and `image` (image generation) — each slot resolving on its own. Nothing writes pi's settings.
@@ -49,7 +51,7 @@ Which model a conversation runs is decided in three layers, and they come in two
 
 A name that cannot be resolved right now (a retired model, a provider without credentials) is skipped with a warning. pi still owns the catalog and the credentials (`settings.json`, `models.json`, `auth.json`); the agent's `model` tool is a live `agent.setModel` for chat and records the choice for image. The thinking level is not stored per conversation anywhere: pi derives it per model from its own settings.
 
-A hand-run: `cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 7501 --home <data home> --log <log url> --static <static url> --agents ../../agents`. **Every one of those flags is required**: ai has no default host, port, home, log address, static address or spec file, so a hand-run must state all six (`--stub` is the only optional one). `--home` is the program's data directory (uploaded images), not a project; `--agents` is the directory holding the two role specs (`main/AGENTS.md`, `sub/AGENTS.md`).
+A hand-run: `cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 7501 --home <data home> --log <log url> --static <static url> --agents ../../agents --docs <docs dir>`. **Every one of those flags is required**: ai has no default host, port, home, log address, static address, spec directory or docs directory, so a hand-run must state all seven (`--stub` is the only optional one). `--home` is the program's data directory (uploaded images), not a project; `--agents` is the directory holding the two role specs (`main/AGENTS.md`, `sub/AGENTS.md`); `--docs` is the interface docs directory, `structure/docs/` in the checkout (`launch.sh` regenerates its per-interface files on every start with `bun how-to/deploy/gen-docs.ts <checkout> <checkout>/structure/docs`; its `README.md` is kept by hand).
 
 ## Verify
 

@@ -21,10 +21,12 @@ type Server struct {
 	store  *store.Store
 	mux    *http.ServeMux
 	broker *Broker
+	// workspace pushes "the workspace changed" to the shell (workspace.go).
+	workspace *workspaceBroker
 }
 
 func New(st *store.Store) *Server {
-	s := &Server{store: st, mux: http.NewServeMux(), broker: NewBroker()}
+	s := &Server{store: st, mux: http.NewServeMux(), broker: NewBroker(), workspace: &workspaceBroker{}}
 	// Every route is named by what it is about — a project, a session, a test run, an
 	// observation — so the file name and the path say the same thing. search and
 	// stream are the two that span every kind, and they are the only two without a
@@ -52,6 +54,7 @@ func New(st *store.Store) *Server {
 	s.mux.HandleFunc("POST /log/project/visible", s.handleProjectVisible)
 	s.mux.HandleFunc("POST /log/search", s.handleSearch)
 	s.mux.HandleFunc("POST /log/stream", s.handleStream)
+	s.mux.HandleFunc("POST /log/workspace/stream", s.handleWorkspaceStream)
 	return s
 }
 
@@ -221,6 +224,7 @@ func (s *Server) handleSessionOn(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	s.workspaceChanged()
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"openSessions": cur.Body()["openSessions"]})
 }
 
@@ -246,6 +250,7 @@ func (s *Server) handleSessionOff(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	s.workspaceChanged()
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{"openSessions": cur.Body()["openSessions"]})
 }
 
@@ -283,6 +288,7 @@ func (s *Server) handleSessionUpsert(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	s.workspaceChanged()
 	writeYAMLResp(w, http.StatusOK, sess)
 }
 
@@ -369,6 +375,7 @@ func (s *Server) handleProjectAdd(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	s.workspaceChanged()
 	writeYAMLResp(w, http.StatusOK, p)
 }
 
@@ -388,6 +395,7 @@ func (s *Server) handleProjectRemove(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	s.workspaceChanged()
 	writeYAMLResp(w, http.StatusOK, p)
 }
 
@@ -415,6 +423,7 @@ func (s *Server) handleProjectVisible(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	s.workspaceChanged()
 	writeYAMLResp(w, http.StatusOK, p)
 }
 
@@ -450,6 +459,7 @@ func (s *Server) handleCurrentPut(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	s.workspaceChanged()
 	writeYAMLResp(w, http.StatusOK, cur.Body())
 }
 
@@ -494,6 +504,7 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	s.workspaceChanged()
 	writeYAMLResp(w, http.StatusOK, map[string]interface{}{
 		"sessionId": req.SessionID,
 		"deleted":   deleted,

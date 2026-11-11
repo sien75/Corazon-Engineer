@@ -1,0 +1,39 @@
+# POST /log/session/detail
+
+Read one conversation's role, the project it belongs to, the blueprint it was made from and its display name (POST /log/session/detail); a session with no row is not an error to the caller, but this endpoint answers 404
+
+## Request
+
+```yaml
+body:
+  sessionId: string  # conversation session id
+```
+
+## Response
+
+```yaml
+status: 200
+body:
+  sessionId: string
+  kind: main | sub
+  projectId: string  # the project this session belongs to, "" for main; static / ai / web resolve the folder through it
+  blueprint: string  # slug of the page this session drives, "" when it has none; the web server resolves /agent/<sessionId>/ through this
+  title: string  # display name, "" when none was ever written
+  model: string  # provider/model-id of the chat model chosen for this session, "" when the role default in models.yaml applies
+  imageModel: string  # provider/model-id of the image-generation model chosen for this session, "" when the role's `image` in models.yaml applies or none is set
+  createdAt: string
+```
+
+## Errors
+
+```yaml
+- status: 400
+  code: bad_request
+  description: sessionId missing
+- status: 404
+  code: not_found
+  description: session does not exist
+- status: 500
+  code: internal
+  description: server internal error
+```

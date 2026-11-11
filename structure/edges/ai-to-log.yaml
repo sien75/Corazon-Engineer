@@ -15,30 +15,6 @@ edges:
     channel: network
     protocol: http
     description: ai reads a session's conversation messages to rebuild context on resume
-  - id: ai-to-log-session-on
-    from: ai
-    from_interface: log-session-on
-    to: log
-    to_interface: log-session-on
-    channel: network
-    protocol: http
-    description: session-open (main's tool) puts a session back on screen
-  - id: ai-to-log-session-off
-    from: ai
-    from_interface: log-session-off
-    to: log
-    to_interface: log-session-off
-    channel: network
-    protocol: http
-    description: session-close (main's tool) takes a session off screen, keeping its records
-  - id: ai-to-log-session-list
-    from: ai
-    from_interface: log-session-list
-    to: log
-    to_interface: log-session-list
-    channel: network
-    protocol: http
-    description: session-list / main-list (main's tools) read the project's sessions
   - id: ai-to-log-session-delete
     from: ai
     from_interface: log-session-delete
@@ -46,7 +22,7 @@ edges:
     to_interface: log-session-delete
     channel: network
     protocol: http
-    description: session-delete (main's tool) removes a conversation's records and its session row
+    description: ai-delete removes a conversation's records and its session row
   - id: ai-to-log-session-upsert
     from: ai
     from_interface: log-session-upsert
@@ -62,23 +38,7 @@ edges:
     to_interface: log-session-detail
     channel: network
     protocol: http
-    description: resume / session-new read a conversation's kind and blueprint to pick the role spec and the page
-  - id: ai-to-log-session-current-get
-    from: ai
-    from_interface: log-session-current-get
-    to: log
-    to_interface: log-session-current-get
-    channel: network
-    protocol: http
-    description: session-list / main-new / main-resume (main's tools) read which sessions are open and which is main
-  - id: ai-to-log-session-current-put
-    from: ai
-    from_interface: log-session-current-put
-    to: log
-    to_interface: log-session-current-put
-    channel: network
-    protocol: http
-    description: main-new / main-resume (main's tools) move log's main-session pointer, writing the open list back untouched
+    description: resume reads a conversation's kind and blueprint to pick the role spec and the page
   - id: ai-to-log-project-get
     from: ai
     from_interface: log-project-get
@@ -87,11 +47,3 @@ edges:
     channel: network
     protocol: http
     description: a new or resumed sub session resolves its project to the folder the agent runs in and reads its page from
-  - id: ai-to-log-project-list
-    from: ai
-    from_interface: log-project-list
-    to: log
-    to_interface: log-project-list
-    channel: network
-    protocol: http
-    description: main's project-list tool shows the board, so session-new can name the project an agent belongs to

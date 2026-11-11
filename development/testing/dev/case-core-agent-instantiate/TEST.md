@@ -72,7 +72,7 @@ curl -s -X POST http://localhost:8970/log/project/add -H 'Content-Type: applicat
 PROJECT=$(cat "$ROOT/.project")
 # ai is the Bun service, not a subcommand of the Go binary (--stub: no model calls)
 (cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 8971 --home "$HOME_DIR" \
-  --log http://localhost:8970 --static http://localhost:8972 --agents "$(cd ../../agents && pwd)" --stub &)
+  --log http://localhost:8970 --static http://localhost:8972 --agents "$(cd ../../agents && pwd)" --docs "$PWD/.engineer/docs" --stub &)
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8972 \
   --assets "$(cd workspace/web && pwd)" \
   --static http://localhost:8972 --ai http://localhost:8971 --log http://localhost:8970 &

@@ -118,8 +118,9 @@ window.addEventListener("keydown", (event) => {
 // session is main, `sessions` names them. There is no tab table — a tab is one
 // open session, so an id in the open list is the whole of a tab.
 //
-// There is no way for the user to open or close a tab here either: main's tools
-// do that, and a tool frame makes the shell re-read the workspace below.
+// Whoever changes the workspace (main calling the interfaces, another window, a
+// curl), log pushes an event on its workspace stream, and the shell re-reads the
+// workspace below (followWorkspace).
 const openTabs = []; // main first, then the open sessions in display order
 let activeTabId = null; // "main", a session id, or "launcher:<projectId>"
 let mainTab = null;
@@ -250,15 +251,6 @@ function makeMainTab(sessionId) {
   // a blueprint page mounts. Every element replays its records from log on mount,
   // so a rebuilt main tab shows the conversation again.
   const chat = makeChatView(tab);
-  // main's tools change the workspace; the element only reports them.
-  chat.addEventListener("engineer-tool", (event) => {
-    const d = event.detail || {};
-    // main-new replaces this very conversation: the refresh below is what makes
-    // the shell follow log's pointer to the new session.
-    if (!d.isError && /^(session-|main-)/.test(String(d.name ?? ""))) {
-      void refreshWorkspace();
-    }
-  });
   tab.el = chat;
   return tab;
 }
@@ -647,10 +639,10 @@ function removeTab(tab) {
   renderTabs();
 }
 
-// ---------- the workspace, re-read after main's tools change it ----------
+// ---------- the workspace, re-read when log says it changed ----------
 
-// One refresh at a time: a run can finish several session-* tools in a row, and
-// each frame asks for the same picture. Two overlapping passes would both see a
+// One refresh at a time: a burst of changes asks for the same picture
+// more than once. Two overlapping passes would both see a
 // tab as missing and both add it — the tab bar then shows the workspace N times.
 let refreshChain = Promise.resolve();
 
@@ -724,8 +716,8 @@ async function doRefreshWorkspace() {
   }
   const onBoard = new Set(projectList.map((p) => p.projectId));
   const want = cur.openSessions ?? [];
-  // A tab the workspace no longer holds goes off screen (a session-delete closes
-  // it too, but session-off or another window can drop it as well). A launcher tab
+  // A tab the workspace no longer holds goes off screen (closed or deleted, here
+  // or anywhere else). A launcher tab
   // goes with its project: a project off the board has no group to live in.
   for (const tab of [...openTabs]) {
     if (tab.main) continue;
@@ -743,8 +735,8 @@ async function doRefreshWorkspace() {
     }
     if (!want.includes(tab.sessionId)) removeTab(tab);
   }
-  // A tab the workspace gained: build it, resume it, put it up. `opened` is what
-  // session-open means — the new tab is the thing to look at.
+  // A tab the workspace gained: build it, resume it, put it up. `opened` is the one
+  // just put on screen — the new tab is the thing to look at.
   let opened = null;
   const repaired = [];
   for (const sessionId of want) {
@@ -1581,6 +1573,50 @@ window.addEventListener("mousedown", (event) => {
   launcherClose("push");
 });
 
+// ---------- following the workspace ----------
+//
+// One long connection to log's workspace stream. An event carries no content; it
+// means "the workspace changed", and the answer is to re-read it. log sends one
+// event at once on every connection: the first connection comes right after boot
+// has read the workspace, so that one is skipped; after a reconnect it is the
+// catch-up for whatever changed while the connection was down.
+async function followWorkspace() {
+  let firstConnection = true;
+  for (;;) {
+    let skipInitial = firstConnection;
+    firstConnection = false;
+    try {
+      const res = await fetch(`${LOG_BASE}/log/workspace/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/yaml" },
+        body: yaml.dump({}),
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const frames = buf.split("\n\n");
+        buf = frames.pop();
+        for (const frame of frames) {
+          if (!frame.split("\n").some((line) => line.startsWith("data:"))) continue; // heartbeat
+          if (skipInitial) {
+            skipInitial = false;
+            continue;
+          }
+          void refreshWorkspace();
+        }
+      }
+    } catch {
+      // log is away; try again below
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}
+
 // ---------- boot ----------
 //
 // Rebuild the workspace from log, then restore the visible page from the URL.
@@ -1658,6 +1694,7 @@ async function boot() {
   renderTabs();
   await restoreRoute();
   void hydrateNames();
+  void followWorkspace();
 }
 
 // Boot and browser history share the same route resolution. A closed sub

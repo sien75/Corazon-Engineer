@@ -57,7 +57,7 @@ curl -s -o /dev/null -X POST http://localhost:8930/log/project/add \
 
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 8932 --stub \
   --log http://localhost:8930 --static http://localhost:8931 \
-  --agents "$ROOTDIR/agents" >/tmp/input-history-ai.log 2>&1 &)
+  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/input-history-ai.log 2>&1 &)
 sleep 2
 # wait for ai: the first /ai/new must not race the boot
 for i in $(seq 1 60); do

@@ -1,0 +1,3 @@
+id: core-main-workspace
+description: main operates the workspace by reading docs/README.md and calling the log and ai interfaces itself — it opens an agent from a blueprint, closes and reopens it, replaces main with a fresh conversation and resumes the earlier one, and deletes an agent; needs a real model
+atoms: [ai, log, static]

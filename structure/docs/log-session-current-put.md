@@ -1,0 +1,32 @@
+# POST /log/session/current/put
+
+Replace the workspace at POST /log/session/current/put — used to repair or reorder the open list and to point main at a session (opening and closing a session has its own endpoints). When only main moves, send openSessions exactly as log-session-current-get returned it — a shorter list closes the tabs that are missing from it
+
+## Request
+
+```yaml
+body:
+  openSessions: [string]  # the whole open list, in display order; an id with no session row is ignored, because there would be nothing to draw
+  mainSession?: string  # the main conversation's session id, a session of kind main; omitted keeps nothing
+```
+
+## Response
+
+```yaml
+status: 200
+body:
+  openSessions: [string]
+  mainSession: string
+  updatedAt: string
+```
+
+## Errors
+
+```yaml
+- status: 400
+  code: bad_request
+  description: bad request
+- status: 500
+  code: internal
+  description: server internal error
+```

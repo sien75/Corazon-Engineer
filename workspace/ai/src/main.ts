@@ -24,7 +24,7 @@ process.env.no_proxy = withLocalNoProxy(process.env.no_proxy);
 process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 
 // usage: bun run src/main.ts --bind <host> --port <n> --home <data dir>
-//        --log <url> --static <url> --agents <spec dir> [--stub]
+//        --log <url> --static <url> --agents <spec dir> --docs <docs dir> [--stub]
 //
 // Every flag above is required and there is no fallback. The launcher owns the
 // addresses, the home directory and the spec file, and passes them all down; a
@@ -35,7 +35,7 @@ process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 // The home is only this service's own data — uploaded images.
 const USAGE =
   "usage: engineer-ai --bind <host> --port <n> --home <data dir> " +
-  "--log <url> --static <url> --agents <spec dir> [--stub]";
+  "--log <url> --static <url> --agents <spec dir> --docs <docs dir> [--stub]";
 
 function parseFlags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -54,7 +54,7 @@ function parseFlags(argv: string[]): Record<string, string> {
 
 const flags = parseFlags(process.argv.slice(2));
 
-const REQUIRED = ["bind", "port", "home", "log", "static", "agents"];
+const REQUIRED = ["bind", "port", "home", "log", "static", "agents", "docs"];
 const missing = REQUIRED.filter((k) => !flags[k]);
 if (missing.length || !/^\d+$/.test(flags.port ?? "")) {
   if (missing.length) {
@@ -92,15 +92,28 @@ const specs = {
   main: resolveSpec(flags.agents, "main"),
   sub: resolveSpec(flags.agents, "sub"),
 };
-// main's reference docs live beside its spec (models.md, schema.md, contract.md,
-// enum.md, tools.md) and it has no other way to know where they are: its cwd is
-// the home or a project folder, never the checkout. Naming the directory is what
-// turns "the spec mentions models.md" into a file it can read.
-const specDirLine =
-  "\n\n---\n\n# Spec directory\n\n" +
-  `This spec was read from ${path.resolve(flags.agents)}. The reference docs beside it — ` +
-  "models.md (models: the three layers, models.yaml, pi's own config), schema.md, " +
-  "contract.md, enum.md, tools.md — are files there, read with the read tool.\n";
+// Both roles' reference files live beside the spec, and neither has another way
+// to know where: cwd is the home or a project folder, never the checkout. Naming
+// the directory is what turns "the spec mentions schema.md" into a file it can
+// read. main is not told the schema / contract / enum references — it develops no
+// project; a sub agent is.
+const specDir = path.resolve(flags.agents);
+const referenceLine = (files: string) =>
+  "\n\n---\n\n# Reference files position\n\n" +
+  `They are in ${specDir}, beside your spec, readable with the read tool: ${files}.\n`;
+const mainReference = referenceLine(
+  "models.md (the three model layers, models.yaml, pi's own config), tools.md (recommended CLI tools)",
+);
+const subReference = referenceLine(
+  "schema.md, contract.md, enum.md (the project's schema, contract and enum conventions), " +
+    "tools.md (recommended CLI tools)",
+);
+// Both roles call the log / ai / static interfaces through bash (main to operate
+// the workspace, a sub agent to write test records); the generated docs say how.
+const docsLine =
+  "\n\n---\n\n# Interface docs position\n\n" +
+  `They are in ${path.resolve(flags.docs)}; start with README.md there, then the file of the ` +
+  "interface you need.\n";
 // The address the model should call this service by: a wildcard or loopback
 // bind is reached as localhost; anything else (the launcher opened the stack to
 // a specific interface) keeps its host.
@@ -126,8 +139,8 @@ const registry = new Registry({
   home,
   logBase,
   specs: {
-    main: specs.main + specDirLine + runtimeEndpoints,
-    sub: specs.sub + runtimeEndpoints,
+    main: specs.main + mainReference + docsLine + runtimeEndpoints,
+    sub: specs.sub + subReference + docsLine + runtimeEndpoints,
   },
   forceStub,
 });

@@ -1,0 +1,71 @@
+# POST /static/query
+
+Return full schema data for rendering the architecture graph and atom/edge details
+
+## Request
+
+```yaml
+body:
+  projectId: string  # p_<12 hex> — whose tree to read; static has no root of its own any more
+```
+
+## Response
+
+```yaml
+status: 200
+body:
+  atoms:  # all atoms, full content (for graph rendering)
+    - name: string  # atom id / unique name
+      description: string
+      repo?: string  # git repository URL
+      path?: string  # local checkout path
+      runtime_type: string  # native | go | browser | node | bun | jre | python | dotnet | beam | ruby | php
+      runtime_version?: string  # e.g. "1.22"
+      role?: string  # service | database | cache | queue | storage | gateway | scheduler | worker | proxy
+
+      interfaces:
+        provides:  # capabilities this atom provides (others call this atom)
+          - id: string
+            channel: network | stdio | ipc
+            protocol: string  # per channel, see agents/enum.md
+            contract?: string  # path under structure/contracts/, e.g. "structure/contracts/create-user-api.yaml"
+            extend?: object  # protocol-specific fields (path, method, command, topic, ...); shape varies by protocol
+        consumes:  # capabilities this atom consumes (this atom calls others)
+          - id: string
+            channel: network | stdio | ipc
+            protocol: string  # per channel, see agents/enum.md
+            contract?: string  # path under structure/contracts/, e.g. "structure/contracts/user-created-event.yaml"
+            extend?: object  # protocol-specific fields (topic, ...); shape varies by protocol
+
+  edges:  # all edges, full content
+    - id: string
+      from: string  # source atom name
+      from_interface: string  # source atom out interface id
+      to: string  # target atom name
+      to_interface: string  # target atom in interface id
+      channel: network | stdio | ipc
+      protocol: string  # per channel, see agents/enum.md
+      description: string
+
+  how-to: [string]  # plain file tree under how-to/, recursive relative paths
+  contracts: [string]  # entries under structure/contracts/, relative paths e.g. "structure/contracts/ai-ask.yaml"
+  development: [string]  # plain file tree under development/, recursive relative paths, e.g. "development/testing/dev/case-x/TEST.md"
+  docs: [string]  # entries under structure/docs/, relative paths
+  humanwrite: [string]  # plain file tree under humanwrite/ (<iteration number>/ dirs and notes/), recursive relative paths
+  skills: [string]  # entries under .agents/skills/, e.g. ".agents/skills/<slug>/SKILL.md"
+  blueprints: [string]  # entries under .agents/blueprints/, e.g. ".agents/blueprints/<slug>/index.html" and its README.md — a blueprint is those two files and nothing else
+```
+
+## Errors
+
+```yaml
+- status: 400
+  code: bad_request
+  description: projectId missing
+- status: 404
+  code: not_found
+  description: no such project
+- status: 500
+  code: internal
+  description: server error (including log being unreachable)
+```

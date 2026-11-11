@@ -55,7 +55,7 @@ curl -s -o /dev/null -X POST http://localhost:8921/log/project/add \
 
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 8920 --stub \
   --log http://localhost:8921 --static http://localhost:8922 \
-  --agents "$ROOTDIR/agents" >/tmp/input-grow-ai.log 2>&1 &)
+  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/input-grow-ai.log 2>&1 &)
 sleep 2
 # one skill, so the new tab page has something to open — a plain file
 for i in $(seq 1 60); do

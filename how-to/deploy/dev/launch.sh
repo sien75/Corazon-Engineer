@@ -95,6 +95,19 @@ BASE=http://$URLHOST
 ( cd "$ROOT/how-to/deploy/prod" && go build -o "$BIN/engineer" . )
 rm -f "$BIN/engineer-log" "$BIN/engineer-static" "$BIN/engineer-web"
 
+# --- proxy ----------------------------------------------------------------
+# Two calls leave this stack: its own, which are loopback (log ↔ static ↔ ai ↔
+# web), and the provider calls ai makes out (zenmux, deepseek, …). Loopback must
+# bypass whatever proxy the user runs — Clash and friends 502 it, which breaks
+# history reads and record writes — while a provider reached through a gateway
+# may only be reachable *through* it. So NO_PROXY='*' is folded back to just
+# loopback instead of being inherited as "bypass everything".
+np=$(printf '%s,%s' "$no_proxy" "${NO_PROXY:-}" | tr ',' '\n' | grep -v -e '^\*$' -e '^$' | tr '\n' ',' | sed 's/,$//')
+no_proxy="localhost,127.0.0.1,::1${np:+,$np}"
+export no_proxy
+NO_PROXY=$no_proxy
+export NO_PROXY
+
 # --- start (order: log → static → ai → web) -------------------------------
 # Nothing is migrated here: the data home is the only database this program
 # reads. A leftover `<checkout>/.engineer/engineer.db` from before the home
@@ -102,13 +115,19 @@ rm -f "$BIN/engineer-log" "$BIN/engineer-static" "$BIN/engineer-web"
 # is gone, and that file is no longer part of the program.
 mkdir -p "$DATA"
 
+# The interface docs the agents are told to read live in structure/docs. The
+# per-interface files are regenerated here (what changed is printed); the README
+# is kept by hand, and a mismatch is only a warning in dev — packing refuses it.
+bun "$ROOT/how-to/deploy/gen-docs.ts" "$ROOT" "$ROOT/structure/docs" ||
+  echo "gen-docs: see above — structure/docs/README.md needs updating before a pack" >&2
+
 nohup "$BIN/engineer" serve-log --home "$DATA" --bind "$BIND" --port "$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
 echo $! >"$D/log.pid"
 nohup "$BIN/engineer" serve-static --log "$BASE:$PORT_LOG" --bind "$BIND" --port "$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
 echo $! >"$D/static.pid"
 # exec so the recorded pid IS the server process (not a wrapper that outlives kill)
 ( cd "$ROOT/workspace/ai" && exec nohup bun src/main.ts \
-    --home "$DATA" --agents "$ROOT/agents" \
+    --home "$DATA" --agents "$ROOT/agents" --docs "$ROOT/structure/docs" \
     --bind "$BIND" --port "$PORT_AI" \
     --log "$BASE:$PORT_LOG" --static "$BASE:$PORT_STATIC" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"

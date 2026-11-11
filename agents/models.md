@@ -8,7 +8,7 @@ rules, the one file Engineer owns, and the files pi owns.
 Strongest claim first, chat and image separately:
 
 1. **The session's own row** (`model` / `imageModel` in log) — what the `model`
-   tool switched it to, or what it was created with (session-new's `chat` /
+   tool switched it to, or what it was created with (`/ai/new`'s `chat` /
    `image`). This is the only place a conversation's choice lives: nothing goes
    into the conversation's records, so a restart reads back exactly one answer.
 2. **`models.yaml`** — Engineer's own file, one `chat` and one `image` per role

@@ -1,0 +1,37 @@
+# POST /ai/ask
+
+Ask AI; prompt determines what AI does (qa / plan / act). A reply to an ask_user question is an ordinary text block on this same interface — there is no separate answer endpoint
+
+## Request
+
+```yaml
+body:
+  id: string  # session id
+  blocks:  # the user turn, in order; a reply to ask_user is just a text block
+    - type: text | image  # "text" carries text, "image" carries base64 data + mimeType
+      text?: string  # text block: the prompt text
+      data?: string  # image block: base64-encoded bytes
+      mimeType?: string  # image block: e.g. image/png
+```
+
+## Response
+
+```yaml
+status: 200
+body:
+  sessionId: string  # same session, used to pull stream
+```
+
+## Errors
+
+```yaml
+- status: 400
+  code: bad_request
+  description: blocks missing or empty
+- status: 404
+  code: not_found
+  description: session not found
+- status: 500
+  code: internal
+  description: server error
+```

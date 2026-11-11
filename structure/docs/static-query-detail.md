@@ -1,0 +1,55 @@
+# POST /static/query-detail
+
+Fetch content of a single leaf file
+
+## Request
+
+```yaml
+body:
+  projectId: string  # p_<12 hex> — whose tree to read
+  type: how-to | development | contract | docs | humanwrite | skill | blueprint  # leaf file type
+  id: string  # relative path inside that project (directory entry from static-query), e.g. "structure/contracts/ai-ask.yaml"
+```
+
+## Response
+
+```yaml
+status: 200
+body:
+  type: how-to | development | contract | docs | humanwrite | skill | blueprint  # echoed request type
+  id: string  # echoed request id
+
+  how-to?: string  # when type=how-to, raw file text (prose markdown / config yaml)
+
+  development?: string  # when type=development, raw markdown text
+
+  contract?:  # when type=contract, parsed contract file
+    id: string
+    description: string
+    request: object
+    response: object
+    error: object
+
+  docs?: string  # when type=docs, raw markdown text
+
+  humanwrite?: string  # when type=humanwrite, raw markdown text
+
+  skill?: string  # when type=skill, raw markdown text (frontmatter + body)
+
+
+  blueprint?: string  # when type=blueprint, raw file text — index.html (the UI) or README.md (the agent's opening context)
+```
+
+## Errors
+
+```yaml
+- status: 400
+  code: bad_request
+  description: projectId missing, or invalid type or id
+- status: 404
+  code: not_found
+  description: no such project, or file not found
+- status: 500
+  code: internal
+  description: server error
+```

@@ -1,0 +1,3 @@
+id: core-docs-gen
+description: the per-interface docs are generated from structure/ into structure/docs and the generator reports what changed; README.md is never written by it but must list exactly the interfaces; a contract nothing provides, an interface without a contract, or a drifted README fails
+atoms: [ai, log, static, web]

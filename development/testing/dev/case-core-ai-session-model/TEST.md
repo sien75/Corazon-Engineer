@@ -110,7 +110,7 @@ start_ai() {
   sleep 1
   (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9070 \
     --log "$LOG" --static http://localhost:9072 \
-    --agents "$ROOTDIR/agents" >>/tmp/session-model-ai.log 2>&1 &)
+    --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >>/tmp/session-model-ai.log 2>&1 &)
   for i in $(seq 1 60); do
     curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
     sleep 1

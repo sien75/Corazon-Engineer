@@ -52,7 +52,7 @@ curl -s -o /dev/null -X POST http://localhost:9091/log/project/add \
 /tmp/engineer serve-static --log http://localhost:9091 --bind 127.0.0.1 --port 9092 >/tmp/first-title-static.log 2>&1 &
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9090 --stub \
   --log http://localhost:9091 --static http://localhost:9092 \
-  --agents "$ROOTDIR/agents" >/tmp/first-title-ai.log 2>&1 &)
+  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/first-title-ai.log 2>&1 &)
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:9090/ai/new -d 'kind: main' && break
   sleep 1

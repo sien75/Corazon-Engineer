@@ -22,7 +22,6 @@ import {
   type StoredRecord,
 } from "./recorder.ts";
 import { blueprintTitle, blueprintReadme } from "./blueprint.ts";
-import { makeWorkspaceTools } from "./workspace.ts";
 import { makeModelTool } from "./model.ts";
 import { makeUsageTool } from "./usage.ts";
 import { makeCompactTool } from "./compact.ts";
@@ -44,20 +43,6 @@ import { findBlobFile, loadImage, saveImage } from "./blobs.ts";
 import { dbg } from "./debug.ts";
 import { ensureModelsConfig, readModelsConfig } from "./models-config.ts";
 
-// The workspace tools main alone may call. Names are listed here because pi's
-// allowlist is by name, not by tool object.
-const WORKSPACE_TOOLS = [
-  "project-list",
-  "session-list",
-  "session-open",
-  "session-close",
-  "main-list",
-  "main-new",
-  "main-resume",
-  "session-new",
-  "session-delete",
-];
-
 // A provider that fails a turn is given this ladder before the conversation is
 // told: 10s, 20s, … 90s apart — nine waits, about seven and a half minutes, and
 // only then an error. Provider wobble is the common case and it passes; a user
@@ -72,6 +57,17 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 // *not* live is what keeps the agent from claiming an edit it cannot make.
 function pageLine(slug: string): string {
   return `Your page: .agents/blueprints/${slug}/ — that directory is what /agent/<sessionId>/ serves, for every agent made from this blueprint. Edit its files (index.html and anything beside it) and ask the user to reload; the change lands in this project's working tree.`;
+}
+
+// blueprintTail is the last section of a blueprint agent's system prompt: the
+// blueprint's README, then where its page lives. Built in one place because both
+// a new session and a resumed one must get the same prompt.
+function blueprintTail(slug: string, readme: string | undefined): string {
+  return (
+    `\n\n---\n\n# Your blueprint\n\n` +
+    `Two things: this blueprint's README — your opening context — and where its page lives.\n\n` +
+    `## README\n\n${readme ?? ""}\n\n## Path\n\n${pageLine(slug)}\n`
+  );
 }
 
 // A user turn as received on /ai/ask: ordered text/image blocks. Images carry
@@ -136,8 +132,8 @@ const askUserTool = defineTool({
 
 interface Sess {
   id: string;
-  // "main" is the one conversation the shell hosts (workspace tools); "sub" is
-  // everything instantiated from a blueprint (a page, ask_user, no workspace).
+  // "main" is the one conversation the shell hosts; "sub" is everything else
+  // (a blueprint's page, or a project's plain chat). Same tools; different spec.
   kind: "main" | "sub";
   agent?: AgentSession; // undefined in stub mode (no API key)
   // The image-generation model this conversation uses (undefined = none). No
@@ -184,8 +180,8 @@ export interface RegistryOptions {
   // — a session's project folder comes from log, per session.
   home: string;
   logBase: string;
-  // The two role specs, already carrying the runtime endpoints. main gets the
-  // workspace tools; sub gets its blueprint's README appended after this.
+  // The two role specs, already carrying the runtime endpoints. sub gets its
+  // blueprint's README appended after this.
   specs: { main: string; sub: string };
   forceStub?: boolean; // skip model resolution entirely (offline / tests)
 }
@@ -240,8 +236,16 @@ export class Registry {
       // Append the spec instead of overriding the system prompt: pi only emits
       // its "Available tools" list (which is where custom tools like ask_user
       // surface) when the system prompt is not fully replaced.
-      appendSystemPromptOverride: (base) =>
-        tail ? [...base, spec, tail] : [...base, spec],
+      // Every part is a section of its own, and each starts with a horizontal
+      // rule: the role spec, whatever else was appended to it, the blueprint (a
+      // sub agent's page), and the end marker — below which pi appends its own
+      // material (project context, skills), which Engineer does not own.
+      appendSystemPromptOverride: (base) => [
+        base,
+        `\n\n---\n\n${spec}`,
+        ...(tail ? [tail] : []),
+        END_OF_SPEC,
+      ],
     });
   }
 
@@ -302,7 +306,10 @@ export class Registry {
     const id = `s_${randomBytes(8).toString("hex")}`;
     const project = kind === "sub" ? await this.projectDir(projectID) : "";
     const readme = blueprint ? blueprintReadme(project, blueprint) : undefined;
-    const tail = blueprint ? `${readme ?? ""}\n\n${pageLine(blueprint)}` : undefined;
+    // Each part of a system prompt is a section, and every section starts with a
+    // horizontal rule: pi's base prompt, the role spec, its appended reference
+    // sections, then this one — the blueprint's README and where its page lives.
+    const tail = blueprint ? blueprintTail(blueprint, readme) : undefined;
     // The name the tab bar draws before a word has been said; the conversation
     // itself replaces it on its first turn (see maybeTitle).
     // A sub agent with no blueprint is the project's own chat (its home page):
@@ -445,7 +452,7 @@ export class Registry {
       } catch {
         readme = undefined; // the prototype was deleted: the page is gone too
       }
-      tail = `${readme ?? ""}\n\n${pageLine(meta.blueprint)}`;
+      tail = blueprintTail(meta.blueprint, readme);
     }
     return this.build(
       id,
@@ -612,8 +619,8 @@ export class Registry {
         model,
         // Capability surface: read/grep/find/ls + bash (execution, including
         // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
-        // is every session's custom tool; the workspace tools belong to main
-        // alone (a blueprint's page is a view, not a workspace).
+        // is every session's custom tool. main and sub get the same ones: main
+        // operates the workspace through the log / ai interfaces, via bash.
         tools: [
           "read",
           "grep",
@@ -628,7 +635,6 @@ export class Registry {
           "compact",
           "web_search",
           "image",
-          ...(kind === "main" ? WORKSPACE_TOOLS : []),
         ],
         customTools: [
           askUserTool,
@@ -637,22 +643,6 @@ export class Registry {
           compactTool,
           makeWebSearchTool(),
           imageTool,
-          ...(kind === "main"
-            ? makeWorkspaceTools({
-                logBase: this.opts.logBase,
-                defaultModel: (kind: string) =>
-                  readModelsConfig(this.opts.home)[kind === "main" ? "main" : "sub"].chat,
-                newSession: async (blueprint: string, project: string, model?: string, image?: string) =>
-                  (await this.new(blueprint, "sub", project, model ?? "", image ?? "")).id,
-                newMainSession: async () => (await this.new(undefined, "main")).id,
-                resumeSession: async (id: string) => {
-                  if (!(await this.resume(id))) {
-                    throw new Error("nothing on record to resume");
-                  }
-                },
-                deleteSession: (id: string) => this.deleteSession(id),
-              })
-            : []),
         ],
       });
       sess.agent = session;
@@ -1271,3 +1261,12 @@ function lastCompactionIndex(records: StoredRecord[]): number {
   }
   return idx;
 }
+
+// END_OF_SPEC closes the part of the system prompt Engineer writes: pi appends
+// its own material after it (a project's AGENTS.md, the skills list), and the
+// heading is what keeps the two apart.
+const END_OF_SPEC = `
+---
+
+Everything above is Engineer's. Whatever follows is added by pi itself — a project's context, the skills list — and is not part of this spec.
+`;

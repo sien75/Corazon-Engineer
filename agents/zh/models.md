@@ -7,7 +7,7 @@
 从强到弱，chat 和 image 各一条链：
 
 1. **会话自己那一行**（log 里的 `model` / `imageModel`）——`model` 工具切换的结果，或创建时传入的
-   （session-new 的 `chat` / `image`）。一个会话的选择只存在这一处：不往会话记录里写，所以重启后
+   （`/ai/new` 的 `chat` / `image`）。一个会话的选择只存在这一处：不往会话记录里写，所以重启后
    读回来只有一个答案。
 2. **`models.yaml`**——Engineer 自己的文件，每个角色（`main`、`sub`）各一个 `chat` 和一个
    `image`。自己没有选择的会话用的就是它。

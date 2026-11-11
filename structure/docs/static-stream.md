@@ -1,0 +1,91 @@
+# POST /static/stream
+
+Long-lived connection pushing schema-change events; the service watches every project on the board and emits an event whenever a content file is added, updated or removed. Each event names the project it happened in. Execution events (call / test / development) reserved.
+
+## Request
+
+```yaml
+body:
+  kinds?: string  # event kinds to subscribe (comma-separated); empty = all
+  edges?: string  # edge ids to subscribe; only for kind=how-to (reserved); empty = all
+  projectId?: string  # only this project's events; empty = every project on the board
+```
+
+## Response
+
+```yaml
+status: 200
+stream: sse  # body below is the schema of each event
+body:
+  seq: number  # event sequence
+  ts: string  # date-time
+  kind: schema | how-to | test | development  # schema implemented; others reserved
+
+  payload:
+    # kind=schema: content snapshot of the changed file, shape matches the type below
+    projectId: string  # p_<12 hex> — the project the changed file belongs to
+    op: add | update | remove
+    type: atom | edge | how-to | development | contract | docs | humanwrite
+    id: string  # changed file path, e.g. "structure/contracts/ai-ask.yaml"
+    file: string  # changed file; coincides with id
+
+    atom?:  # when type=atom
+      name: string
+      description: string
+      repo?: string
+      path?: string
+      runtime_type: string  # native | go | browser | node | bun | jre | python | dotnet | beam | ruby | php
+      runtime_version?: string
+      role?: string  # service | database | cache | queue | storage | gateway | scheduler | worker | proxy
+      interfaces:
+        provides:
+          - id: string
+            channel: network | stdio | ipc
+            protocol: string
+            contract?: string
+            extend?: object
+        consumes:
+          - id: string
+            channel: network | stdio | ipc
+            protocol: string
+            contract?: string
+            extend?: object
+
+    edge?:  # when type=edge
+      id: string
+      from: string
+      from_interface: string
+      to: string
+      to_interface: string
+      channel: network | stdio | ipc
+      protocol: string
+      description: string
+
+    how-to?: string  # when type=how-to, raw file text
+
+    development?: string  # when type=development
+
+    contract?:  # when type=contract
+      id: string
+      description: string
+      request: object
+      response: object
+      error: object
+
+    docs?: string  # when type=docs
+
+    humanwrite?: string  # when type=humanwrite
+
+    # kind=how-to | test | development (execution events, reserved): payload shape TBD when execution lands
+```
+
+## Errors
+
+```yaml
+- status: 400
+  code: bad_request
+  description: bad request
+- status: 500
+  code: internal
+  description: server error
+```

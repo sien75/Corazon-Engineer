@@ -2,14 +2,14 @@
 
 Package Corazon Engineer as a one-click tarball and install it on a fresh machine. The target needs no runtime (no Go / Bun / Node): the Go side builds to a single static binary — `engineer`, a multi-call binary carrying the launcher plus the log/static/web services — and ai to a self-contained Bun binary. Docker is optional — one-click comes from the `engineer` launcher, not a container.
 
-**What ships** — two binaries plus the published tool content (`agents/`, `docs/`). The package is the **tool**, not a project:
+**What ships** — two binaries plus the published tool content (`agents/`, `docs/` — the interface docs). The package is the **tool**, not a project:
 
 ```
 engineer-<version>-<os>-<arch>/
 ├── bin/          engineer  engineer-ai
 ├── web/          index.html  app.js  style.css  theme.css  vendor/  components/
 ├── agents/       the AI capability description shipped with the tool
-├── docs/         published documentation
+├── docs/         interface docs: README.md (overview) + one file per interface — a copy of structure/docs/
 └── install.sh    install / upgrade
 ```
 
@@ -98,10 +98,14 @@ for f in $(grep -oE '(href|src)="/[^"]+"' "$OUT/web/index.html" \
 done
 
 # 4. tool content — published parts only: agents/ (AI capability description) and
-#    structure/docs/ (lands as docs/ in the package). Everything else (schema, development, how-to, ...) is dev-time internal
-#    and never ships.
+#    structure/docs/ (lands as docs/ in the package). Everything else (schema,
+#    development, how-to, ...) is dev-time internal and never ships.
+#    The per-interface files are regenerated first; the pack FAILS if a contract and
+#    an atom disagree, or if structure/docs/README.md no longer lists exactly the
+#    interfaces (see "Interface docs" below).
 [ -d agents ] && cp -R agents "$OUT/"
-[ -d structure/docs ] && cp -R structure/docs "$OUT/docs"
+bun how-to/deploy/gen-docs.ts . structure/docs
+cp -R structure/docs "$OUT/docs"
 
 # 5. installer — copied in as a real file, never generated from this BOOK
 cp how-to/deploy/prod/install.sh "$OUT/install.sh"
@@ -114,6 +118,13 @@ rm -rf "$OUT/logs" "$OUT/run"
 tar czf "$OUT.tar.gz" -C dist "$(basename "$OUT")"
 rm -rf "$OUT"
 ```
+
+**Interface docs.** `structure/docs/` is what ships as `docs/`, and it is committed. The files in it come in two kinds:
+
+- the per-interface files (`<interface id>.md`) are **generated** from `structure/atoms` + `structure/contracts` by `how-to/deploy/gen-docs.ts` — never edit them by hand, change the contract;
+- `README.md` is the overview (how to call, common tasks, the interface list). It is **not** generated: it is kept by hand — or by the agent — as the previous README revised against what changed.
+
+Before a pack, when a contract or an atom's interfaces changed: run `bun how-to/deploy/gen-docs.ts . structure/docs`; it prints which interfaces were added / removed / changed. Revise `structure/docs/README.md` from its current text accordingly (a new interface needs a list line and, if it is a common task, a line under "Common tasks"), run it again until it exits 0, and commit the result. The pack runs the same command, so an out-of-date README stops the pack.
 
 **Cross-compiling — both platforms from one machine.** Go honors `GOOS`/`GOARCH` and Bun honors `--target`, in both directions (verified: darwin-arm64 → linux-amd64/arm64). Run the block above once per row.
 
@@ -129,11 +140,12 @@ On macOS both toolchains ad-hoc sign their output, so no separate `codesign` ste
 
 `bin/engineer` is built from `how-to/deploy/prod/launch.go` (a single-file Go program compiled at pack time) — a native binary, shipped as the package's entry point:
 
-- picks free ports (defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free one on conflict), hands each service everything it needs (`--bind <host>` + `--port <n>` for all four; `--home` for log and ai — the program's own data directory, **not** a project; `--log` for static; `--log` + `--static` + `--agents` for ai; `--assets` + `--static` / `--ai` / `--log` for web), starts log → static → ai → web as children, prints the chosen addresses plus the bind host, then **holds the foreground**. Ctrl-C tears the whole stack down. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file and no stop script**.
+- picks free ports (defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free one on conflict), hands each service everything it needs (`--bind <host>` + `--port <n>` for all four; `--home` for log and ai — the program's own data directory, **not** a project; `--log` for static; `--log` + `--static` + `--agents` + `--docs` for ai; `--assets` + `--static` / `--ai` / `--log` for web), starts log → static → ai → web as children, prints the chosen addresses plus the bind host, then **holds the foreground**. Ctrl-C tears the whole stack down. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file and no stop script**.
 
   The data home is `$ENGINEER_DATA`, default `~/.engineer/data` (beside the installed versions, never inside a project): it holds `engineer.db` (records, sessions, the project board), `uploads/` and the `run/` + `logs/` directories. The package is no longer tied to a project folder — **projects are added on the web page** (Engineer launcher, `+`) and remembered there. When the launcher starts in a folder that holds `engineer.yaml`, that folder is put on the board.
 
   **Nothing is migrated, ever — there is no migration step in the program.** A `.engineer/engineer.db` left in the folder from before the data home existed is not consulted; the data home is the only database the program reads, and a new home simply starts empty (projects are added on the page).
+- **Proxy-aware.** The launcher keeps the bypass list the user's environment set, drops a wildcard `*` from it, and always adds `localhost,127.0.0.1,::1`: the stack's own calls are loopback and must bypass a proxy (Clash and friends 502 them, which breaks history reads and record writes), while a provider reached through a gateway (zenmux) must keep it.
 - **Local by default.** The launcher binds the four services to `127.0.0.1`, so nothing about the stack is visible on the network — the ports are not reachable from another machine at all. (A service started by hand has no default at all: `--bind` is required.) `ENGINEER_BIND` overrides the bind host: `ENGINEER_BIND=0.0.0.0 engineer` opens the stack to the whole network, `ENGINEER_BIND=<this machine's IP>` to a single interface. Under a wildcard bind the launcher advertises this machine's outward IPv4 instead of `localhost` — both in what it prints and in the web UI's `/config.js` — since `localhost` would point a browser on another machine at itself.
 - also serves the `engineer` subcommands: `start` (default) / `status` / `version` / `uninstall [--purge]`, plus the internal `serve-log` / `serve-static` / `serve-web` (the multi-call trick).
 - native on purpose: the terminal's foreground process is named `engineer` (a shell script would show as `bash`/`zsh`), so terminals that title tabs from the process name — VS Code, notably — show `engineer` with no configuration.

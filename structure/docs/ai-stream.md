@@ -1,0 +1,73 @@
+# POST /ai/stream
+
+Stream AI output as native pi events; the frontend renders the subset it needs
+
+## Request
+
+```yaml
+body:
+  id: string  # session id
+  since?: number  # replay only events with seq > since; 0/omitted replays the full backlog
+```
+
+## Response
+
+```yaml
+status: 200
+stream: sse  # each event is a YAML doc; body below is the envelope schema
+# Each SSE frame also carries `id: <seq>`; a reconnecting client passes the
+# last seq it rendered as `since` to receive only what it missed.
+body:
+  seq: number  # monotonically increasing per session
+  type: string  # native pi event type, or "error" for non-pi service errors
+  # All other fields are passed through from the pi event unmodified.
+  #
+  # pi event examples:
+  #   type: message_update            # carries the nested assistant message event
+  #     assistantMessageEvent:
+  #       type: text_delta | thinking_delta | text_start | text_end
+  #             | thinking_start | thinking_end
+  #             | toolcall_start | toolcall_delta | toolcall_end
+  #             | start | done | error
+  #   type: tool_execution_start      # { toolCallId, toolName, args }
+  #   type: tool_execution_update     # { toolCallId, toolName, args, partialResult }
+  #   type: tool_execution_end        # { toolCallId, toolName, result, isError }
+  #   type: agent_start | agent_settled | turn_start | turn_end
+  #         | message_start | message_end | ...
+  #
+  # non-pi events (this service's own):
+  #   type: session_title            # the conversation was renamed from itself,
+  #                                 # on the first user turn. Sent after
+  #                                 # that turn's agent_settled — which is why the
+  #                                 # stream stays open past it — and sent even when
+  #                                 # the name did not change, so a client knows the
+  #                                 # turn is finally over.
+  #     title: string               # the new name, set on the session row by this
+  #                                 # turn. Empty ("") when the name did not change or
+  #                                 # could not be made: a client keeps the name it
+  #                                 # already shows and must not draw "" or the
+  #                                 # stored initial name over it.
+  #
+  # error event (non-pi), reuses pi's assistant-error shape:
+  #   type: error
+  #   reason: error | aborted
+  #   error: { code, message }
+  reason?: error | aborted  # when type=error
+  error?:  # when type=error
+    code: string
+    message: string
+```
+
+## Errors
+
+```yaml
+- status: 400
+  code: bad_request
+  description: bad request
+- status: 404
+  code: not_found
+  description: session not found
+- status: 500
+  code: internal
+  description: server error
+```

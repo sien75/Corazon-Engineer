@@ -1,5 +1,5 @@
 id: ai-delete
-description: Delete an agent — its live session, and the copy of its blueprint
+description: Delete an agent — its live session, its records and its session row, for good. Only a sub session, and only when the user explicitly wants it gone; never a main session (replace main instead — ai-new with kind=main, then log-session-current-put)
 
 request:
   body:

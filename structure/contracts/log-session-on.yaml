@@ -1,5 +1,5 @@
 id: log-session-on
-description: Put existing sessions back on screen — add them to the open list (the shell's tab bar) without creating anything; idempotent
+description: Put existing sessions back on screen — add them to the open list (the shell's tab bar) without creating anything; idempotent. Only a session of kind sub is a tab — a main session is not opened here, it is made current with log-session-current-put
 
 request:
   body:

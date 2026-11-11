@@ -70,7 +70,7 @@ curl -s -o /dev/null -X POST http://localhost:8991/log/project/add \
 
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 8990 --stub \
   --log http://localhost:8991 --static http://localhost:8992 \
-  --agents "$ROOTDIR/agents" \
+  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/recents-ai.log 2>&1 &)
 
 # wait for ai first: the boot below must not race it

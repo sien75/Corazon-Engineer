@@ -39,7 +39,7 @@ PROJECT=$(cat "$ROOT/.project")
 cd workspace/ai && bun install && bun run src/main.ts \
   --bind 127.0.0.1 --port 8801 --home "$HOME_DIR" \
   --log http://localhost:8800 --static http://localhost:8802 \
-  --agents ../../agents &
+  --agents ../../agents --docs "$PWD/.engineer/docs" &
 
 # wait for it before asking: the blocks below run back to back
 for i in $(seq 1 60); do

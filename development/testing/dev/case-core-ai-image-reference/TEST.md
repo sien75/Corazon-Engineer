@@ -91,7 +91,7 @@ AI=http://localhost:9130
 (cd workspace/ai && NO_PROXY='localhost,127.0.0.1' no_proxy='localhost,127.0.0.1' bun run src/main.ts \
   --home "$HOME_DIR" --bind 127.0.0.1 --port 9130 \
   --log "$LOG" --static http://localhost:9132 \
-  --agents "$ROOTDIR/agents" >/tmp/image-reference-ai.log 2>&1 &)
+  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/image-reference-ai.log 2>&1 &)
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
   sleep 1

@@ -51,7 +51,7 @@ PROJECT=$(cat "$ROOT/.project")
 (cd workspace/ai && bun install && bun run src/main.ts \
   --bind 127.0.0.1 --port 8850 --home "$HOME_DIR" --stub \
   --log http://localhost:8851 --static http://localhost:8852 \
-  --agents "$ROOTDIR/agents" \
+  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/skill-crud-ai.log 2>&1 &)
 
 AI=http://localhost:8850
@@ -175,7 +175,7 @@ pkill -f 'main.ts.*--port 8850'
 (cd workspace/ai && bun run src/main.ts \
   --bind 127.0.0.1 --port 8850 --home "$HOME_DIR" --stub \
   --log http://localhost:8851 --static http://localhost:8852 \
-  --agents "$ROOTDIR/agents" \
+  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/skill-crud-ai.log 2>&1 &)
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break

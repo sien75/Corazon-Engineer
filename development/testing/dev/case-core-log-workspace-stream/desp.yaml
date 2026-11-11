@@ -1,0 +1,3 @@
+id: core-log-workspace-stream
+description: log pushes an event on /log/workspace/stream after every write that changes the workspace (session on/off/upsert/delete, current/put, project add/remove/visible) and stays silent on reads
+atoms: [log]
