@@ -13,6 +13,8 @@
 // appends nothing to the conversation, emits no event. It is not a turn; it is a
 // name.
 
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { StoredRecord } from "./recorder.ts";
 
 // How much prose the title call is given, head and tail of the window (which is
@@ -39,13 +41,19 @@ const SUBJECT_PREFIX = /^(助手|用户|我|AI|ai|Ai|模型|assistant|Assistant|
 // asking. Hence the examples: models follow a wrong-but-concrete pattern far
 // better than they follow "be user-centric".
 export const TITLE_SYSTEM_PROMPT =
-  "你在给一 tab 起标题。标题站在用户这边，写**用户**在这段对话里做了什么：" +
-  "用动词开头的短语，不要写主语（不写「助手」「AI」「模型」「用户」「我」）。\n" +
-  "好：「查看有哪些工具」「列出蓝图」「排查登录失败」「新建页面」\n" +
-  "坏：「助手总结工具」「用户询问工具」「AI 列出蓝图」「我有哪些工具」\n" +
-  "用户是在提问，就用「询问…」「了解…」「确认…」这类动词开头。" +
-  "标题要短：中文不超过 10 个字，英文 2 到 4 个单词，用对话的主要语言。" +
-  "只输出标题本身，不要引号、不要句末标点、不要解释。";
+  "You name a tab. The title takes the user's side: it says what the USER was doing in this " +
+  "conversation, as a short phrase that starts with a verb and has no subject (never " +
+  "\"the assistant\", \"AI\", \"the model\", \"the user\", \"I\").\n" +
+  "Good: \"Check available tools\", \"List blueprints\", \"Debug login failure\", \"Create a page\"; " +
+  "\"查看有哪些工具\", \"列出蓝图\", \"排查登录失败\", \"新建页面\".\n" +
+  "Bad: \"Assistant summarizes tools\", \"User asks about tools\", \"AI lists blueprints\", " +
+  "\"助手总结工具\", \"用户询问工具\".\n" +
+  "If the user is asking a question, start with a verb such as \"Ask about…\", \"Understand…\", " +
+  "\"Confirm…\" (询问…、了解…、确认…).\n" +
+  "Write the title in the language the USER wrote in — look at the user's messages, not at " +
+  "the language of these instructions: an English conversation gets an English title, a " +
+  "Chinese one a Chinese title. Keep it short: at most 10 characters in Chinese, 2 to 4 words " +
+  "in English. Output the title only: no quotes, no trailing punctuation, no explanation.";
 
 // textOf returns the prose of one record: text blocks only. A legacy row (no raw
 // pi message) keeps its projection, which is already text-or-[image].
@@ -85,7 +93,7 @@ export function titleMaterial(
     if (r.role !== "user" && r.role !== "assistant") continue;
     const text = textOf(r).trim();
     if (!text) continue;
-    parts.push(`${r.role === "user" ? "用户" : "助手"}：${text}`);
+    parts.push(`${r.role === "user" ? "User" : "Assistant"}: ${text}`);
   }
   const joined = parts.join("\n\n");
   if (joined.length <= budget) return joined;
@@ -167,3 +175,81 @@ export const TITLE_TIMEOUT_MS = 15000;
 // too. Three attempts, a second apart: a name is worth asking twice more for.
 export const TITLE_ATTEMPTS = 3;
 export const TITLE_RETRY_DELAY_MS = 1000;
+
+// ---------- models that refuse `thinking: disabled` ----------
+//
+// The title call asks for no reasoning, and pi spells that `thinking:{type:
+// "disabled"}` on the Anthropic wire. Some models (claude-sonnet-5.5) answer 400
+// — "send between_tools instead" — so the call never produces a name. There is no
+// capability field to read this from, and new models keep appearing, so it is
+// learned: the first refusal marks the model, and from then on the title call
+// sends `between_tools` for it. Only the title call is rewritten; the
+// conversation's own requests go through pi untouched.
+
+// isThinkingRejection says whether an error text is that refusal: a 400 that talks
+// about thinking. A 400 about something else (max_tokens) or a 401 is not it, and
+// must not mark the model.
+export function isThinkingRejection(message: unknown): boolean {
+  const m = String(message ?? "");
+  return /\b400\b|invalid_params/i.test(m) && /thinking/i.test(m);
+}
+
+// rewriteThinkingPayload is the payload hook of the retry: a request that asks for
+// `thinking: disabled` is sent as `between_tools` instead. Any other payload comes
+// back as it is (same object), and the input is never mutated.
+export function rewriteThinkingPayload(payload: unknown): unknown {
+  const p = payload as { thinking?: { type?: string } } | null;
+  if (p?.thinking?.type !== "disabled") return payload;
+  return { ...p, thinking: { type: "between_tools" } };
+}
+
+// quirkKey names a model the way models.yaml does.
+export function quirkKey(model: { provider: string; id: string }): string {
+  return `${model.provider}/${model.id}`;
+}
+
+// ModelQuirks is what has been learned, kept in memory and in one small json file
+// in ai's data home (`model-quirks.json`: it is about a provider's model, not
+// about a project). A missing or unreadable file is an empty one — the worst case
+// is learning it again — and a write that fails is dropped for the same reason.
+export class ModelQuirks {
+  private known: Record<string, { thinkingDisabledRejected: true }> = {};
+
+  constructor(private readonly file: string) {
+    try {
+      const raw = JSON.parse(readFileSync(file, "utf8"));
+      if (raw && typeof raw === "object") {
+        for (const [k, v] of Object.entries(raw)) {
+          if ((v as any)?.thinkingDisabledRejected === true) this.known[k] = { thinkingDisabledRejected: true };
+        }
+      }
+    } catch {
+      this.known = {};
+    }
+  }
+
+  has(key: string): boolean {
+    return key in this.known;
+  }
+
+  add(key: string): void {
+    this.known[key] = { thinkingDisabledRejected: true };
+    this.save();
+  }
+
+  // remove is for a stale mark: the provider fixed the model, so the rewritten
+  // request fails too, and the model is probed from scratch next time.
+  remove(key: string): void {
+    delete this.known[key];
+    this.save();
+  }
+
+  private save(): void {
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      writeFileSync(this.file, JSON.stringify(this.known, null, 2) + "\n");
+    } catch {
+      // not worth failing a title over
+    }
+  }
+}

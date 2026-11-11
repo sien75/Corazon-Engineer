@@ -85,7 +85,17 @@ Expected: `sub` 是 `s_…`，`title0=Probe Page`——起点是页面的 `<titl
 
 ```bash
 cat > /tmp/session-title-unit.ts <<'TS'
-import { titleMaterial, cleanTitle } from "WORKSPACE_AI/src/title.ts";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  titleMaterial,
+  cleanTitle,
+  isThinkingRejection,
+  rewriteThinkingPayload,
+  ModelQuirks,
+  quirkKey,
+} from "WORKSPACE_AI/src/title.ts";
 
 const recs: any[] = [];
 let seq = 1;
@@ -127,6 +137,37 @@ checks.push(["cleanTitle keeps a short English title", cleanTitle("fix login flo
 // 标题站在用户这边：主语要是漏进来（"助手总结工具"），剥掉它——错的视角比钝的动词更糟。
 checks.push(["cleanTitle drops 助手 as subject", cleanTitle("助手总结工具") === "总结工具"]);
 checks.push(["cleanTitle drops 用户 as subject", cleanTitle("用户询问工具") === "询问工具"]);
+// 思考参数自适应：Sonnet 5.5 这类模型拒绝 `thinking: disabled`（400），要改发 between_tools。
+// 只有「400 且报错提到 thinking」才算这件事，别的 400（密钥、额度）不记。
+const reject =
+  '400 {"error":{"code":"400","type":"invalid_params","message":"To turn thinking off on this model, send \\"thinking\\": {\\"type\\": \\"between_tools\\"} instead of {\\"type\\": \\"disabled\\"}."}}';
+checks.push(["thinking rejection recognized", isThinkingRejection(reject)]);
+checks.push(["a key error is not a thinking rejection", !isThinkingRejection('401 {"error":{"message":"invalid api key"}}')]);
+checks.push(["a 400 without thinking is not one either", !isThinkingRejection('400 {"error":{"message":"max_tokens too large"}}')]);
+checks.push(["empty / undefined is not one", !isThinkingRejection("") && !isThinkingRejection(undefined as any)]);
+const body: any = { model: "m", max_tokens: 256, thinking: { type: "disabled" } };
+const rew: any = rewriteThinkingPayload(body);
+checks.push(["disabled becomes between_tools", rew.thinking?.type === "between_tools"]);
+checks.push(["the rest of the payload is kept", rew.model === "m" && rew.max_tokens === 256]);
+checks.push(["the input is not mutated", body.thinking.type === "disabled"]);
+const adaptive: any = { thinking: { type: "adaptive" } };
+checks.push(["a payload that is not disabled passes through", rewriteThinkingPayload(adaptive) === adaptive]);
+const noThinking: any = { model: "m" };
+checks.push(["a payload without thinking passes through", rewriteThinkingPayload(noThinking) === noThinking]);
+checks.push(["quirkKey is provider/id", quirkKey({ provider: "zenmux-claude", id: "anthropic/claude-sonnet-5.5" }) === "zenmux-claude/anthropic/claude-sonnet-5.5"]);
+const qdir = mkdtempSync(join(tmpdir(), "quirks-"));
+const qfile = join(qdir, "model-quirks.json");
+const q1 = new ModelQuirks(qfile);
+checks.push(["nothing is known at first", !q1.has("a/b")]);
+q1.add("a/b");
+checks.push(["add is visible at once", q1.has("a/b")]);
+checks.push(["add is on disk", JSON.parse(readFileSync(qfile, "utf8"))["a/b"]?.thinkingDisabledRejected === true]);
+checks.push(["a new instance (restart) reads it back", new ModelQuirks(qfile).has("a/b")]);
+q1.remove("a/b");
+checks.push(["remove clears memory and disk", !q1.has("a/b") && !new ModelQuirks(qfile).has("a/b")]);
+writeFileSync(qfile, "{ not json");
+checks.push(["a corrupt file is an empty one, not a crash", !new ModelQuirks(qfile).has("a/b")]);
+checks.push(["a missing file is an empty one", !new ModelQuirks(join(qdir, "none.json")).has("a/b")]);
 for (const [name, ok] of checks) console.log(`${ok ? "PASS" : "FAIL"} ${name}`);
 if (checks.some(([, ok]) => !ok)) process.exit(1);
 TS
@@ -182,7 +223,7 @@ echo "ok"
 
 Expected: `agent_settled` 的行号小于 `session_title` 的行号（流没在收工时关掉；一个**空闲**时
 打开的流会立刻关掉，所以这里必须像页面一样「先 ask 再开流」），
-推下来的 `title` 与随后 `title_of` 读到的一致；`title1=` 是一个概括这轮对话的短标题
+推下来的 `title` 与随后 `title_of` 读到的一致（标题没生成出来时，推下来的 `title` 为空而不是初始名 `Probe Page`，tab 因此保持原样）；`title1=` 是一个概括这轮对话的短标题
 （不是 `Probe Page`，不含换行，**中文不超过 10 个字 / 英文不超过 4 个单词**，
 **不以「助手 / AI / 模型 / 用户 / 我」开头**），脚本打印 `ok`。
 

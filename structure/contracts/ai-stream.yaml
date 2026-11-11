@@ -36,7 +36,11 @@ response:
     #                                 # stream stays open past it — and sent even when
     #                                 # the name did not change, so a client knows the
     #                                 # turn is finally over.
-    #     title: string               # the name now on the session row
+    #     title: string               # the new name, set on the session row by this
+    #                                 # turn. Empty ("") when the name did not change or
+    #                                 # could not be made: a client keeps the name it
+    #                                 # already shows and must not draw "" or the
+    #                                 # stored initial name over it.
     #
     # error event (non-pi), reuses pi's assistant-error shape:
     #   type: error

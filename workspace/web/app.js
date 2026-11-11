@@ -433,17 +433,30 @@ async function openNewTab(projectId, mode = "push", blueprint = "") {
   return tab;
 }
 
+// TEMP_TITLE_CHARS is how much of the first message a tab is named after: the
+// same length the summary title is held to, so the swap does not change the tab's
+// width much.
+const TEMP_TITLE_CHARS = 10;
+
+// tempTitle is the first message made fit for a tab: whitespace folded, the first
+// TEMP_TITLE_CHARS characters (a character, not a UTF-16 unit), no ellipsis.
+function tempTitle(text) {
+  return [...String(text ?? "").replace(/\s+/g, " ").trim()].slice(0, TEMP_TITLE_CHARS).join("");
+}
+
 // adoptSession is where a draft stops being a draft. The page made the session (it
 // is the page's own conversation, so it keeps running where it is); the tab only
 // learns what it now is — an id that log knows, and therefore a place in the open
 // list, which is what makes the conversation survive a reload.
-async function adoptSession(tab, sessionId) {
+async function adoptSession(tab, sessionId, firstText = "") {
   if (!tab || !sessionId || tab.kind !== "new") return;
   const wasActive = activeTabId === tab.id;
   tab.kind = "sub";
   tab.sessionId = sessionId;
   tab.id = sessionId;
-  if (tab.name === "new tab") tab.name = tab.blueprint || "…";
+  // A page names its tab itself (its <title>); a conversation with no page is named
+  // after what its first message says, until the turn's own summary replaces it.
+  if (tab.name === "new tab") tab.name = tab.blueprint || tempTitle(firstText) || "…";
   if (wasActive) activeTabId = sessionId;
   try {
     await logSessionOn([sessionId]);
@@ -1314,7 +1327,7 @@ function mountHomeChat(view, tab, lists) {
     lists.remove();
     view.querySelector(".home-mark")?.remove();
     view.classList.remove("view-home");
-    void adoptSession(tab, sessionId);
+    void adoptSession(tab, sessionId, String(event.detail?.firstText ?? ""));
   });
   // The first turn's summary is the tab bar's name, same as on a page.
   chat.addEventListener("engineer-title", (event) => {

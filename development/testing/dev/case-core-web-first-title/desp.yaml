@@ -1,0 +1,3 @@
+id: core-web-first-title
+description: a project's own chat (no blueprint) names its tab after the first N characters of the first question the moment the session exists, and an empty session_title never draws over that name
+atoms: [web, ai, log]

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import YAML from "yaml";
 import { Type } from "typebox";
 import {
@@ -29,6 +30,10 @@ import { makeWebSearchTool } from "./search.ts";
 import { makeImageTool } from "./images.ts";
 import {
   cleanTitle,
+  isThinkingRejection,
+  ModelQuirks,
+  quirkKey,
+  rewriteThinkingPayload,
   titleMaterial,
   TITLE_SYSTEM_PROMPT,
   TITLE_TIMEOUT_MS,
@@ -196,7 +201,13 @@ export class Registry {
   // resort when none of them is usable — never the chooser itself.
   private available: Model[] = [];
 
-  constructor(private opts: RegistryOptions) {}
+  // Models that refuse `thinking: disabled`, learned from the title call (see
+  // title.ts). Lives in the data home: it is about the model, not a project.
+  private quirks: ModelQuirks;
+
+  constructor(private opts: RegistryOptions) {
+    this.quirks = new ModelQuirks(join(opts.home, "model-quirks.json"));
+  }
 
   // init opens pi's model runtime (its catalog + auth). Which model a session
   // runs is not decided here and not by pi's settings: build() resolves it from
@@ -798,13 +809,19 @@ export class Registry {
   private maybeTitle(sess: Sess): void {
     if (!sess.titling) return;
     const turns = sess.turns;
+    let renamed = "";
     void this.generateTitle(sess, turns)
+      .then((title) => {
+        renamed = title;
+      })
       .catch((err) => dbg(sess.id, "title error", String(err)))
       .finally(() => {
         sess.titling = false;
         // Always: an unchanged name (or a failed call) still has to tell the
-        // stream — and the tab bar — that this turn is over.
-        this.append(sess, { type: "session_title", title: sess.title });
+        // stream — and the tab bar — that this turn is over. Its title is then
+        // empty: a client keeps the name it shows, and must not be handed the
+        // stored initial one ("chat") to draw over a better one.
+        this.append(sess, { type: "session_title", title: renamed });
       });
   }
 
@@ -812,20 +829,26 @@ export class Registry {
   // conversation. The call is out of band in every direction: pi's session is not
   // prompted, no record is written, no event is emitted, and the run that just
   // settled is over. Only the session row learns anything.
-  private async generateTitle(sess: Sess, turns: number): Promise<void> {
+  // It returns the new name, or "" when there is none (nothing to name, the call
+  // failed, or the name is the one already there).
+  private async generateTitle(sess: Sess, turns: number): Promise<string> {
     const model = sess.agent?.model;
-    if (!model || !this.modelRuntime) return;
+    if (!model || !this.modelRuntime) return "";
     const startedAt = Date.now();
     // This turn's records are still queued for writing; the answer to name is
     // the last row of them.
     await drainRecords();
     const material = titleMaterial(await fetchRecords(this.opts.logBase, sess.id), turns);
-    if (material.trim().length < 8) return; // nothing worth naming
+    if (material.trim().length < 8) return ""; // nothing worth naming
     // Three attempts, one deadline each: a provider that fails a small
     // completion must not cost the conversation its name. A name that never
     // comes is the old name, which is the same page it was before.
     let title = "";
+    // A model known to refuse `thinking: disabled` is asked with between_tools.
+    const quirk = quirkKey(model);
+    let rewrite = this.quirks.has(quirk);
     for (let attempt = 1; attempt <= TITLE_ATTEMPTS; attempt++) {
+      let failure = "";
       try {
         const reply = await this.modelRuntime.completeSimple(
           model,
@@ -852,26 +875,43 @@ export class Registry {
             // Bounded anyway: a provider that never answers must not hold a page
             // hostage.
             signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
+            ...(rewrite ? { onPayload: rewriteThinkingPayload } : {}),
           },
         );
+        // pi reports a refused request as a result (stopReason "error"), not as a
+        // throw.
+        if (reply?.stopReason === "error") failure = String(reply.errorMessage ?? "error");
         const text = Array.isArray(reply?.content)
           ? reply.content
               .filter((b: any) => b?.type === "text" && b.text)
               .map((b: any) => String(b.text))
               .join(" ")
           : "";
-        title = cleanTitle(text);
+        title = failure ? "" : cleanTitle(text);
         if (title) break;
-        dbg(sess.id, "title empty", `attempt ${attempt}/${TITLE_ATTEMPTS}`);
+        if (!failure) dbg(sess.id, "title empty", `attempt ${attempt}/${TITLE_ATTEMPTS}`);
       } catch (err) {
-        dbg(sess.id, "title error", `attempt ${attempt}/${TITLE_ATTEMPTS}`, String(err));
+        failure = String(err);
+      }
+      if (failure) {
+        dbg(sess.id, "title error", `attempt ${attempt}/${TITLE_ATTEMPTS}`, failure);
+        if (isThinkingRejection(failure)) {
+          // Learn it (or, if the rewritten request is refused too, unlearn it: the
+          // provider changed its mind) and go again at once — it is a different
+          // request now, not the same one failing twice.
+          if (rewrite) this.quirks.remove(quirk);
+          else this.quirks.add(quirk);
+          rewrite = !rewrite;
+          continue;
+        }
       }
       if (attempt < TITLE_ATTEMPTS) await sleep(TITLE_RETRY_DELAY_MS);
     }
-    if (!title || title === sess.title) return;
+    if (!title || title === sess.title) return "";
     await this.upsertSession({ sessionId: sess.id, kind: sess.kind, title });
     sess.title = title;
     dbg(sess.id, "title", `${Date.now() - startedAt}ms`, title);
+    return title;
   }
 
   // persistModel moves a `model` tool switch onto the session row — the single
