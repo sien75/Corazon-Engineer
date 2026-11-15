@@ -7,7 +7,7 @@
 | `README.md` | the agent's opening context (appended last to its system prompt) |
 | `index.html` | the UI's entry |
 
-Other files — css, js, images, subdirectories — are reachable by relative URL (`./my-view.css`). `/agent/<sessionId>/` serves the blueprint directory itself (the session is resolved through log): there is no per-agent copy, so an edit is every agent's page on reload, and it lands in the project's working tree.
+Other files — css, js, images, subdirectories — are reachable by relative URL (`./my-view.css`). `/agent/<sessionId>/` serves the blueprint directory itself (the session is resolved through storage): there is no per-agent copy, so an edit is every agent's page on reload, and it lands in the project's working tree.
 
 ## Page
 
@@ -44,7 +44,7 @@ an absolute path, nothing else:
 | file | what you get |
 |---|---|
 | `/theme.css` | the palette (`--surface`, `--fg`, `--accent`, …); an element you write inherits it |
-| `/config.js` | `ENGINEER` — the ES module default / named export `{ static, ai, log }` |
+| `/config.js` | `ENGINEER` — the ES module default / named export `{ storage, ai }` |
 
 **Libraries** — `/vendor/…`, ES modules
 
@@ -93,17 +93,18 @@ class MyView extends HTMLElement {
 customElements.define("my-view", MyView);
 ```
 
-#### Reading static or log
+#### Reading storage
 
-The addresses are an ES module, so they are imported and never typed into the page; the shapes of the
-services behind them are in `structure/docs/static.md` / `structure/docs/log.md`:
+The addresses are an ES module, so they are imported and never typed into the page; the services
+behind them are described in `structure/docs/README.md`, one file per interface beside it. One address
+carries both kinds of call — `/static/*` for a project's files, `/log/*` for its records:
 
 ```js
 import { ENGINEER } from "/config.js";
-const { static: STATIC, log: LOG } = ENGINEER;
+const { storage: STORAGE } = ENGINEER;
 const yaml = { "Content-Type": "application/yaml" };
-const files = await (await fetch(STATIC + "/static/query", { method: "POST", headers: yaml, body: "{}" })).text();
-const recs = await (await fetch(LOG + "/log/test/query", { method: "POST", headers: yaml, body: '{"pageNum":1}' })).text();
+const files = await (await fetch(STORAGE + "/static/query", { method: "POST", headers: yaml, body: "{}" })).text();
+const recs = await (await fetch(STORAGE + "/log/test/query", { method: "POST", headers: yaml, body: '{"pageNum":1}' })).text();
 ```
 
 #### The chat, hidden until the page asks for it

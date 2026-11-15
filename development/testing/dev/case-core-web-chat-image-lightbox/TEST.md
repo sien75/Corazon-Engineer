@@ -157,7 +157,7 @@ Bun.serve({
     if (p === "/") return new Response(page, { headers: { "Content-Type": "text/html; charset=utf-8" } });
     if (p === "/config.js") {
       return new Response(
-        `export const ENGINEER = {static:${JSON.stringify(BASE)}, ai:${JSON.stringify(BASE)}, log:${JSON.stringify(BASE)}};\nexport default ENGINEER;\n`,
+        `export const ENGINEER = {storage:${JSON.stringify(BASE)}, ai:${JSON.stringify(BASE)}};\nexport default ENGINEER;\n`,
         { headers: { "Content-Type": "application/javascript" } },
       );
     }
@@ -194,7 +194,7 @@ curl -s http://127.0.0.1:9093/config.js
 curl -s -o /dev/null -w '%{http_code} %{content_type} %{size_download}\n' http://127.0.0.1:9093/blobs/wide
 ```
 
-Expected：`export const ENGINEER = {"static":"http://127.0.0.1:9093", ...}`（三段地址都指向夹具），
+Expected：`export const ENGINEER = {"storage":"http://127.0.0.1:9093", ...}`（两段地址都指向夹具），
 blob 一行是 `200 image/png <大小>`。
 
 ## 1. 信息流里的尺寸

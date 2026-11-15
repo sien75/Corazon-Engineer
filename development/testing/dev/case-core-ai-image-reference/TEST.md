@@ -23,7 +23,7 @@
 
 Run from the project root (the directory holding `engineer.yaml`).
 
-端口块 **9130-9132**，本用例独占。`ROOT` 不设就等于把机器上所有服务一起 pkill —— 所以先断言它。
+端口块 **9130-9131**，本用例独占。`ROOT` 不设就等于把机器上所有服务一起 pkill —— 所以先断言它。
 
 ```bash
 ROOTDIR="$PWD"
@@ -31,9 +31,9 @@ ROOT="$ROOTDIR/.engineer/.image-reference"
 HOME_DIR="$ROOT/home"
 : "${ROOT:?this case must set ROOT before reclaiming}"
 
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 9130 9131 9132; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 9130 9131; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
@@ -75,7 +75,7 @@ SHA=$(shasum -a 256 "$ROOT/paste.png" | awk '{print $1}')
 echo "paste sha=$SHA"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9131 >/tmp/image-reference-log.log 2>&1 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9131 >/tmp/image-reference-log.log 2>&1 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:9131/log/project/list -d '{}' && break
   sleep 1
@@ -83,14 +83,13 @@ done
 curl -s -X POST http://localhost:9131/log/project/add -H 'Content-Type: application/yaml' \
   --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
 PROJECT=$(cat "$ROOT/.project")
-/tmp/engineer serve-static --log http://localhost:9131 --bind 127.0.0.1 --port 9132 >/tmp/image-reference-static.log 2>&1 &
 
-LOG=http://localhost:9131
+STORAGE=http://localhost:9131
 AI=http://localhost:9130
 
-(cd workspace/ai && NO_PROXY='localhost,127.0.0.1' no_proxy='localhost,127.0.0.1' bun run src/main.ts \
+(cd workspace/ai && bun run src/main.ts \
   --home "$HOME_DIR" --bind 127.0.0.1 --port 9130 \
-  --log "$LOG" --static http://localhost:9132 \
+  --storage "$STORAGE" \
   --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/image-reference-ai.log 2>&1 &)
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
@@ -98,7 +97,7 @@ for i in $(seq 1 60); do
 done
 
 sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])'; }
-msgs() { curl -s -X POST $LOG/log/session/messages -d "sessionId: $1"; }
+msgs() { curl -s -X POST $STORAGE/log/session/messages -d "sessionId: $1"; }
 # askWithImage <sessionId> <text> <imageFile>
 askWithImage() {
   python3 - "$1" "$2" "$3" > /tmp/image-reference-ask.json <<'PY'
@@ -160,9 +159,8 @@ Expected: 正文出现 `from 1 reference image(s)`；`details.references` 里一
 ## Teardown
 
 ```bash
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-pkill -f "serve-static --log http://localhost:9131" 2>/dev/null || true
 rm -rf "$ROOT"
 ```
 

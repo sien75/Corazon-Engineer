@@ -3,11 +3,11 @@
 The web service is the frontend's file server **and the one door a folder comes in
 by**. It serves the app itself (`index.html`, `app.js`, …) from `--assets`, and
 `/agent/<sessionId>/` from the blueprint directory of the project that session
-belongs to — the session is resolved to its project and slug through log, and the
-project to a folder through log — so the URL carries the conversation while the
+belongs to — the session is resolved to its project and slug through storage, and
+the project to a folder through the same store — so the URL carries the conversation while the
 page is shared by every agent of that blueprint. It has no project root of its own
 any more: `POST /project/add` is where a folder becomes a project (it checks for
-`engineer.yaml` and hands it to log).
+`engineer.yaml` and hands it to storage).
 It also generates `/config.js` with the addresses the launcher chose. This case covers it from the
 user's point of view — the browser gets the app, the pages get their files, and
 the app gets working addresses to call.
@@ -39,7 +39,7 @@ printf '<!doctype html>\n<html><head><title>Demo</title></head><body>demo</body>
   > "$SCRATCH/.agents/blueprints/demo/index.html"
 printf '# demo\n' > "$SCRATCH/.agents/blueprints/demo/README.md"
 
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8961 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8961 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8961/log/project/list -d '{}' && break
   sleep 1
@@ -57,7 +57,7 @@ curl -s -o /dev/null -X POST http://localhost:8961/log/session/upsert \
 
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8960 \
   --assets "$(cd workspace/web && pwd)" \
-  --static http://localhost:8962 --ai http://localhost:8963 --log http://localhost:8961 &
+  --storage http://localhost:8961 --ai http://localhost:8963 &
 ```
 
 Expected on startup: a log line `engineer web: http://localhost:8960`.
@@ -94,11 +94,11 @@ curl -s http://localhost:8960/config.js
 Expected: `200 text/javascript; charset=utf-8`, body exactly
 
 ```js
-export const ENGINEER = {"static":"http://localhost:8962","ai":"http://localhost:8963","log":"http://localhost:8961"};
+export const ENGINEER = {"storage":"http://localhost:8961","ai":"http://localhost:8963"};
 export default ENGINEER;
 ```
 
-i.e. the three `--static` / `--ai` / `--log` values, in that key order, exported as
+i.e. the two `--storage` / `--ai` values, in that key order, exported as
 an ES module (nothing is written to `window`). The frontend and every blueprint page
 get them with `import { ENGINEER } from "/config.js"`, which is also the check that
 the file is a module and not a classic script: a `<script src="/config.js">` would

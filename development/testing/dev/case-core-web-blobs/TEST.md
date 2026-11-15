@@ -5,13 +5,15 @@
 
 ## Setup
 
-按 dev BOOK 启动 8500（web）/ 8501（ai）。清除 http_proxy / https_proxy，NO_PROXY 与 no_proxy 为 `*`。
+按 dev BOOK 启动 8500（web）/ 8501（ai）。
 
 数据家里取一个已存的 blob：
 
 ```bash
-: "${HOME_DIR:?}"
-SHA=$(ls "$HOME_DIR/.engineer/uploads" | head -1 | sed 's/\..*$//')
+# 数据家在 dev BOOK 里是 <checkout>/.engineer/home（$ENGINEER_DATA 可覆盖）；
+# 图片落在 <data home>/.engineer/uploads，文件名就是内容地址。
+HOME_DIR=${ENGINEER_DATA:-$PWD/.engineer/home}
+SHA=$(ls "$HOME_DIR/.engineer/uploads" 2>/dev/null | head -1 | sed 's/\..*$//')
 : "${SHA:?数据家里没有 blob，先让一次生图或粘贴图跑一遍}"
 ```
 

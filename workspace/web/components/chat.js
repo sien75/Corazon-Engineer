@@ -123,7 +123,8 @@ class EngineerChat extends HTMLElement {
 // until the first message creates the session.
 function wire(host, root, id, RT, project = "", blueprint = "") {
   const AI = RT.ai;
-  const LOG = RT.log;
+  // One address carries both prefixes: /log/* for the records, /static/* for files.
+  const STORAGE = RT.storage;
 
   const scrollEl = root.querySelector(".scroll");
   const messagesEl = root.querySelector(".ai-messages");
@@ -1299,7 +1300,7 @@ function wire(host, root, id, RT, project = "", blueprint = "") {
   // 历史只读 log：ai 不在的时候，记录照样该看得到（resume 是起手那边的事）。
   async function replayHistory() {
     try {
-      const res = await fetch(`${LOG}/log/session/messages`, {
+      const res = await fetch(`${STORAGE}/log/session/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/yaml" },
         body: yaml.dump({ sessionId: id }),

@@ -24,7 +24,7 @@
 - **sub**: 某个项目里的会话. 要么是普通聊天 (无 blueprint), 要么从某个 blueprint 创建, 以该 blueprint 的页面呈现.
 - **开着 (open)**: 开着的 session 占一个 tab, 一个 tab 只装一个 session. 关闭 session 不会删除对话.
 - **draft**: 用户打开了、但还没发过消息的 tab. 它没有 session, 也没有 log 记录, 开着的列表里看不到. 发出第一条消息才建出 session.
-- **状态**存在 log 里: `projects` 和 `sessions` (kind, 项目, blueprint, 名字, 是否开着及顺序, 是否是 main). 通过接口读, 不要猜.
+- **状态**存在 storage 里: `projects` 和 `sessions` (kind, 项目, blueprint, 名字, 是否开着及顺序, 是否是 main). 通过接口读, 不要猜.
 
 ## 工具
 
@@ -34,7 +34,7 @@
 
 ### 操作工作区
 
-项目, 会话, 哪些会话开着, 哪个是 main — 都通过在 `bash` 里 `curl` 调 log 和 ai 的 HTTP 接口来改. 没有对应的工具.
+项目, 会话, 哪些会话开着, 哪个是 main — 都通过在 `bash` 里 `curl` 调 storage 和 ai 的 HTTP 接口来改. 没有对应的工具.
 
 - 第一次调用前, 先读 **Interface docs position** 那段给出的目录下的 `README.md`.
 - 找到和用户要求匹配的场景, 照它的步骤做. 不要自己拼调用.

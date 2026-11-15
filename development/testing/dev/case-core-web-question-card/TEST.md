@@ -91,7 +91,7 @@ Bun.serve({
     if (p === "/config.js") {
       const base = "http://127.0.0.1:9074";
       return new Response(
-        `export const ENGINEER = {static:${JSON.stringify(base)}, ai:${JSON.stringify(base)}, log:${JSON.stringify(base)}};\nexport default ENGINEER;\n`,
+        `export const ENGINEER = {storage:${JSON.stringify(base)}, ai:${JSON.stringify(base)}};\nexport default ENGINEER;\n`,
         { headers: { "Content-Type": "application/javascript" } },
       );
     }
@@ -121,7 +121,7 @@ done
 curl -s http://127.0.0.1:9074/config.js
 ```
 
-Expected：`export const ENGINEER = {"static":"http://127.0.0.1:9074", ...}`（三段地址都指向夹具）。
+Expected：`export const ENGINEER = {"storage":"http://127.0.0.1:9074", ...}`（两段地址都指向夹具）。
 
 ## 1. 打开页面：两张卡回来，有内边距，不能点
 

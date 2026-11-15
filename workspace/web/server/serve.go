@@ -10,20 +10,20 @@
 // which whitelists process execution sees as few distinct paths as possible.
 // Serve is the entry point behind the `serve-web` subcommand:
 //
-//	engineer serve-web --bind <host> --port <n> --assets <dir> --static <url> --ai <url> --log <url>
+//	engineer serve-web --bind <host> --port <n> --assets <dir> --storage <url> --ai <url>
 //
 // Every flag is required and there is no fallback. The launcher owns the bind
 // host (loopback unless ENGINEER_BIND opened the stack up), the port and the
-// three runtime addresses; the frontend only ever reaches a service through the
+// two runtime addresses; the frontend only ever reaches a service through the
 // URLs served back as /config.js, so an invented default would point the page
 // at a port nobody chose.
 //
 // --assets is the directory holding the frontend files (index.html, app.js,
 // style.css). There is no project flag: which folders the program works on is
-// data in log's home database, and a page is found through it.
+// data in storage's home database, and a page is found through it.
 //
 // /agent/<sessionId>/ serves the blueprint directory of the project that session
-// belongs to (log knows the session's project and blueprint; log's project row
+// belongs to (storage knows the session's project and blueprint; its project row
 // knows the folder) — or, when the slug is one the tool ships (an asset directory
 // under --assets, e.g. `pure-chat`), that page, with the project not consulted at
 // all. A page is not copied per agent, so every agent of one blueprint shares
@@ -35,7 +35,7 @@
 //
 // /project/add is the one place a folder is admitted as a project: this service
 // is what reads the disk, so the rule ("an engineer project has an
-// engineer.yaml") lives here, in front of log's registry.
+// engineer.yaml") lives here, in front of storage's registry.
 //
 // `/agent/<sessionId>` with no trailing slash names a session, not a directory:
 // a page is only ever addressed with the slash the iframe uses, and the
@@ -72,16 +72,15 @@ var types = map[string]string{
 	".svg":  "image/svg+xml",
 }
 
-// Field order matches what serve.js emitted (JSON.stringify of an object built
-// as static, ai, log).
+// The two addresses a page can call. storage carries both prefixes — /log/* for
+// records and /static/* for a project's files — so there is one address, not two.
 type runtimeConfig struct {
-	Static string `json:"static"`
-	AI     string `json:"ai"`
-	Log    string `json:"log"`
+	Storage string `json:"storage"`
+	AI      string `json:"ai"`
 }
 
 const usage = "usage: engineer serve-web --bind <host> --port <n> --assets <dir> " +
-	"--static <url> --ai <url> --log <url>"
+	"--storage <url> --ai <url>"
 
 // agentPrefix is the URL prefix pages are served under: /agent/<sessionId>/…
 const agentPrefix = "/agent/"
@@ -128,19 +127,16 @@ func Serve(argv []string) {
 		case argv[i] == "--assets" && i+1 < len(argv):
 			i++
 			root = argv[i]
-		case argv[i] == "--static" && i+1 < len(argv):
+		case argv[i] == "--storage" && i+1 < len(argv):
 			i++
-			rt.Static = argv[i]
+			rt.Storage = argv[i]
 		case argv[i] == "--ai" && i+1 < len(argv):
 			i++
 			rt.AI = argv[i]
-		case argv[i] == "--log" && i+1 < len(argv):
-			i++
-			rt.Log = argv[i]
 		}
 	}
 
-	if bind == "" || port == 0 || root == "" || rt.Static == "" || rt.AI == "" || rt.Log == "" {
+	if bind == "" || port == 0 || root == "" || rt.Storage == "" || rt.AI == "" {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
@@ -181,7 +177,7 @@ func displayHost(bind string) string {
 // conversation removes its log row, and the page must stop being served without
 // waiting for the process to restart.
 type sessionPages struct {
-	logBase string
+	storageBase string
 	mu      sync.Mutex
 	seen    map[string]cachedPage
 }
@@ -225,7 +221,7 @@ func (p *sessionPages) pageFor(sessionID string) (page, error) {
 	if err != nil {
 		return page{}, err
 	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(p.logBase, "/")+"/log/session/detail",
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(p.storageBase, "/")+"/log/session/detail",
 		bytes.NewReader(body))
 	if err != nil {
 		return page{}, err
@@ -241,7 +237,7 @@ func (p *sessionPages) pageFor(sessionID string) (page, error) {
 		return page{}, nil // no such session: not a page
 	}
 	if res.StatusCode != http.StatusOK {
-		return page{}, fmt.Errorf("log /log/session/detail → HTTP %d", res.StatusCode)
+		return page{}, fmt.Errorf("storage /log/session/detail → HTTP %d", res.StatusCode)
 	}
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
@@ -249,7 +245,7 @@ func (p *sessionPages) pageFor(sessionID string) (page, error) {
 	}
 	var meta sessionMeta
 	if err := yaml.Unmarshal(raw, &meta); err != nil {
-		return page{}, fmt.Errorf("log /log/session/detail: %v", err)
+		return page{}, fmt.Errorf("storage /log/session/detail: %v", err)
 	}
 	out := page{
 		projectID: strings.TrimSpace(meta.ProjectID),
@@ -271,7 +267,7 @@ func (p *sessionPages) pageFor(sessionID string) (page, error) {
 // home database, so this server has no project directory of its own; the folder
 // is remembered briefly, like a session's page.
 type projectPaths struct {
-	logBase string
+	storageBase string
 	mu      sync.Mutex
 	seen    map[string]projectPath
 }
@@ -294,7 +290,7 @@ func (p *projectPaths) dir(projectID string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(p.logBase, "/")+"/log/project/get",
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(p.storageBase, "/")+"/log/project/get",
 		bytes.NewReader(body))
 	if err != nil {
 		return "", false, err
@@ -310,7 +306,7 @@ func (p *projectPaths) dir(projectID string) (string, bool, error) {
 		return "", false, nil
 	}
 	if res.StatusCode != http.StatusOK {
-		return "", false, fmt.Errorf("log /log/project/get → HTTP %d", res.StatusCode)
+		return "", false, fmt.Errorf("storage /log/project/get → HTTP %d", res.StatusCode)
 	}
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
@@ -320,7 +316,7 @@ func (p *projectPaths) dir(projectID string) (string, bool, error) {
 		Path string `yaml:"path"`
 	}
 	if err := yaml.Unmarshal(raw, &row); err != nil {
-		return "", false, fmt.Errorf("log /log/project/get: %v", err)
+		return "", false, fmt.Errorf("storage /log/project/get: %v", err)
 	}
 	dir := strings.TrimSpace(row.Path)
 	if dir == "" {
@@ -334,8 +330,8 @@ func (p *projectPaths) dir(projectID string) (string, bool, error) {
 
 func handler(assets string, rt runtimeConfig) http.Handler {
 	index := filepath.Join(assets, "index.html")
-	pages := &sessionPages{logBase: rt.Log, seen: map[string]cachedPage{}}
-	projects := &projectPaths{logBase: rt.Log, seen: map[string]projectPath{}}
+	pages := &sessionPages{storageBase: rt.Storage, seen: map[string]cachedPage{}}
+	projects := &projectPaths{storageBase: rt.Storage, seen: map[string]projectPath{}}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// This is a local tool: its files change when the tool or a project does,
@@ -381,7 +377,7 @@ func handler(assets string, rt runtimeConfig) http.Handler {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			handleProjectAdd(w, r, rt.Log)
+			handleProjectAdd(w, r, rt.Storage)
 			return
 		}
 
@@ -554,7 +550,7 @@ func contentType(file string) string {
 // so re-adding a folder brings its conversations back instead of starting a
 // second, empty project beside them.
 
-func handleProjectAdd(w http.ResponseWriter, r *http.Request, logBase string) {
+func handleProjectAdd(w http.ResponseWriter, r *http.Request, storageBase string) {
 	var req struct {
 		Path string `yaml:"path"`
 	}
@@ -609,7 +605,7 @@ func handleProjectAdd(w http.ResponseWriter, r *http.Request, logBase string) {
 		writeErrYAML(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	req2, err := http.NewRequest(http.MethodPost, strings.TrimRight(logBase, "/")+"/log/project/add",
+	req2, err := http.NewRequest(http.MethodPost, strings.TrimRight(storageBase, "/")+"/log/project/add",
 		bytes.NewReader(post))
 	if err != nil {
 		writeErrYAML(w, http.StatusInternalServerError, "internal", err.Error())

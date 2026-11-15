@@ -7,7 +7,7 @@
 | `README.md` | agent 的开场上下文（追加在 system prompt 最后） |
 | `index.html` | UI 入口 |
 
-其余文件 —— css、js、图片、子目录 —— 用相对路径引用（`./my-view.css`）。`/agent/<sessionId>/` 服务的就是 blueprint 目录本身（session 经 log 解析）：没有按 agent 复制的副本，所以改一处就是所有实例刷新后的页面，并且落在项目工作区里。
+其余文件 —— css、js、图片、子目录 —— 用相对路径引用（`./my-view.css`）。`/agent/<sessionId>/` 服务的就是 blueprint 目录本身（session 经 storage 解析）：没有按 agent 复制的副本，所以改一处就是所有实例刷新后的页面，并且落在项目工作区里。
 
 ## 页面
 
@@ -39,7 +39,7 @@
 | 文件 | 拿到什么 |
 |---|---|
 | `/theme.css` | 调色板（`--surface`、`--fg`、`--accent` …）；你写的元素继承它 |
-| `/config.js` | `ENGINEER` —— ES module 的 default / 具名导出 `{ static, ai, log }` |
+| `/config.js` | `ENGINEER` —— ES module 的 default / 具名导出 `{ storage, ai }` |
 
 **库** —— `/vendor/…`，ES module
 
@@ -84,16 +84,16 @@ class MyView extends HTMLElement {
 customElements.define("my-view", MyView);
 ```
 
-#### 连 static 或 log
+#### 连 storage
 
-地址是个 ES module，用 import 拿，不要写进页面；后面服务的形状在 `structure/docs/static.md` / `structure/docs/log.md`：
+地址是个 ES module，用 import 拿，不要写进页面；服务本身写在 `structure/docs/README.md` 里，每个接口一个文件在它旁边。一个地址带两类调用 —— `/static/*` 读项目的文件，`/log/*` 读写它的记录：
 
 ```js
 import { ENGINEER } from "/config.js";
-const { static: STATIC, log: LOG } = ENGINEER;
+const { storage: STORAGE } = ENGINEER;
 const yaml = { "Content-Type": "application/yaml" };
-const files = await (await fetch(STATIC + "/static/query", { method: "POST", headers: yaml, body: "{}" })).text();
-const recs = await (await fetch(LOG + "/log/test/query", { method: "POST", headers: yaml, body: '{"pageNum":1}' })).text();
+const files = await (await fetch(STORAGE + "/static/query", { method: "POST", headers: yaml, body: "{}" })).text();
+const recs = await (await fetch(STORAGE + "/log/test/query", { method: "POST", headers: yaml, body: '{"pageNum":1}' })).text();
 ```
 
 #### 把 chat 藏起来，需要时再露出来

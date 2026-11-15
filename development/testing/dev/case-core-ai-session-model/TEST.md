@@ -35,13 +35,13 @@ thinking 档位不在这个用例里：没有任何一层配置它，`model` 工
 ```bash
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.session-model"
-# log's database and the project board live in the engineer home.
+# storage's database and the project board live in the engineer home.
 HOME_DIR="$ROOT/home"
 
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 9070 9071 9072; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 9070 9071; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
@@ -91,7 +91,7 @@ sub:
 EOF
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9071 >/tmp/session-model-log.log 2>&1 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9071 >/tmp/session-model-log.log 2>&1 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:9071/log/project/list -d '{}' && break
   sleep 1
@@ -99,9 +99,8 @@ done
 curl -s -X POST http://localhost:9071/log/project/add -H 'Content-Type: application/yaml' \
   --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
 PROJECT=$(cat "$ROOT/.project")
-/tmp/engineer serve-static --log http://localhost:9071 --bind 127.0.0.1 --port 9072 >/tmp/session-model-static.log 2>&1 &
 
-LOG=http://localhost:9071
+STORAGE=http://localhost:9071
 AI=http://localhost:9070
 
 # start_ai: (re)starts the ai service against the same home, and waits for it.
@@ -109,7 +108,7 @@ start_ai() {
   pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
   sleep 1
   (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9070 \
-    --log "$LOG" --static http://localhost:9072 \
+    --storage "$STORAGE" \
     --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >>/tmp/session-model-ai.log 2>&1 &)
   for i in $(seq 1 60); do
     curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
@@ -127,7 +126,7 @@ PY
   curl -s -N -X POST $AI/ai/stream -d "id: $1" >/tmp/session-model-stream.txt
 }
 sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])'; }
-detail() { curl -s -X POST $LOG/log/session/detail -d "sessionId: $1"; }
+detail() { curl -s -X POST $STORAGE/log/session/detail -d "sessionId: $1"; }
 # new_with writes a JSON body: ai speaks YAML, so several fields need one document,
 # not curl's `-d` (which joins them with `&`, and YAML rejects that).
 new_with() {
@@ -184,7 +183,7 @@ Expected: 未知 chat 是 `400`（pi 用不了的名字在这里就被挡下，�
 
 ```bash
 ask $SUB "用 model 工具把本会话切到 ${MODEL_B}，然后把工具回复原样念一遍。不要用 bash 或 curl，不要问我任何问题。"
-echo "model records: $(curl -s -X POST $LOG/log/session/messages -d "sessionId: $SUB" | grep -c 'role: model')"
+echo "model records: $(curl -s -X POST $STORAGE/log/session/messages -d "sessionId: $SUB" | grep -c 'role: model')"
 detail $SUB
 ```
 
@@ -200,7 +199,7 @@ SUB_IMG=$(new_with probe "$PROJECT" "" "$IMAGE_A" | sid)
 echo "sub_img=$SUB_IMG"
 detail $SUB_IMG
 ask $SUB_IMG "用 model 工具，slot 用 image，把本会话的 image 模型设为 ${IMAGE_B}。不要用 bash 或 curl，不要问我任何问题。"
-echo "model records: $(curl -s -X POST $LOG/log/session/messages -d "sessionId: $SUB_IMG" | grep -c 'role: model')"
+echo "model records: $(curl -s -X POST $STORAGE/log/session/messages -d "sessionId: $SUB_IMG" | grep -c 'role: model')"
 detail $SUB_IMG
 ```
 
@@ -304,8 +303,7 @@ Expected: `comments before` / `comments after` 都大于 0（`edit` 是定点修
 ## Teardown
 
 ```bash
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-pkill -f "serve-static --log $LOG" 2>/dev/null || true
 rm -rf "$ROOT"
 ```

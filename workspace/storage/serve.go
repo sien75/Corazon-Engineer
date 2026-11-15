@@ -1,12 +1,23 @@
-// Package log is the log service: the sqlite-backed record store (call /
-// observe / conversation) behind the log HTTP API.
+// Package storage is the storage service: the engineer home's sqlite state —
+// records (call / observe / conversation), projects, sessions and the open
+// workspace — together with the read-only views of those projects' file trees
+// (atoms / edges / contracts and the prose content beside them).
+//
+// One service, one process, one database. The two halves were separate services
+// (log and static), and static had to ask log over HTTP for the folder every
+// request meant, with a cache in front to keep a page load from costing a lookup
+// per file. The project board is a table; reading it is a query.
+//
+// The wire is unchanged: the routes are still /log/* and /static/*, because each
+// path names the thing it acts on — records, or a project's files — and nothing
+// downstream has to learn a new name.
 //
 // It is not a program of its own. The engineer binary is a multi-call binary —
 // one executable that the launcher also runs as each service, so that a machine
 // which whitelists process execution sees as few distinct paths as possible.
-// Serve is the entry point behind the `serve-log` subcommand:
+// Serve is the entry point behind the `serve-storage` subcommand:
 //
-//	engineer serve-log --bind <host> --port <n> --home <data dir>
+//	engineer serve-storage --bind <host> --port <n> --home <data dir>
 //
 // Every flag is required and there is no fallback. A leaf service does not get
 // to guess its own address or where its data lives: the launcher owns both
@@ -16,7 +27,7 @@
 // The root is the engineer home, not a project: sessions of every project, the
 // project board and the workspace row live in one database, because the program
 // runs anywhere and the projects it serves are data it remembers.
-package log
+package storage
 
 import (
 	"flag"
@@ -25,16 +36,16 @@ import (
 	"os"
 	"strconv"
 
-	"engineer/log/internal/server"
-	"engineer/log/internal/store"
+	"engineer/storage/internal/server"
+	"engineer/storage/internal/store"
 )
 
-const usage = "usage: engineer serve-log --bind <host> --port <n> --home <data dir>"
+const usage = "usage: engineer serve-storage --bind <host> --port <n> --home <data dir>"
 
-// Serve runs the log service until it is killed. argv is the argument list
+// Serve runs the storage service until it is killed. argv is the argument list
 // following the subcommand; on failure it prints to stderr and exits.
 func Serve(argv []string) {
-	fs := flag.NewFlagSet("serve-log", flag.ExitOnError)
+	fs := flag.NewFlagSet("serve-storage", flag.ExitOnError)
 	bind := fs.String("bind", "", "listen host — required")
 	port := fs.Int("port", 0, "listen port — required")
 	home := fs.String("home", "", "engineer home directory (data, not a project) — required")
@@ -54,7 +65,7 @@ func Serve(argv []string) {
 
 	addr := net.JoinHostPort(*bind, strconv.Itoa(*port))
 	srv := server.New(st)
-	fmt.Printf("engineer log: storing in %s/engineer.db, serving on %s\n", *home, addr)
+	fmt.Printf("engineer storage: storing in %s/engineer.db, serving records and project files on %s\n", *home, addr)
 	if err := srv.Listen(addr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

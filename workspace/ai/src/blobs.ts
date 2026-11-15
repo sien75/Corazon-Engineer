@@ -4,7 +4,7 @@ import path from "node:path";
 
 // Images live as raw bytes under <root>/.engineer/uploads, named by content hash
 // so identical uploads dedupe to one file. Only the hash + mime + size travel
-// through the log; base64 is materialized on demand when feeding pi.
+// through storage; base64 is materialized on demand when feeding pi.
 
 const EXT: Record<string, string> = {
   "image/png": "png",

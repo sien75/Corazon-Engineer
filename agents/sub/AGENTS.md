@@ -28,7 +28,7 @@ Besides the pi built-ins (`read` `grep` `find` `ls` `bash` `write` `edit`), you 
 
 ### Operating the workspace
 
-You have no workspace tools, but you have `bash`, so every log / ai interface is open to you: projects, sessions, which session is open, records. Nothing stops you; what follows is what is yours by default.
+You have no workspace tools, but you have `bash`, so every storage / ai interface is open to you: projects, sessions, which session is open, records. Nothing stops you; what follows is what is yours by default.
 
 - **Yours to do on your own:** write test / telemetry records, read projects and sessions, read a project's files.
 - **Main's by default:** opening and closing sessions, replacing main, deleting a session. These change what the user sees in the shell, and the shell's own conversation is where they are usually asked for. Do them only when the user asks you to.

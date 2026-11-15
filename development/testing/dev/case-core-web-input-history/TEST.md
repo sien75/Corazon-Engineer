@@ -1,10 +1,4 @@
 # Test: core-web-input-history
-> ⚠️ 这个用例的 launcher 交互写的是旧外壳（`#newtab` / `data-action=newchat` / `#ai-input-field` 直接挂在
-> document 上）。P1/P2 只改了它的启动参数（`--home` / 项目注册），断言部分**尚未**跟上当前外壳
-> （composer 在 `<engineer-chat>` 的 shadow DOM 里，`+` 开的是 Engineer launcher）。重写属于另一件事，
-> 记在 `development/iterations/2610-50-多项目工作区.md` 的已知缺口里。
-
-
 The chat composer behaves like a CLI prompt line: ArrowUp walks back through the
 conversation's prompts (newest first), and ArrowDown walks forward again, giving
 the unsent draft back at the end. The list belongs to the *conversation*, not to
@@ -32,20 +26,20 @@ rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: input-history-test\n' > "$ROOT/engineer.yaml"
 
 # Guard first: with an empty $HOME_DIR the pattern below degrades to
-# "serve-log --home " and kills every service on the machine —
+# "serve-storage --home " and kills every service on the machine —
 # including the one running the agent. Fail loudly instead.
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 # Reclaim a previous run of this case. A leftover service keeps serving its
 # old database (or silently stops this run's from binding, so the frontend
 # talks to the other case's services) — and the failure that causes looks
 # like a wrong answer, not a dead service. This happens before, not after.
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 8930 8931 8932 8933; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 8930 8932 8933; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8930 >/tmp/input-history-log.log 2>&1 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8930 >/tmp/input-history-log.log 2>&1 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8930/log/project/list -d '{}' && break
   sleep 1
@@ -53,10 +47,9 @@ done
 curl -s -o /dev/null -X POST http://localhost:8930/log/project/add \
   -H 'Content-Type: application/yaml' --data-binary "path: $ROOT"
 # its own static: the launcher reads the project's tree through it, by projectId
-/tmp/engineer serve-static --log http://localhost:8930 --bind 127.0.0.1 --port 8931 >/tmp/input-history-static.log 2>&1 &
 
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 8932 --stub \
-  --log http://localhost:8930 --static http://localhost:8931 \
+  --storage http://localhost:8930 \
   --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/input-history-ai.log 2>&1 &)
 sleep 2
 # wait for ai: the first /ai/new must not race the boot
@@ -66,7 +59,7 @@ for i in $(seq 1 60); do
 done
 
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8933 --assets "$ROOTDIR/workspace/web" \
-  --static http://localhost:8931 --ai http://localhost:8932 --log http://localhost:8930 \
+  --storage http://localhost:8930 --ai http://localhost:8932 \
   >/tmp/input-history-web.log 2>&1 &
 ```
 
@@ -84,31 +77,55 @@ const checks = [];
 const check = (name, pass, info) => checks.push({ name, pass: !!pass, ...(info ? { info } : {}) });
 
 const path = () => page.evaluate(() => location.pathname);
-const field = () => page.evaluate(() => {
-  const el = document.getElementById("ai-input-field");
-  return { value: el.value, start: el.selectionStart, end: el.selectionEnd };
-});
-const up = () => page.press("#ai-input-field", "ArrowUp");
-const down = () => page.press("#ai-input-field", "ArrowDown");
+// 输入框在可见 tab 的 <engineer-chat> 的 shadow root 里，读与按键都要穿过它。
+const FIND = `(() => { const h = document.querySelector("#panes .view:not([hidden])");
+  return h && h.tagName === "ENGINEER-CHAT" && h.shadowRoot && h.shadowRoot.querySelector(".ai-input-field"); })()`;
+const field = () =>
+  page.evaluate((f) => {
+    const el = eval(f);
+    return el ? { value: el.value, start: el.selectionStart, end: el.selectionEnd } : { value: null };
+  }, FIND);
+const fill = (text) =>
+  page.evaluate(([t, f]) => {
+    const el = eval(f);
+    el.focus();
+    el.value = t;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }, [text, FIND]);
+const key = (k) =>
+  page.evaluate(([k, f]) => {
+    const el = eval(f);
+    el.focus();
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  }, [k, FIND]);
+const up = () => key("ArrowUp");
+const down = () => key("ArrowDown");
+const enter = () =>
+  page.evaluate((f) => {
+    const el = eval(f);
+    el.focus();
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  }, FIND);
 // The replay is what seeds the list, so nothing may be pressed before it landed.
+const MESSAGES = `(() => { const h = document.querySelector("#panes .view:not([hidden])");
+  return h && h.shadowRoot && h.shadowRoot.querySelector(".ai-messages"); })()`;
+const messagesText = () => page.evaluate((f) => (eval(f)?.textContent || ""), MESSAGES);
 const replayed = (text) =>
   page.waitForFunction(
-    (t) => (document.querySelector("#ai-messages")?.textContent || "").includes(t),
+    (t) => (eval(`(() => { const h = document.querySelector("#panes .view:not([hidden])"); return h && h.shadowRoot && h.shadowRoot.querySelector(".ai-messages"); })()`)?.textContent || "").includes(t),
     text, { timeout: 15_000 });
 // The stub answers with "<prompt>" echoed, so n "dev stub" strings mean n runs.
 const settled = (n) =>
   page.waitForFunction(
-    (c) => ((document.getElementById("ai-messages")?.textContent || "").match(/dev stub/g) || []).length >= c,
+    (c) => ((eval(`(() => { const h = document.querySelector("#panes .view:not([hidden])"); return h && h.shadowRoot && h.shadowRoot.querySelector(".ai-messages"); })()`)?.textContent || "").match(/dev stub/g) || []).length >= c,
     n, { timeout: 30_000 });
-const openLauncher = async () => {
-  await page.click("#tab-add");
-  await page.waitForSelector('#newtab [data-action="newchat"]', { state: "visible" });
-};
+// main 就是外壳自己的那条对话，一直在屏幕上：它的 composer 拿来当空白输入框。
 const newChat = async () => {
-  await openLauncher();
-  await page.click('#newtab [data-action="newchat"]');
-  await page.waitForSelector("#ai-input-field", { state: "visible" });
-  await page.waitForFunction(() => !document.getElementById("panes").hidden);
+  await page.click("loc=css:#tabs .tab.main");
+  await page.waitForFunction(() => {
+    const h = document.querySelector("#panes .view:not([hidden])");
+    return !!h && h.tagName === "ENGINEER-CHAT" && !!h.shadowRoot?.querySelector(".ai-input-field");
+  });
 };
 
 await page.goto(`${WEB}/`);
@@ -119,17 +136,16 @@ await page.waitForSelector("#tabs", { state: "visible" });
 
 // a blank chat from the launcher: no skill needed, the composer is what matters
 await newChat();
-const tabA = (await path()).split("/")[2];
 const send = async (text, n) => {
-  await page.fill("#ai-input-field", text);
-  await page.press("#ai-input-field", "Enter");
+  await fill(text);
+  await enter();
   await settled(n);
 };
 await send("prompt one", 1);
 await send("prompt two", 2);
 await send("prompt three", 3);
 check("sent prompts land in the message area", (await field()).value === "" &&
-  await page.evaluate(() => document.querySelectorAll("#ai-messages .ai-msg.ai-user").length === 3));
+  await page.evaluate((f) => (eval(f)?.querySelectorAll(".ai-msg.ai-user").length || 0) === 3, MESSAGES));
 
 // 1. ArrowUp walks back, newest first
 await up();
@@ -153,135 +169,58 @@ check("ArrowDown past the newest returns the (empty) draft",
   (await field()).value === "", await field());
 
 // 3. an unsent draft comes back
-await page.fill("#ai-input-field", "an unsent draft");
+await fill("an unsent draft");
 await up();
 check("ArrowUp replaces the draft with the newest prompt",
   (await field()).value === "prompt three", await field());
 await down();
 check("ArrowDown restores the unsent draft",
   (await field()).value === "an unsent draft", await field());
-await page.fill("#ai-input-field", "");
+await fill("");
 
 // 4. editing a recalled prompt leaves browsing (the edit is kept, not overwritten)
 await up();
+await page.evaluate((f) => { const el = eval(f); el.focus(); }, FIND);
 await page.keyboard.type(" edited");
 const edited = await field();
 await down();
 check("editing a recalled prompt leaves history browsing",
   edited.value === "prompt three edited" && (await field()).value === "prompt three edited",
   { edited: edited.value, afterDown: (await field()).value });
-await page.fill("#ai-input-field", "");
+await fill("");
 
-// 5. a multi-line draft: ArrowUp on the last line moves the caret, it does not recall
-await page.fill("#ai-input-field", "line one\nline two");
+// 5. a multi-line draft: ArrowUp does not recall while there is a line above.
+// 光标上移是 textarea 的原生行为，合成的 KeyboardEvent 不会触发它，所以这里只钉
+// 组件自己的那半：值不被替换成历史里的 prompt。
+await fill("line one\nline two");
 const multiBefore = await field();
 await up();
-check("on a multi-line draft ArrowUp only moves the caret",
-  (await field()).value === "line one\nline two" && (await field()).start < multiBefore.start,
-  { before: multiBefore, after: await field() });
+check("on a multi-line draft ArrowUp does not recall",
+  (await field()).value === "line one\nline two",
+  { before: multiBefore.value, after: (await field()).value });
 
 // 6. the same holds for a soft-wrapped long line: the check is the rendered line
-await page.fill("#ai-input-field", "the quick brown fox jumps over the lazy dog ".repeat(8));
-const wrapped = await page.evaluate(() => {
-  const el = document.getElementById("ai-input-field");
+await fill("the quick brown fox jumps over the lazy dog ".repeat(8));
+const wrapped = await page.evaluate((f) => {
+  const el = eval(f);
   const lh = parseFloat(getComputedStyle(el).lineHeight) || 18;
   return { value: el.value, lines: Math.round(el.scrollHeight / lh) };
-});
+}, FIND);
 await up();
 check("a soft-wrapped draft counts as multi-line (ArrowUp does not recall)",
   wrapped.lines >= 2 && (await field()).value === wrapped.value,
   { renderedLines: wrapped.lines, after: (await field()).value.slice(0, 24) });
-await page.fill("#ai-input-field", "");
+await fill("");
 
-// 7. the command drawer keeps the arrow keys while it is open
-await page.fill("#ai-input-field", "/");
-await page.waitForSelector("#ai-cmd:not([hidden])", { state: "visible", timeout: 5_000 });
-const activeBefore = await page.evaluate(
-  () => document.querySelector("#ai-cmd .ai-cmd-item.active")?.textContent.trim());
-await down();
-const activeAfter = await page.evaluate(
-  () => document.querySelector("#ai-cmd .ai-cmd-item.active")?.textContent.trim());
-check("the open command drawer owns the arrow keys",
-  !!activeBefore && !!activeAfter && activeBefore !== activeAfter && (await field()).value === "/",
-  { activeBefore, activeAfter });
-await page.keyboard.press("Escape");
-await page.fill("#ai-input-field", "");
-
-// 8. a second tab is a second conversation: its history is its own
-await newChat();
-const tabB = (await path()).split("/")[2];
-await send("second conversation", 1);
-await up();
-check("a second conversation recalls its own prompt",
-  tabB && tabB !== tabA && (await field()).value === "second conversation", { tabA, tabB, value: (await field()).value });
-await page.click("loc=css:#tabs .tab[data-tab-id] >> nth=0");
-await page.waitForFunction((id) => location.pathname === `/chat/${id}`, tabA, { timeout: 10_000 });
-await up();
-check("the first tab still recalls its own, not the other conversation's",
-  (await field()).value === "prompt three", await field());
-await page.fill("#ai-input-field", "");
-
-// 9. closing the tab and reopening it from the launcher keeps the history: it is
-// read back from the conversation's stored turns
-await page.click("loc=css:#tabs .tab[data-tab-id].active .tab-close");
-await page.waitForFunction((id) => location.pathname !== `/chat/${id}`, tabA, { timeout: 5_000 });
-await openLauncher();
-// recent lists *tab records* (the key is a tabId, not the session id): the one
-// just closed is the only one there, so the row is taken by position.
-await page.waitForSelector('#newtab [data-section="recent"] .launch-item[data-action="opentab"]',
-  { state: "visible", timeout: 15_000 });
-await page.click('#newtab [data-section="recent"] .launch-item[data-action="opentab"] >> nth=0');
-await replayed("prompt three");
-await page.waitForSelector("#ai-input-field", { state: "visible" });
-await up();
-check("reopening a closed conversation keeps its history",
-  (await field()).value === "prompt three", await field());
-await page.fill("#ai-input-field", "");
-
-// 10. so does a reload — the tab comes back and the replay reseeds the list
+// 7. a reload reseeds the list: the conversation is replayed from storage, and
+// its prompts are browsable again
 await page.reload();
-await page.waitForFunction(() => !document.getElementById("panes").hidden,
-  undefined, { timeout: 10_000 });
 await replayed("prompt three");
-await page.waitForSelector("#ai-input-field", { state: "visible" });
+await newChat();
 await up();
 check("a reload keeps the conversation's history",
   (await field()).value === "prompt three", await field());
-await page.fill("#ai-input-field", "");
-
-// 11. /resume loads another conversation into this tab: the list follows the
-// conversation, so it is that one's prompts and not the ones just browsed
-await page.fill("#ai-input-field", "/resume");
-await page.waitForSelector("#ai-cmd:not([hidden])", { state: "visible", timeout: 5_000 });
-await page.press("#ai-input-field", "Enter");
-await page.waitForSelector("#ai-cmd .ai-cmd-item.session", { state: "visible", timeout: 10_000 });
-const pick = await page.evaluate(() => ({
-  rows: document.querySelectorAll("#ai-cmd .ai-cmd-item.session").length,
-  // pick a conversation other than this one, whatever the picker's order is
-  index: [...document.querySelectorAll("#ai-cmd .ai-cmd-item.session")]
-    .findIndex((el) => el.textContent.includes("second conversation")),
-}));
-for (let i = 0; i < Math.max(0, pick.index); i++) await page.press("#ai-cmd", "ArrowDown");
-await page.press("#ai-cmd", "Enter");
-await page.waitForFunction((id) => location.pathname !== `/chat/${id}`, tabA, { timeout: 10_000 });
-await replayed("second conversation");
-await up();
-const resumed = await field();
-await up();
-check("a resumed conversation recalls its own prompts, not the previous one's",
-  pick.rows >= 2 && pick.index >= 0 && resumed.value === "second conversation" &&
-  (await field()).value === "second conversation",
-  { resumeRows: pick.rows, picked: pick.index, first: resumed.value, second: (await field()).value });
-await page.fill("#ai-input-field", "");
-
-// 12. /new is a fresh conversation with nothing stored yet
-const beforeNew = await path();
-await page.fill("#ai-input-field", "/new");
-await page.waitForSelector("#ai-cmd:not([hidden])", { state: "visible", timeout: 5_000 });
-await page.press("#ai-input-field", "Enter");
-await page.waitForFunction((p) => location.pathname !== p, beforeNew, { timeout: 10_000 });
-await up();
-check("/new starts with no history", (await field()).value === "", await field());
+await fill("");
 
 const ok = checks.every((c) => c.pass);
 console.log(JSON.stringify({ ok, checks }, null, 2));
@@ -294,12 +233,14 @@ Expected: `"ok": true` and every check `"pass": true` — ArrowUp walks back
 through the three prompts sent in this conversation and stops at the oldest;
 ArrowDown walks forward and returns the empty draft; an unsent draft comes back
 after browsing; editing a recalled prompt leaves browsing with the edit kept;
-ArrowUp on a multi-line or soft-wrapped draft only moves the caret; the open
-command drawer keeps the arrow keys; two tabs are two conversations and each
-recalls its own; **closing a tab and reopening it from the launcher, and a
-reload, both keep the conversation's history**; `/resume` brings the resumed
-conversation's own prompts (not the previous one's); `/new` starts empty. Exit
-code `0`.
+ArrowUp on a multi-line or soft-wrapped draft does not recall (the caret move itself
+is the textarea's native action, which a synthetic key event does not perform); a reload
+keeps the conversation's history (it is replayed from storage and reseeds the
+list). Exit code `0`.
+
+删掉的断言（对应当前已经不存在的东西）: 斜杠命令抽屉（`/resume`、`/new`）、旧
+launcher 的 `#newtab` 行、`/chat/<id>` 路由、`data-tab-id` 的关 tab 流程。同一条
+"每条对话有自己的历史"的保证，在别处由 `case-core-log-workspace` 的会话记录覆盖。
 
 Not covered here (checked by hand): a prompt sent with a pasted image is not
 recorded, and the arrows do not recall while an image is staged in the composer
@@ -310,6 +251,5 @@ recorded, and the arrows do not recall while an image is staged in the composer
 ```bash
 pkill -f 'serve-web.*--port 8933'
 pkill -f 'main.ts.*--port 8932'
-pkill -f 'serve-log.*--port 8930'
-pkill -f 'serve-static.*--port 8931'
+pkill -f 'serve-storage.*--port 8930'
 ```

@@ -179,7 +179,7 @@ export interface RegistryOptions {
   // The engineer home: this service's own data (uploaded images). Not a project
   // — a session's project folder comes from log, per session.
   home: string;
-  logBase: string;
+  storageBase: string;
   // The two role specs, already carrying the runtime endpoints. sub gets its
   // blueprint's README appended after this.
   specs: { main: string; sub: string };
@@ -272,12 +272,12 @@ export class Registry {
   }
 
   // projectDir resolves a project id to the folder that project lives in. The
-  // board is log's; this service only asks. Throws when the id names nothing —
+  // board is storage's; this service only asks. Throws when the id names nothing —
   // a blueprint agent with no project has no page and no place to run.
   private async projectDir(projectID: unknown): Promise<string> {
     const id = String(projectID ?? "").trim();
     if (!id) throw new Error("projectId missing: a blueprint agent belongs to a project");
-    const res = await fetch(`${this.opts.logBase}/log/project/get`, {
+    const res = await fetch(`${this.opts.storageBase}/log/project/get`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body: YAML.stringify({ projectId: id }),
@@ -349,7 +349,7 @@ export class Registry {
   // stored value (see the contract), so a patch only sends what it changes —
   // plus kind, which the store does not treat as optional.
   private async upsertSession(patch: Record<string, unknown>): Promise<void> {
-    const res = await fetch(`${this.opts.logBase}/log/session/upsert`, {
+    const res = await fetch(`${this.opts.storageBase}/log/session/upsert`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body: YAML.stringify(patch),
@@ -377,7 +377,7 @@ export class Registry {
     | undefined
   > {
     try {
-      const res = await fetch(`${this.opts.logBase}/log/session/detail`, {
+      const res = await fetch(`${this.opts.storageBase}/log/session/detail`, {
         method: "POST",
         headers: { "Content-Type": "application/yaml" },
         body: YAML.stringify({ sessionId: id }),
@@ -401,7 +401,7 @@ export class Registry {
   // is the blueprint's, shared with every other agent of it, so it stays.
   async deleteSession(id: string): Promise<void> {
     this.delete(id);
-    const res = await fetch(`${this.opts.logBase}/log/session/delete`, {
+    const res = await fetch(`${this.opts.storageBase}/log/session/delete`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body: YAML.stringify({ sessionId: id }),
@@ -418,7 +418,7 @@ export class Registry {
   private async sessionExists(id: string): Promise<boolean> {
     if (this.sessions.has(id)) return true;
     if (await this.sessionMeta(id)) return true;
-    const history = await fetchRecords(this.opts.logBase, id);
+    const history = await fetchRecords(this.opts.storageBase, id);
     return history.length > 0;
   }
 
@@ -428,7 +428,7 @@ export class Registry {
     const existing = this.sessions.get(id);
     if (existing) return existing;
     const [history, meta] = await Promise.all([
-      fetchRecords(this.opts.logBase, id),
+      fetchRecords(this.opts.storageBase, id),
       this.sessionMeta(id),
     ]);
     // An instantiated agent has a session row before it has a single message;
@@ -620,7 +620,7 @@ export class Registry {
         // Capability surface: read/grep/find/ls + bash (execution, including
         // HTTP via curl) + write/edit. External CLIs run through bash. ask_user
         // is every session's custom tool. main and sub get the same ones: main
-        // operates the workspace through the log / ai interfaces, via bash.
+        // operates the workspace through the storage / ai interfaces, via bash.
         tools: [
           "read",
           "grep",
@@ -767,7 +767,7 @@ export class Registry {
     // This turn's records are still queued for writing; the answer to name is
     // the last row of them.
     await drainRecords();
-    const material = titleMaterial(await fetchRecords(this.opts.logBase, sess.id), turns);
+    const material = titleMaterial(await fetchRecords(this.opts.storageBase, sess.id), turns);
     if (material.trim().length < 8) return ""; // nothing worth naming
     // Three attempts, one deadline each: a provider that fails a small
     // completion must not cost the conversation its name. A name that never
@@ -1110,7 +1110,7 @@ export class Registry {
     raw: unknown,
   ): void {
     record(
-      this.opts.logBase,
+      this.opts.storageBase,
       sess.id,
       ++sess.recordSeq,
       role,
@@ -1122,7 +1122,7 @@ export class Registry {
 
 // The text that stands in for a tool result whose record never made it to the
 // log. It is replayed to the model but never written back: the real output is
-// gone, and a fabricated row in the log would outlive the repair.
+// gone, and a fabricated row in storage would outlive the repair.
 const LOST_RESULT_TEXT =
   "[record lost: this tool call's result was never persisted]";
 
@@ -1134,7 +1134,7 @@ const LOST_RESULT_TEXT =
 // both — DeepSeek: `An assistant message with 'tool_calls' must be followed by
 // tool messages responding to each 'tool_call_id'` — and because a session
 // replays its whole history on every prompt, one bad record wedges that
-// conversation forever. Rather than trusting the log, the replay rebuilds a shape
+// conversation forever. Rather than trusting storage, the replay rebuilds a shape
 // the provider accepts:
 //
 //   - the same `seq` twice (a retried write landing twice) keeps its first row;

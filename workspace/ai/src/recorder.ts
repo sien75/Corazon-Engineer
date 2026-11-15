@@ -21,10 +21,10 @@ export interface ImageRefBlock {
   size?: number;
 }
 
-// record writes a conversation record to the log service (fire-and-forget;
+// record writes a conversation record to the storage service (fire-and-forget;
 // logging must never block or break the chat flow). Writes are still strictly
 // ordered: record() is called in program order (a user message before the
-// assistant reply it triggered), and the log stores rows in arrival order while
+// assistant reply it triggered), and storage stores rows in arrival order while
 // session-detail reads them back ORDER BY rowid. Letting two requests race would
 // persist the reply first and replay a session out of order.
 let writeTail: Promise<unknown> = Promise.resolve();
@@ -47,14 +47,14 @@ const sleep = (ms: number): Promise<void> =>
 // sender's fault (bad payload / bad contract) and is not worth retrying; 5xx and
 // transport errors are.
 async function postRecord(
-  logBase: string,
+  storageBase: string,
   body: string,
 ): Promise<{ reason: string; attempts: number } | undefined> {
   let reason = "unknown";
   for (let attempt = 1; attempt <= RECORD_ATTEMPTS; attempt++) {
     if (attempt > 1) await sleep(RETRY_BACKOFF_MS * 2 ** (attempt - 2));
     try {
-      const res = await fetch(`${logBase}/log/session/record/add`, {
+      const res = await fetch(`${storageBase}/log/session/record/add`, {
         method: "POST",
         headers: { "Content-Type": "application/yaml" },
         body,
@@ -73,14 +73,14 @@ async function postRecord(
 }
 
 export function record(
-  logBase: string,
+  storageBase: string,
   sessionId: string,
   seq: number,
   role: string,
   content: string,
   raw?: unknown,
 ): void {
-  if (!logBase) return;
+  if (!storageBase) return;
   const payload: Record<string, unknown> = { seq, role, content };
   if (raw !== undefined) payload.raw = raw;
   // The conversation bucket is the endpoint's, not the body's: this writer can
@@ -90,7 +90,7 @@ export function record(
   // would skip every later write and silently end the record stream.
   writeTail = writeTail.then(async () => {
     try {
-      const failed = await postRecord(logBase, body);
+      const failed = await postRecord(storageBase, body);
       if (failed) {
         console.error(
           `engineer ai: conversation record write failed sessionId=${sessionId}` +
@@ -117,12 +117,12 @@ export function drainRecords(): Promise<void> {
 // fetchRecords reads a session's conversation records in order. New rows carry
 // `raw`.
 export async function fetchRecords(
-  logBase: string,
+  storageBase: string,
   sessionId: string,
 ): Promise<StoredRecord[]> {
-  if (!logBase) return [];
+  if (!storageBase) return [];
   try {
-    const res = await fetch(`${logBase}/log/session/messages`, {
+    const res = await fetch(`${storageBase}/log/session/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/yaml" },
       body: YAML.stringify({ sessionId }),

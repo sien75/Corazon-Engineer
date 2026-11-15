@@ -25,24 +25,24 @@ ROOT="$PWD/.engineer/.workspace-test"
 HOME_DIR="$ROOT/home"
 
 # Guard first: with an empty $HOME_DIR the pattern below degrades to
-# "serve-log --home " and kills every service on the machine — including the one
+# "serve-storage --home " and kills every service on the machine — including the one
 # running the agent. Fail loudly instead.
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 # Reclaim a previous run of this case: a leftover service keeps serving its old
 # database, and the failure it causes looks like a wrong answer, not a dead
 # service.
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 sleep 1
 
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: workspace-test\n' > "$ROOT/engineer.yaml"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8830 \
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8830 \
   >/tmp/ego-simple/ws-log.log 2>&1 &
-LOG=http://localhost:8830
+STORAGE=http://localhost:8830
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST $LOG/log/session/current/get -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST $STORAGE/log/session/current/get -d '{}' && break
   sleep 1
 done
 ```
@@ -50,7 +50,7 @@ done
 ## 1. the workspace starts empty
 
 ```bash
-curl -s -X POST $LOG/log/session/current/get -d '{}'
+curl -s -X POST $STORAGE/log/session/current/get -d '{}'
 ```
 
 Expected: `openSessions: []` and `mainSession: ""` — the answer exists from the
@@ -59,20 +59,20 @@ first start (it is derived, not stored), so the shell can read it unconditionall
 ## 2. a session carries kind, blueprint and title; blanks keep the stored value
 
 ```bash
-curl -s -X POST $LOG/log/session/upsert --data-binary $'sessionId: s_main01
+curl -s -X POST $STORAGE/log/session/upsert --data-binary $'sessionId: s_main01
 kind: main
 title: main'
-curl -s -X POST $LOG/log/session/upsert --data-binary $'sessionId: s_sub01
+curl -s -X POST $STORAGE/log/session/upsert --data-binary $'sessionId: s_sub01
 blueprint: pure-chat
 title: Pure Chat'
-curl -s -X POST $LOG/log/session/upsert --data-binary $'sessionId: s_sub02'
-curl -s -X POST $LOG/log/session/upsert --data-binary $'sessionId: s_sub01
+curl -s -X POST $STORAGE/log/session/upsert --data-binary $'sessionId: s_sub02'
+curl -s -X POST $STORAGE/log/session/upsert --data-binary $'sessionId: s_sub01
 kind: sub
 blueprint: ""
 title: ""'
 for s in s_main01 s_sub01 s_sub02 s_nope; do
-  curl -s -o /dev/null -w "$s: %{http_code} " -X POST $LOG/log/session/detail -d "sessionId: $s"
-  curl -s -X POST $LOG/log/session/detail -d "sessionId: $s" 2>/dev/null | tr '\n' ' ' | cut -c1-120
+  curl -s -o /dev/null -w "$s: %{http_code} " -X POST $STORAGE/log/session/detail -d "sessionId: $s"
+  curl -s -X POST $STORAGE/log/session/detail -d "sessionId: $s" 2>/dev/null | tr '\n' ' ' | cut -c1-120
   echo
 done
 ```
@@ -85,8 +85,8 @@ the page); `s_sub02` is `kind: sub` with empty blueprint and title; `s_nope` is 
 ## 3. the main session is part of the workspace
 
 ```bash
-curl -s -X POST $LOG/log/session/current/put -d 'mainSession: s_main01'
-curl -s -X POST $LOG/log/session/current/get -d '{}' | grep mainSession
+curl -s -X POST $STORAGE/log/session/current/put -d 'mainSession: s_main01'
+curl -s -X POST $STORAGE/log/session/current/get -d '{}' | grep mainSession
 ```
 
 Expected: `mainSession: s_main01`, and `openSessions` still empty — main is never
@@ -95,12 +95,12 @@ in the open list.
 ## 4. session/on opens it; the list is idempotent and ordered
 
 ```bash
-curl -s -X POST $LOG/log/session/on --data-binary 'sessionIds: [s_sub01]'
-curl -s -X POST $LOG/log/session/on --data-binary 'sessionIds: [s_sub02]'
-curl -s -X POST $LOG/log/session/on --data-binary 'sessionIds: [s_sub01]'
-curl -s -X POST $LOG/log/session/on --data-binary $'sessionIds: [s_sub02]
+curl -s -X POST $STORAGE/log/session/on --data-binary 'sessionIds: [s_sub01]'
+curl -s -X POST $STORAGE/log/session/on --data-binary 'sessionIds: [s_sub02]'
+curl -s -X POST $STORAGE/log/session/on --data-binary 'sessionIds: [s_sub01]'
+curl -s -X POST $STORAGE/log/session/on --data-binary $'sessionIds: [s_sub02]
 index: 0'
-curl -s -X POST $LOG/log/session/current/get -d '{}' | grep -A4 openSessions
+curl -s -X POST $STORAGE/log/session/current/get -d '{}' | grep -A4 openSessions
 ```
 
 Expected: after the first two writes `openSessions` is `[s_sub01, s_sub02]`; opening
@@ -108,8 +108,8 @@ Expected: after the first two writes `openSessions` is `[s_sub01, s_sub02]`; ope
 id is also a no-op — index only places *newly* opened ids.
 
 ```bash
-curl -s -X POST $LOG/log/session/on --data-binary 'sessionIds: [s_nope]'
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $LOG/log/session/on -d '{}'
+curl -s -X POST $STORAGE/log/session/on --data-binary 'sessionIds: [s_nope]'
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $STORAGE/log/session/on -d '{}'
 ```
 
 Expected: 400 naming `no session s_nope`, then 400 `bad_request` for a missing
@@ -118,10 +118,10 @@ Expected: 400 naming `no session s_nope`, then 400 `bad_request` for a missing
 ## 5. session/off closes it, the session row stays
 
 ```bash
-curl -s -X POST $LOG/log/session/off --data-binary 'sessionIds: [s_sub01]'
-curl -s -X POST $LOG/log/session/current/get -d '{}' | grep -A4 openSessions
-curl -s -o /dev/null -w 'row: %{http_code}\n' -X POST $LOG/log/session/detail -d 'sessionId: s_sub01'
-curl -s -X POST $LOG/log/session/off --data-binary 'sessionIds: [s_sub01]' >/dev/null
+curl -s -X POST $STORAGE/log/session/off --data-binary 'sessionIds: [s_sub01]'
+curl -s -X POST $STORAGE/log/session/current/get -d '{}' | grep -A4 openSessions
+curl -s -o /dev/null -w 'row: %{http_code}\n' -X POST $STORAGE/log/session/detail -d 'sessionId: s_sub01'
+curl -s -X POST $STORAGE/log/session/off --data-binary 'sessionIds: [s_sub01]' >/dev/null
 ```
 
 Expected: `openSessions` no longer holds `s_sub01` while its row still answers 200 —
@@ -130,14 +130,14 @@ closing is not deleting — and closing it again is not an error.
 ## 6. the list shows a session with no messages, and is ordered by activity
 
 ```bash
-curl -s -X POST $LOG/log/session/list -d '{"pageNum": 1}'
-curl -s -X POST $LOG/log/session/record/add --data-binary $'sessionId: s_sub02
+curl -s -X POST $STORAGE/log/session/list -d '{"pageNum": 1}'
+curl -s -X POST $STORAGE/log/session/record/add --data-binary $'sessionId: s_sub02
 payload:
   seq: 1
   role: user
   content: hello'
 sleep 1
-curl -s -X POST $LOG/log/session/list -d '{"pageNum": 1}' \
+curl -s -X POST $STORAGE/log/session/list -d '{"pageNum": 1}' \
   | python3 -c 'import sys,yaml;d=yaml.safe_load(sys.stdin);print([ (s["sessionId"], s["count"], s["title"], s["blueprint"]) for s in d["sessions"]])'
 ```
 
@@ -150,10 +150,10 @@ and has `count: 1`.
 ## 7. deleting a session removes the records, the row and the list entry
 
 ```bash
-curl -s -X POST $LOG/log/session/delete -d 'sessionId: s_sub02'
-curl -s -X POST $LOG/log/session/current/get -d '{}' | grep -A4 openSessions
-curl -s -o /dev/null -w 'row: %{http_code}\n' -X POST $LOG/log/session/detail -d 'sessionId: s_sub02'
-curl -s -X POST $LOG/log/session/list -d '{"pageNum": 1}' | grep -c s_sub02 || true
+curl -s -X POST $STORAGE/log/session/delete -d 'sessionId: s_sub02'
+curl -s -X POST $STORAGE/log/session/current/get -d '{}' | grep -A4 openSessions
+curl -s -o /dev/null -w 'row: %{http_code}\n' -X POST $STORAGE/log/session/detail -d 'sessionId: s_sub02'
+curl -s -X POST $STORAGE/log/session/list -d '{"pageNum": 1}' | grep -c s_sub02 || true
 ```
 
 Expected: `openSessions` is empty (the deleted session's tab went with it), the row
@@ -162,8 +162,8 @@ is 404, and the list no longer names it — one delete, one consistent workspace
 ## 8. deleting the main session clears the pointer
 
 ```bash
-curl -s -X POST $LOG/log/session/delete -d 'sessionId: s_main01'
-curl -s -X POST $LOG/log/session/current/get -d '{}' | grep mainSession
+curl -s -X POST $STORAGE/log/session/delete -d 'sessionId: s_main01'
+curl -s -X POST $STORAGE/log/session/current/get -d '{}' | grep mainSession
 ```
 
 Expected: `mainSession: ""` — deleting a conversation cannot leave the shell
@@ -172,19 +172,19 @@ pointing at it.
 ## 9. the workspace survives a restart
 
 ```bash
-curl -s -X POST $LOG/log/session/upsert --data-binary $'sessionId: s_sub01
+curl -s -X POST $STORAGE/log/session/upsert --data-binary $'sessionId: s_sub01
 blueprint: pure-chat
 title: Pure Chat'
-curl -s -X POST $LOG/log/session/on --data-binary 'sessionIds: [s_sub01]'
-pkill -f "serve-log --home $HOME_DIR" ; sleep 1
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8830 \
+curl -s -X POST $STORAGE/log/session/on --data-binary 'sessionIds: [s_sub01]'
+pkill -f "serve-storage --home $HOME_DIR" ; sleep 1
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8830 \
   >/tmp/ego-simple/ws-log.log 2>&1 &
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST $LOG/log/session/current/get -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST $STORAGE/log/session/current/get -d '{}' && break
   sleep 1
 done
-curl -s -X POST $LOG/log/session/current/get -d '{}'
-curl -s -X POST $LOG/log/session/detail -d 'sessionId: s_sub01'
+curl -s -X POST $STORAGE/log/session/current/get -d '{}'
+curl -s -X POST $STORAGE/log/session/detail -d 'sessionId: s_sub01'
 ```
 
 Expected: `openSessions: [s_sub01]` and the same title / blueprint — this is sqlite
@@ -193,6 +193,6 @@ state, not memory.
 ## Teardown
 
 ```bash
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 rm -rf "$ROOT"
 ```

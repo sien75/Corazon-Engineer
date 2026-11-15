@@ -26,9 +26,9 @@ ROOT="$ROOTDIR/.engineer/.main-workspace"
 HOME_DIR="$ROOT/home"
 
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 9060 9061 9062; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 9060 9061; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
@@ -43,7 +43,7 @@ HTML
 printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9061 >/tmp/main-ws-log.log 2>&1 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9061 >/tmp/main-ws-log.log 2>&1 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:9061/log/project/list -d '{}' && break
   sleep 1
@@ -51,12 +51,11 @@ done
 curl -s -X POST http://localhost:9061/log/project/add -H 'Content-Type: application/yaml' \
   --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
 PROJECT=$(cat "$ROOT/.project")
-/tmp/engineer serve-static --log http://localhost:9061 --bind 127.0.0.1 --port 9062 >/tmp/main-ws-static.log 2>&1 &
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9060 \
-  --log http://localhost:9061 --static http://localhost:9062 \
+  --storage http://localhost:9061 \
   --agents "$ROOTDIR/agents" --docs "$ROOTDIR/structure/docs" >/tmp/main-ws-ai.log 2>&1 &)
 
-LOG=http://localhost:9061
+STORAGE=http://localhost:9061
 AI=http://localhost:9060
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
@@ -73,11 +72,11 @@ PY
   curl -s -N -X POST $AI/ai/stream -d "id: $1" >/dev/null
 }
 sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])'; }
-open_ids() { curl -s -X POST $LOG/log/session/current/get -d '{}' | sed -n 's/^  - //p'; }
-main_id() { curl -s -X POST $LOG/log/session/current/get -d '{}' | awk '$1=="mainSession:" {print $2}'; }
+open_ids() { curl -s -X POST $STORAGE/log/session/current/get -d '{}' | sed -n 's/^  - //p'; }
+main_id() { curl -s -X POST $STORAGE/log/session/current/get -d '{}' | awk '$1=="mainSession:" {print $2}'; }
 
 MAIN1=$(curl -s -X POST $AI/ai/new -d 'kind: main' | sid)
-curl -s -o /dev/null -X POST $LOG/log/session/current/put -d "openSessions: []
+curl -s -o /dev/null -X POST $STORAGE/log/session/current/put -d "openSessions: []
 mainSession: $MAIN1"
 echo "main=$MAIN1"
 ```
@@ -90,9 +89,9 @@ Expected: ai 在 `:9060` 起来，并且**没有** `--stub: model calls disabled
 ask $MAIN1 "In project $PROJECT, start an agent from the blueprint probe and put it on screen. Do it now, do not ask me anything, and tell me its session id."
 SUB=$(open_ids | head -1)
 echo "sub=$SUB"
-curl -s -X POST $LOG/log/session/detail -d "sessionId: $SUB"
-curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN1" | grep -c 'name: bash' || true
-curl -s -X POST $LOG/log/session/messages -d "sessionId: $MAIN1" | grep -cE 'name: (session-|main-|project-list)' || true
+curl -s -X POST $STORAGE/log/session/detail -d "sessionId: $SUB"
+curl -s -X POST $STORAGE/log/session/messages -d "sessionId: $MAIN1" | grep -c 'name: bash' || true
+curl -s -X POST $STORAGE/log/session/messages -d "sessionId: $MAIN1" | grep -cE 'name: (session-|main-|project-list)' || true
 ```
 
 Expected: `sub` 是非空 `s_…`，且只有这一个开着；它的 `session/detail` 是 `kind: sub`、
@@ -104,7 +103,7 @@ Expected: `sub` 是非空 `s_…`，且只有这一个开着；它的 `session/d
 ```bash
 ask $MAIN1 "Close session $SUB (take it off screen) but keep it. Do it now, do not ask me anything."
 open_ids | wc -l
-curl -s -o /dev/null -w 'row: %{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $SUB"
+curl -s -o /dev/null -w 'row: %{http_code}\n' -X POST $STORAGE/log/session/detail -d "sessionId: $SUB"
 ask $MAIN1 "Put session $SUB back on screen. Do it now, do not ask me anything."
 open_ids
 ```
@@ -117,9 +116,9 @@ Expected: 关了之后开着的为 0，行仍答 `200`（关不是删）；再�
 ask $MAIN1 "Replace main with a fresh conversation, and leave every open tab as it is. Do it now, do not ask me anything."
 MAIN2=$(main_id)
 echo "main now: $MAIN2"
-curl -s -X POST $LOG/log/session/detail -d "sessionId: $MAIN2"
+curl -s -X POST $STORAGE/log/session/detail -d "sessionId: $MAIN2"
 open_ids
-curl -s -o /dev/null -w 'old main: %{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $MAIN1"
+curl -s -o /dev/null -w 'old main: %{http_code}\n' -X POST $STORAGE/log/session/detail -d "sessionId: $MAIN1"
 
 ask $MAIN2 "Bring the earlier main conversation $MAIN1 back as main. Do it now, do not ask me anything."
 main_id
@@ -132,11 +131,11 @@ Expected: `MAIN2` 与 `MAIN1` 不同、`kind: main`；`SUB` 仍是开着的（�
 
 ```bash
 ask $MAIN1 "Delete session $SUB for good — the agent, its records and its row. Do it now, do not ask me anything."
-curl -s -o /dev/null -w 'sub row: %{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $SUB"
+curl -s -o /dev/null -w 'sub row: %{http_code}\n' -X POST $STORAGE/log/session/detail -d "sessionId: $SUB"
 open_ids | wc -l
 
 ask $MAIN1 "Delete session $MAIN1 for good."
-curl -s -o /dev/null -w 'main row: %{http_code}\n' -X POST $LOG/log/session/detail -d "sessionId: $MAIN1"
+curl -s -o /dev/null -w 'main row: %{http_code}\n' -X POST $STORAGE/log/session/detail -d "sessionId: $MAIN1"
 ```
 
 Expected: `sub row: 404`、开着的为 0；`main row: 200`（main 没有被删，它拒绝并解释）。
@@ -144,8 +143,7 @@ Expected: `sub row: 404`、开着的为 0；`main row: 200`（main 没有被删�
 ## Teardown
 
 ```bash
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-pkill -f "serve-static --log http://localhost:9061" 2>/dev/null || true
 rm -rf "$ROOT"
 ```

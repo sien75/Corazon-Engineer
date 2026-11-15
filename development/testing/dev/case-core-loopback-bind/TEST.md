@@ -1,6 +1,6 @@
 # Test: core-loopback-bind
 
-The four services are local-only: they must listen on `127.0.0.1`, not on every
+The three services are local-only: they must listen on `127.0.0.1`, not on every
 interface. Exposing them is opt-in, through the launcher's `ENGINEER_BIND`
 environment variable (and `--bind` on a service run directly). This case checks
 both halves from the user's point of view — what is reachable, and how to change
@@ -8,16 +8,15 @@ it deliberately.
 
 Sources of truth: `how-to/deploy/prod/launch.go` (owns the bind host and hands
 it down), `how-to/deploy/dev/launch.sh` (same, for dev), and each service's own
-required `--bind` (`workspace/log`, `workspace/static`, `workspace/web/server` —
-all three started as subcommands of the merged `engineer` binary — plus
-`workspace/ai/src/main.ts`). No service defaults its bind host: loopback is the
+required `--bind` (`workspace/storage`, `workspace/web/server` — both started as
+subcommands of the merged `engineer` binary — plus `workspace/ai/src/main.ts`). No service defaults its bind host: loopback is the
 launcher's choice, made once and passed down.
 
 ## ⚠️ Open-up checks are opt-in
 
 Sections **2** and **3b** bind to `0.0.0.0`. That is exactly the behaviour a
 corporate endpoint agent flags: on an Ant-managed machine (Aspect/星点) it raises
-its alarm — observed, once per service, four in total. That is why the launcher's
+its alarm — observed, once per service, three in total. That is why the launcher's
 default bind host is loopback.
 
 **Do not run them as part of a routine pass.** Run one only when you
@@ -110,14 +109,14 @@ lsof -nP -iTCP -sTCP:LISTEN | grep engineer || echo "(nothing listening)"
 # told the host explicitly, it listens exactly there
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8841 \
   --assets "$(cd workspace/web && pwd)" \
-  --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
+  --storage http://localhost:8502 --ai http://localhost:8501 &
 sleep 1; lsof -nP -iTCP:8841 -sTCP:LISTEN
 ```
 
 Expected: the bare run prints a usage line containing `--bind <host> --port <n>
 --assets <dir>` and exits non-zero, with nothing listening; the second run gives
 one `TCP 127.0.0.1:8841 (LISTEN)` line. (The process name in `lsof` is the
-binary's basename: with the merged binary all four services report as
+binary's basename: with the merged binary both Go services report as
 `engineer`.)
 
 ## 3b. --bind 0.0.0.0 opens a single service  (opt-in, ⚠️ triggers the alarm)
@@ -125,7 +124,7 @@ binary's basename: with the merged binary all four services report as
 ```bash
 /tmp/engineer serve-web --bind 0.0.0.0 --port 8842 \
   --assets "$(cd workspace/web && pwd)" \
-  --static http://localhost:8502 --ai http://localhost:8501 --log http://localhost:8503 &
+  --storage http://localhost:8502 --ai http://localhost:8501 &
 sleep 1; lsof -nP -iTCP:8842 -sTCP:LISTEN
 ```
 

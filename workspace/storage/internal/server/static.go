@@ -1,9 +1,22 @@
+// static.go is the project-tree half of the storage service: it reads the schema
+// (atoms / edges / contracts) and the other content files out of a project folder
+// and serves them over the /static/* routes.
+//
+// Which folder a request means is not an argument: it is the projectId the body
+// carries, resolved through this process's own store. That is the whole point of
+// storing records and files in one service — the project board is a table here, so
+// resolving it is a query, not an HTTP call to another process with a cache in
+// front of it.
+//
+// The service does not validate the tree: a malformed atom or a dangling edge is
+// not its business. Writes go through the ai shell.
+
 package server
 
 import (
-	"bytes"
+	"database/sql"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,144 +24,26 @@ import (
 	"sync"
 	"time"
 
-	"engineer/static/internal/schema"
+	"engineer/storage/internal/schema"
 
 	"gopkg.in/yaml.v3"
 )
 
-type Server struct {
-	projects *projectPaths
-	mux      *http.ServeMux
-	broker   *Broker
-}
-
-// New builds the service around log, not around a project directory: which tree
-// a request means is decided per request, by the projectId it carries.
-func New(logBase string) *Server {
-	s := &Server{projects: newProjectPaths(logBase), mux: http.NewServeMux(), broker: NewBroker()}
-	s.mux.HandleFunc("POST /static/query", s.handleSchemaQuery)
-	s.mux.HandleFunc("POST /static/query-detail", s.handleSchemaQueryDetail)
-	s.mux.HandleFunc("POST /static/stream", s.handleEvent)
-	return s
-}
-
-func (s *Server) Listen(addr string) error {
-	go s.watch()
-	return http.ListenAndServe(addr, cors(s.mux))
-}
-
-// projectPaths turns the projectId a request carries into the folder it names.
-// Projects are data in log's home database, so this service has no root of its
-// own: it serves whichever project it is asked about. The answer is remembered
-// briefly — a page load is a handful of requests — and re-read soon enough that
-// adding or removing a project needs no restart.
-type projectPaths struct {
-	logBase string
-	mu      sync.Mutex
-	seen    map[string]cachedPath
-	list    []projectDir
-	at      time.Time
-}
-
-type projectDir struct{ id, path string }
-
-type cachedPath struct {
-	path string
-	at   time.Time
-}
-
-// projectPathTTL is how long a resolved project is trusted.
-const projectPathTTL = 5 * time.Second
-
-func newProjectPaths(logBase string) *projectPaths {
-	return &projectPaths{logBase: logBase, seen: map[string]cachedPath{}}
-}
-
-// all is the project board, as the file watcher needs it.
-func (p *projectPaths) all() ([]projectDir, error) {
-	p.mu.Lock()
-	list, at := p.list, p.at
-	p.mu.Unlock()
-	if list != nil && time.Since(at) < projectPathTTL {
-		return list, nil
+// projectDir resolves a project id to its folder. ok is false when the id names no
+// project — the caller turns that into its own 404.
+func (s *Server) projectDir(projectID string) (string, bool, error) {
+	p, err := s.store.GetProject(projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
 	}
-	var res struct {
-		Projects []struct {
-			ProjectID string `yaml:"projectId"`
-			Path      string `yaml:"path"`
-		} `yaml:"projects"`
-	}
-	if _, err := logCall(p.logBase, "/log/project/list", map[string]string{}, &res); err != nil {
-		return nil, err
-	}
-	out := make([]projectDir, 0, len(res.Projects))
-	for _, item := range res.Projects {
-		out = append(out, projectDir{id: item.ProjectID, path: item.Path})
-	}
-	p.mu.Lock()
-	p.list = out
-	p.at = time.Now()
-	p.mu.Unlock()
-	return out, nil
-}
-
-// dir resolves one project id to its folder. A 404 from log means the id names
-// no project; the caller turns that into its own 404.
-func (p *projectPaths) dir(projectID string) (string, int, error) {
-	projectID = strings.TrimSpace(projectID)
-	p.mu.Lock()
-	entry, ok := p.seen[projectID]
-	p.mu.Unlock()
-	if ok && time.Since(entry.at) < projectPathTTL {
-		return entry.path, http.StatusOK, nil
-	}
-	var res struct {
-		Path string `yaml:"path"`
-	}
-	status, err := logCall(p.logBase, "/log/project/get", map[string]string{"projectId": projectID}, &res)
 	if err != nil {
-		return "", status, err
+		return "", false, err
 	}
-	if strings.TrimSpace(res.Path) == "" {
-		return "", http.StatusNotFound, fmt.Errorf("project %s has no path", projectID)
+	path := strings.TrimSpace(p.Path)
+	if path == "" {
+		return "", false, nil
 	}
-	p.mu.Lock()
-	p.seen[projectID] = cachedPath{path: res.Path, at: time.Now()}
-	p.mu.Unlock()
-	return res.Path, http.StatusOK, nil
-}
-
-// logCall POSTs a yaml body to log and decodes the yaml answer. The status is
-// returned as well, so a caller can tell "no such project" from "log is down".
-func logCall(base, path string, body interface{}, out interface{}) (int, error) {
-	data, err := marshalYAML(body)
-	if err != nil {
-		return 0, err
-	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(base, "/")+path, bytes.NewReader(data))
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Content-Type", "application/yaml")
-	client := &http.Client{Timeout: 3 * time.Second}
-	res, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer res.Body.Close()
-	raw, err := io.ReadAll(res.Body)
-	if err != nil {
-		return res.StatusCode, err
-	}
-	if res.StatusCode != http.StatusOK {
-		return res.StatusCode, fmt.Errorf("log %s → HTTP %d", path, res.StatusCode)
-	}
-	if out != nil {
-		if err := yaml.Unmarshal(raw, out); err != nil {
-			return res.StatusCode, fmt.Errorf("log %s: %v", path, err)
-		}
-	}
-	return res.StatusCode, nil
+	return path, true, nil
 }
 
 // root is the request's project directory, or the reason there is none: the
@@ -158,82 +53,16 @@ func (s *Server) root(w http.ResponseWriter, projectID string) (string, bool) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "projectId missing")
 		return "", false
 	}
-	path, status, err := s.projects.dir(projectID)
-	if status == http.StatusNotFound {
-		writeErr(w, http.StatusNotFound, "not_found", "no project "+projectID)
-		return "", false
-	}
+	path, ok, err := s.projectDir(projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal", "cannot resolve project: "+err.Error())
 		return "", false
 	}
+	if !ok {
+		writeErr(w, http.StatusNotFound, "not_found", "no project "+projectID)
+		return "", false
+	}
 	return path, true
-}
-
-// cors allows browser frontends on any origin to call the atomic APIs.
-func cors(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// ---------- helpers ----------
-
-// The static API speaks YAML on the wire (application/yaml).
-
-// marshalYAML encodes with a 2-space indent. yaml.v3's default indent of 4
-// emits an invalid block scalar (wrong indentation indicator) for multi-line
-// strings whose first line starts with whitespace.
-func marshalYAML(v interface{}) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	if err := enc.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func writeYAMLResp(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/yaml")
-	w.WriteHeader(status)
-	data, err := marshalYAML(v)
-	if err != nil {
-		return
-	}
-	_, _ = w.Write(data)
-}
-
-func writeErr(w http.ResponseWriter, status int, code, msg string) {
-	writeYAMLResp(w, status, map[string]interface{}{
-		"error": map[string]string{"code": code, "message": msg},
-	})
-}
-
-func decode(w http.ResponseWriter, r *http.Request, v interface{}) bool {
-	if r.Body == nil || r.ContentLength == 0 {
-		return true
-	}
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body: "+err.Error())
-		return false
-	}
-	if err := yaml.Unmarshal(data, v); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid yaml body: "+err.Error())
-		return false
-	}
-	return true
 }
 
 // safePath resolves a relative id under root and rejects path escapes. The id
@@ -308,7 +137,7 @@ func (s *Server) handleSchemaQueryDetail(w http.ResponseWriter, r *http.Request)
 	if !decode(w, r, &req) {
 		return
 	}
-	if !containsStr(schema.ObjectTypes, req.Type) {
+	if !containsStr(schema.LeafTypes, req.Type) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid type: "+req.Type)
 		return
 	}
@@ -372,16 +201,17 @@ type fileStamp struct {
 // new subdirectories.
 //
 // The board changes while it runs (a project is added, removed, or its folder
-// moves), so the project list is re-read each tick. A tick where log cannot be
-// read is skipped rather than diffed against an empty board — that would publish
-// a remove for every file in every project.
+// moves), so the project list is re-read each tick — from the store, which is
+// this process's own table. A tick where the store cannot be read is skipped
+// rather than diffed against an empty board — that would publish a remove for
+// every file in every project.
 func (s *Server) watch() {
 	const interval = 1 * time.Second
 	prev := map[string]fileStamp{}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
-		projects, err := s.projects.all()
+		projects, err := s.projects()
 		if err != nil {
 			continue
 		}
@@ -403,19 +233,32 @@ func (s *Server) watch() {
 	}
 }
 
+// projects is the board, as the file watcher needs it: id and folder.
+func (s *Server) projects() ([]struct{ ID, Path string }, error) {
+	list, err := s.store.ListProjects()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]struct{ ID, Path string }, 0, len(list))
+	for _, p := range list {
+		out = append(out, struct{ ID, Path string }{ID: p.ProjectID, Path: p.Path})
+	}
+	return out, nil
+}
+
 // snapshot maps every content file of every project (projectId + relative path)
 // to its size + mod time. A project whose folder is gone simply contributes
 // nothing, which reads as "its files were removed" — the honest answer.
-func (s *Server) snapshot(projects []projectDir) map[string]fileStamp {
+func (s *Server) snapshot(projects []struct{ ID, Path string }) map[string]fileStamp {
 	out := map[string]fileStamp{}
 	for _, p := range projects {
 		for _, dir := range schema.TypeDirs {
-			for _, rel := range schema.ListEntries(p.path, dir) {
-				info, err := os.Stat(filepath.Join(p.path, filepath.FromSlash(rel)))
+			for _, rel := range schema.ListEntries(p.Path, dir) {
+				info, err := os.Stat(filepath.Join(p.Path, filepath.FromSlash(rel)))
 				if err != nil {
 					continue
 				}
-				out[p.id+"\x00"+rel] = fileStamp{size: info.Size(), mod: info.ModTime().UnixNano()}
+				out[p.ID+"\x00"+rel] = fileStamp{size: info.Size(), mod: info.ModTime().UnixNano()}
 			}
 		}
 	}
@@ -442,7 +285,7 @@ func (s *Server) publishSchema(projectID, op, rel string) {
 	if typ == "" {
 		return
 	}
-	s.broker.Publish(SchemaEvent{
+	s.schema.Publish(SchemaEvent{
 		Kind:      "schema",
 		ProjectID: projectID,
 		Op:        op,
@@ -464,8 +307,8 @@ func contentType(rel string) string {
 // atoms / edges / contracts as parsed objects, prose types as raw text. A
 // removed file yields nil.
 func (s *Server) eventContent(projectID, typ, rel string) interface{} {
-	root, _, err := s.projects.dir(projectID)
-	if err != nil {
+	root, ok, err := s.projectDir(projectID)
+	if err != nil || !ok {
 		return nil
 	}
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
@@ -521,8 +364,8 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush() // send headers immediately so the connection establishes at once
 
-	sub := s.broker.Subscribe()
-	defer s.broker.Unsubscribe(sub)
+	sub := s.schema.Subscribe()
+	defer s.schema.Unsubscribe(sub)
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 	seq := 0
@@ -569,8 +412,9 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ---------- broker ----------
+// ---------- schema broker ----------
 
+// SchemaEvent is one change in a project's file tree.
 type SchemaEvent struct {
 	Kind      string
 	ProjectID string
@@ -581,14 +425,17 @@ type SchemaEvent struct {
 	Content   interface{}
 }
 
-type Broker struct {
+// schemaBroker fans file-tree changes out to the open /static/stream connections.
+// It is the schema half of the service's two brokers (the record stream has its
+// own, in server.go).
+type schemaBroker struct {
 	mu   sync.Mutex
 	subs []chan SchemaEvent
 }
 
-func NewBroker() *Broker { return &Broker{} }
+func NewSchemaBroker() *schemaBroker { return &schemaBroker{} }
 
-func (b *Broker) Subscribe() chan SchemaEvent {
+func (b *schemaBroker) Subscribe() chan SchemaEvent {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	ch := make(chan SchemaEvent, 64)
@@ -596,7 +443,7 @@ func (b *Broker) Subscribe() chan SchemaEvent {
 	return ch
 }
 
-func (b *Broker) Unsubscribe(ch chan SchemaEvent) {
+func (b *schemaBroker) Unsubscribe(ch chan SchemaEvent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for i, s := range b.subs {
@@ -607,7 +454,7 @@ func (b *Broker) Unsubscribe(ch chan SchemaEvent) {
 	}
 }
 
-func (b *Broker) Publish(ev SchemaEvent) {
+func (b *schemaBroker) Publish(ev SchemaEvent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, ch := range b.subs {
@@ -616,13 +463,4 @@ func (b *Broker) Publish(ev SchemaEvent) {
 		default:
 		}
 	}
-}
-
-func containsStr(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

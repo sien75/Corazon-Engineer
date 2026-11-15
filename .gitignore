@@ -4,8 +4,6 @@ node_modules
 
 # Compiled binaries
 workspace/ai/engineer-ai
-workspace/log/engineer-log
-workspace/static/engineer-static
 
 # Packaged deploy artifacts (cookbooks/prod.deploy.md)
 dist/

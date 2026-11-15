@@ -1,4 +1,4 @@
-module engineer/log
+module engineer/storage
 
 go 1.25.0
 

@@ -104,7 +104,8 @@
     import DOMPurify from "/vendor/dompurify.js";
     import hljs from "/vendor/highlight.js";
 
-    const { static: STATIC, log: LOG } = ENGINEER;
+    // storage serves both the project's files (/static/*) and its records (/log/*).
+    const { storage: STORAGE } = ENGINEER;
     const HEAD = { "Content-Type": "application/yaml" };
     const md = new MarkdownIt({
       linkify: true,
@@ -221,7 +222,7 @@
       drawList();
       $("panel").innerHTML = `<p class="hint">loading ${esc(path)}…</p>`;
       try {
-        const data = await call(STATIC, "/static/query-detail", { id: path, type: "development", projectId: PID });
+        const data = await call(STORAGE, "/static/query-detail", { id: path, type: "development", projectId: PID });
         docText = String(data.development ?? "");
         stages = stagesOf(docText);
         drawFlow(stages);
@@ -269,7 +270,7 @@
       $("panel").innerHTML = `<p class="hint">loading ${esc(path)}…</p>`;
       try {
         if (!type) throw new Error("cannot read " + path);
-        const data = await call(STATIC, "/static/query-detail", { id: path, type, projectId: PID });
+        const data = await call(STORAGE, "/static/query-detail", { id: path, type, projectId: PID });
         $("panel").innerHTML = `
           <p class="doc-title">${esc(path.split("/").pop())}</p>
           <p class="doc-path">${esc(path)}</p>
@@ -282,8 +283,8 @@
 
     // ---------- boot ----------
     try {
-      PID = pageProject || (await call(LOG, "/log/session/detail", { sessionId: sid })).projectId;
-      const data = await call(STATIC, "/static/query", { projectId: PID });
+      PID = pageProject || (await call(STORAGE, "/log/session/detail", { sessionId: sid })).projectId;
+      const data = await call(STORAGE, "/static/query", { projectId: PID });
       files = [...(data.development || []), ...(data["how-to"] || [])];
       iterations = files
         .filter((p) => /^development\/iterations\/.+\.md$/.test(p))

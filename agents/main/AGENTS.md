@@ -24,7 +24,7 @@ The tools, endpoints and ports described here belong to Corazon Engineer itself;
 - **sub**: a session inside one project. Either a plain chat (no blueprint), or created from a blueprint and shown as that blueprint's page.
 - **Open**: an open session has one tab, and a tab holds exactly one session. Closing a session keeps its conversation.
 - **Draft**: a tab the user opened but has not yet sent a message in. It has no session and no log record; it will not appear in the open list. Sending the first message creates the session.
-- **State** lives in log: `projects`, and `sessions` (kind, project, blueprint, name, whether it is open and in what order, whether it is main). Read it through the interfaces; never guess.
+- **State** lives in storage: `projects`, and `sessions` (kind, project, blueprint, name, whether it is open and in what order, whether it is main). Read it through the interfaces; never guess.
 
 ## Tools
 
@@ -34,7 +34,7 @@ Besides the pi built-ins (`read` `grep` `find` `ls` `bash` `write` `edit`), you 
 
 ### Operating the workspace
 
-Projects, sessions, which session is open, which is main — all of it is changed by calling the log and ai HTTP interfaces with `curl` from `bash`. There are no tools for it.
+Projects, sessions, which session is open, which is main — all of it is changed by calling the storage and ai HTTP interfaces with `curl` from `bash`. There are no tools for it.
 
 - Before the first call, read `README.md` in the directory named under **Interface docs position** (at the end of your prompt).
 - Find the scenario that matches what the user asked and follow its steps. Do not improvise calls.

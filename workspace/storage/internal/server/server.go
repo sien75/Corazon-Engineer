@@ -12,21 +12,29 @@ import (
 	"sync"
 	"time"
 
-	"engineer/log/internal/store"
+	"engineer/storage/internal/store"
 
 	"gopkg.in/yaml.v3"
 )
+
+// Server is the one storage service: the record store and the project files
+// behind two route prefixes. The wire still says /log/* and /static/*, because a
+// path names the thing it acts on and these are two views of one data home —
+// records in sqlite, the project trees the rows point at.
 
 type Server struct {
 	store  *store.Store
 	mux    *http.ServeMux
 	broker *Broker
+	// schema pushes file-tree changes to pages that draw a project's structure
+	// (static.go).
+	schema *schemaBroker
 	// workspace pushes "the workspace changed" to the shell (workspace.go).
 	workspace *workspaceBroker
 }
 
 func New(st *store.Store) *Server {
-	s := &Server{store: st, mux: http.NewServeMux(), broker: NewBroker(), workspace: &workspaceBroker{}}
+	s := &Server{store: st, mux: http.NewServeMux(), broker: NewBroker(), schema: NewSchemaBroker(), workspace: &workspaceBroker{}}
 	// Every route is named by what it is about — a project, a session, a test run, an
 	// observation — so the file name and the path say the same thing. search and
 	// stream are the two that span every kind, and they are the only two without a
@@ -55,10 +63,17 @@ func New(st *store.Store) *Server {
 	s.mux.HandleFunc("POST /log/search", s.handleSearch)
 	s.mux.HandleFunc("POST /log/stream", s.handleStream)
 	s.mux.HandleFunc("POST /log/workspace/stream", s.handleWorkspaceStream)
+	// The project tree's read-only views (static.go). Same mux, same process: which
+	// folder a request means is a row in this process's own database, so resolving
+	// it is a query, not a call to another service.
+	s.mux.HandleFunc("POST /static/query", s.handleSchemaQuery)
+	s.mux.HandleFunc("POST /static/query-detail", s.handleSchemaQueryDetail)
+	s.mux.HandleFunc("POST /static/stream", s.handleEvent)
 	return s
 }
 
 func (s *Server) Listen(addr string) error {
+	go s.watch()
 	return http.ListenAndServe(addr, cors(s.mux))
 }
 

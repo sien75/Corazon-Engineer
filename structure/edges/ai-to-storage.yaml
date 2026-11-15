@@ -1,48 +1,48 @@
 edges:
-  - id: ai-to-log-write
+  - id: ai-to-storage-write
     from: ai
     from_interface: log-session-record-add
-    to: log
+    to: storage
     to_interface: log-session-record-add
     channel: network
     protocol: http
-    description: ai writes records (call / observe / conversation) into log after an operation
-  - id: ai-to-log-session-messages
+    description: ai writes records (call / observe / conversation) into storage after an operation
+  - id: ai-to-storage-session-messages
     from: ai
     from_interface: log-session-messages
-    to: log
+    to: storage
     to_interface: log-session-messages
     channel: network
     protocol: http
     description: ai reads a session's conversation messages to rebuild context on resume
-  - id: ai-to-log-session-delete
+  - id: ai-to-storage-session-delete
     from: ai
     from_interface: log-session-delete
-    to: log
+    to: storage
     to_interface: log-session-delete
     channel: network
     protocol: http
     description: ai-delete removes a conversation's records and its session row
-  - id: ai-to-log-session-upsert
+  - id: ai-to-storage-session-upsert
     from: ai
     from_interface: log-session-upsert
-    to: log
+    to: storage
     to_interface: log-session-upsert
     channel: network
     protocol: http
     description: ai records a new conversation's kind, blueprint and display name
-  - id: ai-to-log-session-detail
+  - id: ai-to-storage-session-detail
     from: ai
     from_interface: log-session-detail
-    to: log
+    to: storage
     to_interface: log-session-detail
     channel: network
     protocol: http
     description: resume reads a conversation's kind and blueprint to pick the role spec and the page
-  - id: ai-to-log-project-get
+  - id: ai-to-storage-project-get
     from: ai
     from_interface: log-project-get
-    to: log
+    to: storage
     to_interface: log-project-get
     channel: network
     protocol: http

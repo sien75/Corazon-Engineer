@@ -2,12 +2,11 @@ module engineer/launcher
 
 go 1.25.0
 
-// The launcher is a multi-call binary: it is also the process that runs the
-// three Go services, so it has to link them in. Pointing at the local modules is
-// what makes that a single `go build` with no workspace file.
+// The launcher is a multi-call binary: it is also the process that runs the two
+// Go services, so it has to link them in. Pointing at the local modules is what
+// makes that a single `go build` with no workspace file.
 require (
-	engineer/log v0.0.0
-	engineer/static v0.0.0
+	engineer/storage v0.0.0
 	engineer/web v0.0.0
 )
 
@@ -26,7 +25,6 @@ require (
 )
 
 replace (
-	engineer/log => ../../../workspace/log
-	engineer/static => ../../../workspace/static
+	engineer/storage => ../../../workspace/storage
 	engineer/web => ../../../workspace/web/server
 )

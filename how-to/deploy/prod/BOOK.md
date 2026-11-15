@@ -1,6 +1,6 @@
 # prod deploy cookbook
 
-Package Corazon Engineer as a one-click tarball and install it on a fresh machine. The target needs no runtime (no Go / Bun / Node): the Go side builds to a single static binary — `engineer`, a multi-call binary carrying the launcher plus the log/static/web services — and ai to a self-contained Bun binary. Docker is optional — one-click comes from the `engineer` launcher, not a container.
+Package Corazon Engineer as a one-click tarball and install it on a fresh machine. The target needs no runtime (no Go / Bun / Node): the Go side builds to a single static binary — `engineer`, a multi-call binary carrying the launcher plus the storage/web services — and ai to a self-contained Bun binary. Docker is optional — one-click comes from the `engineer` launcher, not a container.
 
 **What ships** — two binaries plus the published tool content (`agents/`, `docs/` — the interface docs). The package is the **tool**, not a project:
 
@@ -13,7 +13,7 @@ engineer-<version>-<os>-<arch>/
 └── install.sh    install / upgrade
 ```
 
-`bin/engineer` carries the three Go services too — the launcher starts them by re-running *itself* with `serve-log` / `serve-static` / `serve-web` (a multi-call binary). That is deliberate: every distinct executable path costs one entry in a corporate EDR's process whitelist and one "allow this program?" prompt per machine for a new user.
+`bin/engineer` carries the two Go services too — the launcher starts them by re-running *itself* with `serve-storage` / `serve-web` (a multi-call binary). That is deliberate: every distinct executable path costs one entry in a corporate EDR's process whitelist and one "allow this program?" prompt per machine for a new user.
 
 The installed layout (under `~/.engineer/`) is software only — **upgrades only ever touch `apps/`**:
 
@@ -35,7 +35,7 @@ puts that folder on the board as a convenience, and a pre-home `.engineer/engine
 into the home at start-up (records and sessions only — every start merges whatever is new). The tool
 ships no project and keeps no project data.
 
-**Lifecycle**: `engineer` starts the four services and holds the foreground; Ctrl-C stops them all. There is no `stop` command.
+**Lifecycle**: `engineer` starts the three services and holds the foreground; Ctrl-C stops them all. There is no `stop` command.
 
 ## Prerequisites (build machine only)
 
@@ -66,11 +66,11 @@ VER=$(git describe --tags --always 2>/dev/null || echo dev)
 OUT=dist/engineer-$VER-$OS-$ARCH
 mkdir -p "$OUT"/{bin,web}
 
-# 1. Go binary — CGO off, fully static (log's sqlite driver is pure Go).
+# 1. Go binary — CGO off, fully static (storage's sqlite driver is pure Go).
 #    `-s -w` drops debug/symbol tables: ~1/3 off the binary with no runtime
-#    effect. ONE file for the launcher *and* the three Go services: `engineer` is
-#    a multi-call binary (`engineer serve-log|serve-static|serve-web`), and its
-#    module (how-to/deploy/prod/go.mod) links the three local modules in.
+#    effect. ONE file for the launcher *and* the two Go services: `engineer` is
+#    a multi-call binary (`engineer serve-storage|serve-web`), and its module
+#    (how-to/deploy/prod/go.mod) links the two local modules in.
 (cd how-to/deploy/prod && CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OLDPWD/$OUT/bin/engineer" .)
 
 # 2. ai service — Bun single-file binary (needs node_modules installed).
@@ -140,14 +140,13 @@ On macOS both toolchains ad-hoc sign their output, so no separate `codesign` ste
 
 `bin/engineer` is built from `how-to/deploy/prod/launch.go` (a single-file Go program compiled at pack time) — a native binary, shipped as the package's entry point:
 
-- picks free ports (defaults 7500 web / 7501 ai / 7502 static / 7503 log, advancing to the next free one on conflict), hands each service everything it needs (`--bind <host>` + `--port <n>` for all four; `--home` for log and ai — the program's own data directory, **not** a project; `--log` for static; `--log` + `--static` + `--agents` + `--docs` for ai; `--assets` + `--static` / `--ai` / `--log` for web), starts log → static → ai → web as children, prints the chosen addresses plus the bind host, then **holds the foreground**. Ctrl-C tears the whole stack down. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file and no stop script**.
+- picks free ports (defaults 7500 web / 7501 ai / 7502 storage, advancing to the next free one on conflict), hands each service everything it needs (`--bind <host>` + `--port <n>` for all three; `--home` for storage and ai — the program's own data directory, **not** a project; `--storage` + `--agents` + `--docs` for ai; `--assets` + `--storage` / `--ai` for web), starts storage → ai → web as children, prints the chosen addresses plus the bind host, then **holds the foreground**. Ctrl-C tears the whole stack down. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file and no stop script**.
 
   The data home is `$ENGINEER_DATA`, default `~/.engineer/data` (beside the installed versions, never inside a project): it holds `engineer.db` (records, sessions, the project board), `uploads/` and the `run/` + `logs/` directories. The package is no longer tied to a project folder — **projects are added on the web page** (Engineer launcher, `+`) and remembered there. When the launcher starts in a folder that holds `engineer.yaml`, that folder is put on the board.
 
   **Nothing is migrated, ever — there is no migration step in the program.** A `.engineer/engineer.db` left in the folder from before the data home existed is not consulted; the data home is the only database the program reads, and a new home simply starts empty (projects are added on the page).
-- **Proxy-aware.** The launcher keeps the bypass list the user's environment set, drops a wildcard `*` from it, and always adds `localhost,127.0.0.1,::1`: the stack's own calls are loopback and must bypass a proxy (Clash and friends 502 them, which breaks history reads and record writes), while a provider reached through a gateway (zenmux) must keep it.
-- **Local by default.** The launcher binds the four services to `127.0.0.1`, so nothing about the stack is visible on the network — the ports are not reachable from another machine at all. (A service started by hand has no default at all: `--bind` is required.) `ENGINEER_BIND` overrides the bind host: `ENGINEER_BIND=0.0.0.0 engineer` opens the stack to the whole network, `ENGINEER_BIND=<this machine's IP>` to a single interface. Under a wildcard bind the launcher advertises this machine's outward IPv4 instead of `localhost` — both in what it prints and in the web UI's `/config.js` — since `localhost` would point a browser on another machine at itself.
-- also serves the `engineer` subcommands: `start` (default) / `status` / `version` / `uninstall [--purge]`, plus the internal `serve-log` / `serve-static` / `serve-web` (the multi-call trick).
+- **Local by default.** The launcher binds the three services to `127.0.0.1`, so nothing about the stack is visible on the network — the ports are not reachable from another machine at all. (A service started by hand has no default at all: `--bind` is required.) `ENGINEER_BIND` overrides the bind host: `ENGINEER_BIND=0.0.0.0 engineer` opens the stack to the whole network, `ENGINEER_BIND=<this machine's IP>` to a single interface. Under a wildcard bind the launcher advertises this machine's outward IPv4 instead of `localhost` — both in what it prints and in the web UI's `/config.js` — since `localhost` would point a browser on another machine at itself.
+- also serves the `engineer` subcommands: `start` (default) / `status` / `version` / `uninstall [--purge]`, plus the internal `serve-storage` / `serve-web` (the multi-call trick).
 - native on purpose: the terminal's foreground process is named `engineer` (a shell script would show as `bash`/`zsh`), so terminals that title tabs from the process name — VS Code, notably — show `engineer` with no configuration.
 
 `install.sh` is the other shipped script: it installs (first run) or upgrades
@@ -236,5 +235,5 @@ ssh "$SRV" "cd $REPO && gh release create '$TAG' dist/engineer-$TAG-*.tar.gz --t
 
 - **Why the web server is Go, not Bun**: it is ~100 lines of `net/http` + `os` — serve files, generate one `/config.js` — with no JS in it, so as a Bun binary it cost 61 MB of embedded runtime for nothing. `ai` stays Bun: the pi SDK is TypeScript, so a JS runtime is needed either way, and embedding it (70 MB) beats asking the user to install one.
 - **Why not Docker**: not needed for one-click — the tarball has zero runtime dependencies and `bin/engineer` is the single entry point. If you want container isolation anyway, build one all-in-one image: `COPY` the unpacked tarball, `CMD ["./bin/engineer"]` — the launcher already holds the foreground, so the container stays up until stopped.
-- **If `bun build --compile` misbehaves for ai** (the pi SDK is the most dynamic dependency): fall back to installing Bun on the target, ship `workspace/ai/` (src + package.json + bun.lock, then `bun install --production`), and change the ai spec in `how-to/deploy/prod/launch.go` to `bun run ai/src/main.ts --bind <host> --port <port> --home <data home> --log <url> --static <url> --agents <AGENTS.md>` (rebuild `bin/engineer`). Every flag there is required.
-- **Where the data lives**: everything mutable (the log service's sqlite db, plus per-project `run/` pids and `logs/`) goes under `<cwd project>/.engineer/` — the project being processed; back it up with the project.
+- **If `bun build --compile` misbehaves for ai** (the pi SDK is the most dynamic dependency): fall back to installing Bun on the target, ship `workspace/ai/` (src + package.json + bun.lock, then `bun install --production`), and change the ai spec in `how-to/deploy/prod/launch.go` to `bun run ai/src/main.ts --bind <host> --port <port> --home <data home> --storage <url> --agents <AGENTS.md> --docs <docs dir>` (rebuild `bin/engineer`). Every flag there is required.
+- **Where the data lives**: everything mutable (the storage service's sqlite db, plus `run/` pids and `logs/`) goes under the data home (`$ENGINEER_DATA`, default `~/.engineer/data`) — not inside a project; back that directory up.

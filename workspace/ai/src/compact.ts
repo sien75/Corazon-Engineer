@@ -12,7 +12,7 @@
 // tail and returns; the compaction then runs between this turn and the next one,
 // with the agent idle. Its `compaction_end` event reaches the same subscription
 // that records every other entry, so the summary is persisted without this file
-// touching the log at all.
+// touching storage at all.
 
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";

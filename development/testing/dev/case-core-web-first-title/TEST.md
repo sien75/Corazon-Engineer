@@ -25,9 +25,9 @@ ROOT="$ROOTDIR/.engineer/.first-title"
 HOME_DIR="$ROOT/home"
 
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 9090 9091 9092 9093; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 9090 9091 9093; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
@@ -42,23 +42,22 @@ HTML
 printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9091 >/tmp/first-title-log.log 2>&1 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9091 >/tmp/first-title-log.log 2>&1 &
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:9091/log/project/list -d '{}' && break
   sleep 1
 done
 curl -s -o /dev/null -X POST http://localhost:9091/log/project/add \
   -H 'Content-Type: application/yaml' --data-binary "$(printf 'path: %s\nname: first-title' "$ROOT")"
-/tmp/engineer serve-static --log http://localhost:9091 --bind 127.0.0.1 --port 9092 >/tmp/first-title-static.log 2>&1 &
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9090 --stub \
-  --log http://localhost:9091 --static http://localhost:9092 \
+  --storage http://localhost:9091 \
   --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/first-title-ai.log 2>&1 &)
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:9090/ai/new -d 'kind: main' && break
   sleep 1
 done
 /tmp/engineer serve-web --bind 127.0.0.1 --port 9093 --assets "$ROOTDIR/workspace/web" \
-  --static http://localhost:9092 --ai http://localhost:9090 --log http://localhost:9091 \
+  --storage http://localhost:9091 --ai http://localhost:9090 \
   >/tmp/first-title-web.log 2>&1 &
 sleep 1
 ```
@@ -136,8 +135,8 @@ Expected: 所有行都是 `PASS`，退出码 0。
 ## Teardown
 
 ```bash
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 9090 9091 9092 9093; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 9090 9091 9093; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 rm -rf "$ROOT"
 ```

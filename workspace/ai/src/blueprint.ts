@@ -9,7 +9,7 @@
 // it has no slug, so there is no page to read and no README to append.
 //
 // There is no per-agent copy: the web server serves the prototype directory
-// itself at /agent/<sessionId>/, resolving the session to its slug through log.
+// itself at /agent/<sessionId>/, resolving the session to its slug through storage.
 // One page per blueprint, shared by every agent made from it — an edit is
 // visible to all of them on reload, and lands in the project's working tree.
 //

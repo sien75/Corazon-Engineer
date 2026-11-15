@@ -1,6 +1,6 @@
 # Corazon Engineer interfaces
 
-Four services: **log** (state and records), **ai** (conversations), **static** (project files), **web** (the shell). Their addresses are not fixed — each run picks them, and they are given to you when the session starts.
+Three services: **storage** (state, records and project files), **ai** (conversations), **web** (the shell). Their addresses are not fixed — each run picks them, and they are given to you when the session starts. storage answers on two prefixes: `/log/*` for records and sessions, `/static/*` for a project's files — one address, both kinds of call.
 
 ## Calling
 
@@ -10,7 +10,7 @@ Four services: **log** (state and records), **ai** (conversations), **static** (
 - `*-stream` interfaces are SSE for pages; do not call them.
 
 ```bash
-curl -s -X POST <log>/log/session/list -H 'Content-Type: application/yaml' --data-binary 'pageNum: 1'
+curl -s -X POST <storage>/log/session/list -H 'Content-Type: application/yaml' --data-binary 'pageNum: 1'
 ```
 
 ## Common tasks
@@ -36,11 +36,13 @@ Each file has the description, request, response and errors of one interface.
 - `GET /blobs/{sha256}` — Read back a stored image by its content address, as raw bytes — [ai-blobs](ai-blobs.md)
 - `POST /ai/delete` — Delete an agent, its records and its session row for good — [ai-delete](ai-delete.md)
 - `POST /ai/new` — Instantiate an agent from a blueprint — [ai-new](ai-new.md)
-- `POST /ai/resume` — Resume an existing conversation, rebuilding its context from log records — [ai-resume](ai-resume.md)
+- `POST /ai/resume` — Resume an existing conversation, rebuilding its context from storage records — [ai-resume](ai-resume.md)
 - `POST /ai/stop` — Abort the run currently streaming in a session — [ai-stop](ai-stop.md)
 - `POST /ai/stream` — Stream AI output as native pi events — [ai-stream](ai-stream.md)
 
-### log
+### storage
+
+Records, sessions, the project board (the `/log/*` prefix): 
 
 - `POST /log/project/add` — Put a folder on the project board — [log-project-add](log-project-add.md)
 - `POST /log/project/get` — Read one project by id, removed or not — [log-project-get](log-project-get.md)
@@ -67,7 +69,7 @@ Each file has the description, request, response and errors of one interface.
 - `POST /log/test/query` — List test records, newest first — [log-test-query](log-test-query.md)
 - `POST /log/workspace/stream` — Subscribe to workspace changes — [log-workspace-stream](log-workspace-stream.md)
 
-### static
+Project files — atoms, edges, contracts and the prose beside them (the `/static/*` prefix):
 
 - `POST /static/query` — Return full schema data for rendering the architecture graph and atom/edge details — [static-query](static-query.md)
 - `POST /static/query-detail` — Fetch content of a single leaf file — [static-query-detail](static-query-detail.md)

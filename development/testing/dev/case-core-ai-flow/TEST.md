@@ -13,20 +13,20 @@ rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: ai-flow\n' > "$ROOT/engineer.yaml"
 
 # Guard first: with an empty $HOME_DIR the pattern below degrades to
-# "serve-log --home " and kills every service on the machine —
+# "serve-storage --home " and kills every service on the machine —
 # including the one running the agent. Fail loudly instead.
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 # Reclaim a previous run of this case. A leftover service keeps serving its
 # old database (or silently stops this run's from binding, so the frontend
 # talks to the other case's services) — and the failure that causes looks
 # like a wrong answer, not a dead service. This happens before, not after.
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 8800 8801 8802; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 8800 8801; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8800 >/tmp/ai-flow-log.log 2>&1 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8800 >/tmp/ai-flow-log.log 2>&1 &
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8800/log/project/list -d '{}' && break
   sleep 1
@@ -34,11 +34,10 @@ done
 curl -s -X POST http://localhost:8800/log/project/add -H 'Content-Type: application/yaml' \
   --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
 PROJECT=$(cat "$ROOT/.project")
-/tmp/engineer serve-static --log http://localhost:8800 --bind 127.0.0.1 --port 8802 >/tmp/ai-flow-static.log 2>&1 &
 
 cd workspace/ai && bun install && bun run src/main.ts \
   --bind 127.0.0.1 --port 8801 --home "$HOME_DIR" \
-  --log http://localhost:8800 --static http://localhost:8802 \
+  --storage http://localhost:8800 \
   --agents ../../agents --docs "$PWD/.engineer/docs" &
 
 # wait for it before asking: the blocks below run back to back

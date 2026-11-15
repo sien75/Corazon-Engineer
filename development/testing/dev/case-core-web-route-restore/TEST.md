@@ -4,7 +4,7 @@
 
 ## Setup
 
-按 dev BOOK 启动 8500。清除 http_proxy / https_proxy，NO_PROXY 与 no_proxy 为 *。真实浏览器打开 /，等待已有 main 和一个 sub 标签。使用已有会话，不发送 prompt、不删会话。
+按 dev BOOK 启动 8500。真实浏览器打开 /，等待已有 main 和一个 sub 标签。使用已有会话，不发送 prompt、不删会话。
 
 ## Run
 

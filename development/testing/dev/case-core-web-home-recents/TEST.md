@@ -14,7 +14,7 @@
 
 Source of truth: `workspace/web/app.js`（`openSessionFromLauncher` / `adoptRecentSession` /
 `openIndexBefore` / `fillHomeLists` / `activateTab` / `viewOf`）、`workspace/web/components/chat.js`
-（`replayHistory`）、`workspace/log`（`session/current/*` + `session/on|off|detail` + `session/list`）。不需要模型：
+（`replayHistory`）、`workspace/storage`（`session/current/*` + `session/on|off|detail` + `session/list`）。不需要模型：
 ai 用 `--stub`，历史用 `/log/session/record/add` 直接写进 log（会话记录，bucket 由端点决定）。
 
 ## Setup
@@ -23,7 +23,7 @@ Prerequisite: `ego-browser` on `PATH`（`ego-browser --version`）。
 
 ```bash
 # A scratch project root: the case must not touch the real .agents/ or .engineer/.
-# log's database and the project board live in the engineer home, not in the project.
+# storage's database and the project board live in the engineer home, not in the project.
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.recents"
 HOME_DIR="$ROOT/home"
@@ -31,12 +31,12 @@ rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: recents\n' > "$ROOT/engineer.yaml"
 
 # Guard first: with an empty $HOME_DIR the pattern below degrades to
-# "serve-log --home " and kills every service on the machine — including the one
+# "serve-storage --home " and kills every service on the machine — including the one
 # running the agent. Fail loudly instead.
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 8990 8991 8992 8993; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 8990 8991 8993; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 # one blueprint, so a session can have a page to open in the taken-over tab
@@ -59,17 +59,16 @@ HTML
 printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8991 >/tmp/recents-log.log 2>&1 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8991 >/tmp/recents-log.log 2>&1 &
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8991/log/project/list -d '{}' && break
   sleep 1
 done
 curl -s -o /dev/null -X POST http://localhost:8991/log/project/add \
   -H 'Content-Type: application/yaml' --data-binary "$(printf 'path: %s\nname: recents' "$ROOT")"
-/tmp/engineer serve-static --log http://localhost:8991 --bind 127.0.0.1 --port 8992 >/tmp/recents-static.log 2>&1 &
 
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 8990 --stub \
-  --log http://localhost:8991 --static http://localhost:8992 \
+  --storage http://localhost:8991 \
   --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/recents-ai.log 2>&1 &)
 
@@ -80,7 +79,7 @@ for i in $(seq 1 60); do
 done
 
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8993 --assets "$ROOTDIR/workspace/web" \
-  --static http://localhost:8992 --ai http://localhost:8990 --log http://localhost:8991 \
+  --storage http://localhost:8991 --ai http://localhost:8990 \
   >/tmp/recents-web.log 2>&1 &
 sleep 1
 ```
@@ -102,8 +101,8 @@ await page.waitForSelector("#tabs .tab-group", { state: "visible" });
 const post = async (url, body) =>
   (await page.fetch(url, { method: "POST", headers: { "Content-Type": "application/yaml" }, body })).body;
 const ENGINEER = await page.evaluate(async () => (await import("/config.js")).ENGINEER);
-const PROJECT = (await post(`${ENGINEER.log}/log/project/list`, "{}")).match(/projectId:\s*(\S+)/)[1];
-const openIds = async () => String(await post(`${ENGINEER.log}/log/session/current/get`, "{}"));
+const PROJECT = (await post(`${ENGINEER.storage}/log/project/list`, "{}")).match(/projectId:\s*(\S+)/)[1];
+const openIds = async () => String(await post(`${ENGINEER.storage}/log/session/current/get`, "{}"));
 
 // A clean bar to start from: whatever an earlier run left open is closed (main is
 // the shell's own conversation and is never closed).
@@ -111,16 +110,16 @@ const before = await openIds();
 const mainSession = before.match(/mainSession:\s*(s_[0-9a-f]+)/)?.[1];
 const others = (before.match(/s_[0-9a-f]+/g) || []).filter((id) => id !== mainSession);
 if (others.length) {
-  await post(`${ENGINEER.log}/log/session/off`, `sessionIds:\n${others.map((i) => `  - ${i}`).join("\n")}`);
+  await post(`${ENGINEER.storage}/log/session/off`, `sessionIds:\n${others.map((i) => `  - ${i}`).join("\n")}`);
 }
 
 // One conversation of the project's own chat, recorded and taken off the open list:
 // it is only a Recents row now, which is what the row has to reopen.
 const made = await post(`${ENGINEER.ai}/ai/new`, `projectId: ${PROJECT}\nkind: sub`);
 const SESSION = String(made).match(/sessionId:\s*(\S+)/)[1];
-await post(`${ENGINEER.log}/log/session/record/add`,
+await post(`${ENGINEER.storage}/log/session/record/add`,
   `sessionId: ${SESSION}\npayload:\n  seq: 1\n  role: user\n  content: ${JSON.stringify("probe question")}\n  raw: ${JSON.stringify({ role: "user", content: "probe question" })}`);
-await post(`${ENGINEER.log}/log/session/off`, `sessionIds:\n  - ${SESSION}`);
+await post(`${ENGINEER.storage}/log/session/off`, `sessionIds:\n  - ${SESSION}`);
 await page.reload();
 await page.waitForSelector("#tabs .tab.main", { state: "visible" });
 
@@ -194,7 +193,7 @@ check("a session already open is brought up, the draft left alone",
 // 4. a session with a blueprint: the taken-over tab shows that page in a frame
 const withPage = await post(`${ENGINEER.ai}/ai/new`, `projectId: ${PROJECT}\nkind: sub\nblueprint: probe`);
 const PAGED = String(withPage).match(/sessionId:\s*(\S+)/)[1];
-await post(`${ENGINEER.log}/log/session/off`, `sessionIds:\n  - ${PAGED}`);
+await post(`${ENGINEER.storage}/log/session/off`, `sessionIds:\n  - ${PAGED}`);
 await page.click("#tabs .tab.launcher.launcher-entry");
 await page.waitForSelector(`${shownHome} .home-sec .launcher-item`, { state: "visible" });
 await page.click(`loc=css:${recentRow}`);
@@ -227,8 +226,7 @@ copying it into the draft, and a blueprint session that lands in the same tab as
 
 ```bash
 pkill -f 'serve-web.*--port 8993'
-pkill -f 'serve-log --home .*\.recents'
-pkill -f 'serve-static --log http://localhost:8991'
+pkill -f 'serve-storage --home .*\.recents'
 pkill -f 'main.ts.*--home .*\.recents'
 rm -rf "$PWD/.engineer/.recents"
 ```

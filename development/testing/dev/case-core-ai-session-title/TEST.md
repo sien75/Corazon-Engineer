@@ -17,9 +17,9 @@ ROOT="$ROOTDIR/.engineer/.session-title"
 HOME_DIR="$ROOT/home"
 
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 9080 9081 9082; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 9080 9081; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
@@ -34,7 +34,7 @@ HTML
 printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9081 >/tmp/session-title-log.log 2>&1 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9081 >/tmp/session-title-log.log 2>&1 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:9081/log/project/list -d '{}' && break
   sleep 1
@@ -42,12 +42,11 @@ done
 curl -s -X POST http://localhost:9081/log/project/add -H 'Content-Type: application/yaml' \
   --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
 PROJECT=$(cat "$ROOT/.project")
-/tmp/engineer serve-static --log http://localhost:9081 --bind 127.0.0.1 --port 9082 >/tmp/session-title-static.log 2>&1 &
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9080 \
-  --log http://localhost:9081 --static http://localhost:9082 \
+  --storage http://localhost:9081 \
   --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/session-title-ai.log 2>&1 &)
 
-LOG=http://localhost:9081
+STORAGE=http://localhost:9081
 AI=http://localhost:9080
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
@@ -55,7 +54,7 @@ for i in $(seq 1 60); do
 done
 
 sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])'; }
-title_of() { curl -s -X POST $LOG/log/session/detail -d "sessionId: $1" | sed -n 's/^title: //p'; }
+title_of() { curl -s -X POST $STORAGE/log/session/detail -d "sessionId: $1" | sed -n 's/^title: //p'; }
 # ask <session> <prompt> [stream-file] — 发一轮，然后读这一轮的流（默认为 /dev/null）。
 # 顺序和页面一致：先 ask（服务端这时就把 active 立起来），再开流；空闲时开的流会立刻关掉。
 ask() {
@@ -230,7 +229,7 @@ Expected: `agent_settled` 的行号小于 `session_title` 的行号（流没在�
 ## 2. 标题生成不往会话记录里加东西
 
 ```bash
-curl -s -X POST $LOG/log/session/messages -d "sessionId: $SUB" | python3 -c '
+curl -s -X POST $STORAGE/log/session/messages -d "sessionId: $SUB" | python3 -c '
 import sys, yaml
 msgs = yaml.safe_load(sys.stdin)["messages"]
 print("records:", len(msgs))
@@ -245,8 +244,7 @@ Expected: `user: 1`、`model: 0`，`records` 是「提问 + 回答（+ 工具调
 ## Teardown
 
 ```bash
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-pkill -f "serve-static --log $LOG" 2>/dev/null || true
 rm -rf "$ROOT"
 ```

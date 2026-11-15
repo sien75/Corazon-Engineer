@@ -8,7 +8,7 @@ prompt. `README.md` and `index.html` are required; every other file — css, js,
 images, subdirectories — is served from the same directory by relative URL.
 
 Nothing is copied. The web server serves `.agents/blueprints/<slug>/` itself at
-`/agent/<sessionId>/`, resolving the session to its slug through log, so the URL
+`/agent/<sessionId>/`, resolving the session to its slug through storage, so the URL
 carries the conversation and every agent made from one blueprint shares one page.
 
 This case is HTTP-level: no browser is needed to see the mapping, the two
@@ -16,7 +16,7 @@ required files, or the serving path. What the pane shows is covered by
 `case-core-web-serve` (`/agent/` root) and by the shell's own routing.
 
 Note: every API speaks YAML (`application/yaml`) — request and response bodies
-below are YAML. Run with proxies off (`NO_PROXY='*' no_proxy='*'`).
+below are YAML.
 
 ## Setup
 
@@ -24,14 +24,14 @@ below are YAML. Run with proxies off (`NO_PROXY='*' no_proxy='*'`).
 # Reclaim a previous run of this case (a leftover service is what makes a wrong
 # answer look like a dead one).
 HOME_DIR="$PWD/.engineer/.agent-test/home"
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 for p in 8970 8971 8972; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 # A scratch project: one blueprint with its own assets, one missing index.html.
 ROOT="$PWD/.engineer/.agent-test"
-# The engineer home (log's database, the project board). Not a project.
+# The engineer home (storage's database, the project board). Not a project.
 HOME_DIR="$ROOT/home"
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/demo/assets" "$ROOT/.agents/blueprints/broken"
 printf 'project: agent-test\n' > "$ROOT/engineer.yaml"
@@ -61,7 +61,7 @@ printf '<!doctype html><h1>two</h1><engineer-chat></engineer-chat><engineer-chat
   > "$ROOT/.agents/blueprints/twochats/index.html"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8970 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8970 &
 # The scratch project goes on the board, and every ai/new below names it.
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8970/log/project/list -d '{}' && break
@@ -72,10 +72,10 @@ curl -s -X POST http://localhost:8970/log/project/add -H 'Content-Type: applicat
 PROJECT=$(cat "$ROOT/.project")
 # ai is the Bun service, not a subcommand of the Go binary (--stub: no model calls)
 (cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 8971 --home "$HOME_DIR" \
-  --log http://localhost:8970 --static http://localhost:8972 --agents "$(cd ../../agents && pwd)" --docs "$PWD/.engineer/docs" --stub &)
+  --storage http://localhost:8970 --agents "$(cd ../../agents && pwd)" --docs "$PWD/.engineer/docs" --stub &)
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8972 \
   --assets "$(cd workspace/web && pwd)" \
-  --static http://localhost:8972 --ai http://localhost:8971 --log http://localhost:8970 &
+  --storage http://localhost:8970 --ai http://localhost:8971 &
 
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8971/ai/new \

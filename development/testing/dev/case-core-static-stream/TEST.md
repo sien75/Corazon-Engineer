@@ -9,9 +9,9 @@ Note: the static API speaks YAML (`application/yaml`) — request and response b
 ```bash
 # Prepare the mock project: development/testing/.playground is a minimal mock unrelated to the real project; place it at .engineer/.playground/
 rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/.playground .engineer/.playground
-# The watcher polls every project on the board, so the case starts log as well,
-# registers the mock project and starts static against log. static has no root any
-# more: a request names a projectId and the folder comes from log.
+# The watcher polls every project on the board — rows in the database the same
+# service holds — so the case registers the mock project and then queries its tree.
+# There is no root: a request names a projectId and the folder comes from the store.
 #
 # Reclaim a previous run of this case. A leftover service keeps serving its old
 # database (or silently stops this run's from binding) — and the failure that
@@ -19,13 +19,13 @@ rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/
 # after.
 HOME_DIR="$PWD/.engineer/.playground-home"
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
-for p in 8880 8881; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
+for p in 8881; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 rm -rf "$HOME_DIR" && mkdir -p "$HOME_DIR"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8881 >/tmp/static-stream-log.log 2>&1 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8881 >/tmp/static-stream-log.log 2>&1 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8881/log/project/list -d '{}' && break
   sleep 1
@@ -35,11 +35,9 @@ curl -s -X POST http://localhost:8881/log/project/add -H 'Content-Type: applicat
   | awk '$1=="projectId:" {print $2}' > .engineer/.playground-project
 PROJECT=$(cat .engineer/.playground-project)
 
-/tmp/engineer serve-static --log http://localhost:8881 --bind 127.0.0.1 --port 8880 >/tmp/static-stream-static.log 2>&1 &
-
 # wait for it before streaming: the blocks below run back to back
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8880/static/query \
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8881/static/query \
     -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" && break
   sleep 1
 done
@@ -51,7 +49,7 @@ Terminal A (subscribe):
 
 ```bash
 PROJECT=$(cat .engineer/.playground-project)
-curl -N -X POST http://localhost:8880/static/stream \
+curl -N -X POST http://localhost:8881/static/stream \
   -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT"
 ```
 
@@ -83,7 +81,7 @@ Expected: terminal A receives an `update` event with `payload.type: atom` and `p
 
 ```bash
 PROJECT=$(cat .engineer/.playground-project)
-curl -N -X POST http://localhost:8880/static/stream \
+curl -N -X POST http://localhost:8881/static/stream \
   -H 'Content-Type: application/yaml' \
   --data-binary "$(printf 'projectId: %s\nkinds: how-to' "$PROJECT")"
 ```
@@ -96,7 +94,7 @@ Expected: connection established (with `: heartbeat` comments), but the `kind=sc
 
 ```bash
 PROJECT=$(cat .engineer/.playground-project)
-curl -N -X POST http://localhost:8880/static/stream \
+curl -N -X POST http://localhost:8881/static/stream \
   -H 'Content-Type: application/yaml' --data-binary 'projectId: p_ffffffffffff'
 ```
 

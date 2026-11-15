@@ -12,6 +12,12 @@ import (
 
 var ObjectTypes = []string{"atom", "edge", "how-to", "development", "contract", "docs", "humanwrite", "skill", "blueprint"}
 
+// LeafTypes are the object types /static/query-detail serves: one file each, all
+// of them prose or a contract. atom and edge are lists read by /static/query —
+// asking for one of them by id is a bad request, which is what the contract's
+// `type` enum says.
+var LeafTypes = []string{"how-to", "development", "contract", "docs", "humanwrite", "skill", "blueprint"}
+
 var TypeDirs = map[string]string{
 	"atom":        "structure/atoms",
 	"edge":        "structure/edges",

@@ -27,28 +27,28 @@ real `.engineer/engineer.db`.
 ```bash
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.recover-test"
-# log's database lives in the engineer home; the home is not a project.
+# storage's database lives in the engineer home; the home is not a project.
 HOME_DIR="$ROOT/home"
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 printf 'project: recover-test\n' > "$ROOT/engineer.yaml"
 
 # Guard first: with an empty $HOME_DIR the pattern below degrades to
-# "serve-log --home " and kills every service on the machine —
+# "serve-storage --home " and kills every service on the machine —
 # including the one running the agent. Fail loudly instead.
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 # Reclaim a previous run of this case. A leftover service keeps serving its
 # old database (or silently stops this run's from binding, so the frontend
 # talks to the other case's services) — and the failure that causes looks
 # like a wrong answer, not a dead service. This happens before, not after.
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 for p in 8810 8811 8812 8813; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 
-# the log service the crafted history is written to
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8810 >/tmp/recover-log.log 2>&1 &
+# the storage service the crafted history is written to
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8810 >/tmp/recover-log.log 2>&1 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8810/log/project/list -d '{}' && break
   sleep 1
@@ -56,13 +56,13 @@ done
 curl -s -X POST http://localhost:8810/log/project/add -H 'Content-Type: application/yaml' \
   --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
 
-# ai A — the real thing, against the real log service. Not --stub: the provider
+# ai A — the real thing, against the real storage service. Not --stub: the provider
 # rejection this case is about can only happen with a real provider. Without one
 # the service falls back to the echo stub, and section 2's provider check is
 # reported as skipped instead (see the note at the end of Run).
 ENGINEER_AI_DEBUG=/tmp/recover-ai-debug.log \
   bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8811 --home "$HOME_DIR" \
-  --log http://localhost:8810 --static http://localhost:8502 \
+  --storage http://localhost:8810 \
   --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/recover-ai.log 2>&1 &
 
@@ -96,13 +96,13 @@ python3 /tmp/recover-fake-log.py 8597 /tmp/recover-reject-count.txt reject &
 
 # ai B — writes through the flaky endpoint (first two requests 500, then 200)
 bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8812 --home "$HOME_DIR" --stub \
-  --log http://localhost:8599 --static http://localhost:8502 \
+  --storage http://localhost:8599 \
   --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/recover-retry.log 2>&1 &
 
 # ai C — writes through an endpoint that answers 400 to everything
 bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8813 --home "$HOME_DIR" --stub \
-  --log http://localhost:8597 --static http://localhost:8502 \
+  --storage http://localhost:8597 \
   --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/recover-reject.log 2>&1 &
 
@@ -118,7 +118,7 @@ exist yet, and `/tmp/recover-ai.log` ends with `engineer ai: log=http://localhos
 
 ## 1. craft a damaged conversation
 
-Nine rows are written straight into the log service — this is the exact shape a
+Nine rows are written straight into the storage service — this is the exact shape a
 lost write leaves behind. Row order is insertion order (`seq` 8 appears twice):
 
 | seq | role | shape | expected treatment |
@@ -545,7 +545,7 @@ never re-sent, and the intact pair after it is left untouched.
 ## Teardown
 
 ```bash
-pkill -f 'serve-log --home .*recover-test'
+pkill -f 'serve-storage --home .*recover-test'
 pkill -f 'main.ts.*--port 8811'
 pkill -f 'main.ts.*--port 8812'
 pkill -f 'main.ts.*--port 8813'

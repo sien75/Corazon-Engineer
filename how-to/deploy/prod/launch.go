@@ -1,14 +1,14 @@
 // Command engineer is the prod launcher shipped in the package. It starts the
-// four packaged services (log, static, ai, web) on free ports, names the
-// terminal "engineer", holds the foreground until Ctrl-C, then tears the whole
-// stack down.
+// three packaged services (storage, ai, web) on free ports, names the terminal
+// "engineer", holds the foreground until Ctrl-C, then tears the whole stack
+// down.
 //
-// It is a **multi-call binary**: log, static and web are not separate files but
-// this same executable re-run with a `serve-log` / `serve-static` / `serve-web`
-// subcommand. Only ai is a second file (`engineer-ai`). One executable path per
-// service would mean one extra entry in every EDR/security-tool process
-// whitelist (and one extra "allow this program?" prompt for every new user), so
-// the three Go services share this one.
+// It is a **multi-call binary**: storage and web are not separate files but this
+// same executable re-run with a `serve-storage` / `serve-web` subcommand. Only ai
+// is a second file (`engineer-ai`). One executable path per service would mean
+// one extra entry in every EDR/security-tool process whitelist (and one extra
+// "allow this program?" prompt for every new user), so the two Go services share
+// this one.
 //
 // The services listen on loopback by default and are reached at the addresses
 // printed on startup. ENGINEER_BIND overrides the bind host — 0.0.0.0 to expose
@@ -37,15 +37,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	logsvc "engineer/log"
-	staticsvc "engineer/static"
+	storagesvc "engineer/storage"
 	websrv "engineer/web"
 )
 
 const usageText = "usage: engineer [start|status|version|uninstall [--purge]]"
 
 // default ports; the launcher advances to the next free one on conflict
-var defaultPorts = map[string]int{"web": 7500, "ai": 7501, "static": 7502, "log": 7503}
+var defaultPorts = map[string]int{"web": 7500, "ai": 7501, "storage": 7502}
 
 func main() {
 	cmd := "start"
@@ -61,13 +60,11 @@ func main() {
 		fmt.Println(versionName())
 	case "uninstall":
 		uninstall(len(os.Args) > 2 && os.Args[2] == "--purge")
-	// Internal, not part of the user-facing CLI: the launcher starts the three Go
+	// Internal, not part of the user-facing CLI: the launcher starts the two Go
 	// services by running this same binary again with one of these subcommands
 	// (see the multi-call note at the top). Each Serve never returns.
-	case "serve-log":
-		logsvc.Serve(os.Args[2:])
-	case "serve-static":
-		staticsvc.Serve(os.Args[2:])
+	case "serve-storage":
+		storagesvc.Serve(os.Args[2:])
 	case "serve-web":
 		websrv.Serve(os.Args[2:])
 	default:
@@ -76,7 +73,7 @@ func main() {
 	}
 }
 
-// launch starts all four services in the foreground and returns when every one
+// launch starts all three services in the foreground and returns when every one
 // of them has exited (Ctrl-C included).
 func launch() {
 	root, err := os.Getwd()
@@ -106,14 +103,14 @@ func launch() {
 	// is the only database this program reads. A `.engineer/engineer.db` left in
 	// the folder from before the home existed is simply not part of the program.
 
-	// Where the four services bind. Loopback by default, so a local tool is
+	// Where the three services bind. Loopback by default, so a local tool is
 	// not a service on the office network; ENGINEER_BIND opens the stack
 	// deliberately (e.g. 0.0.0.0), which is the only way another machine can
 	// reach it.
 	bind := bindHost()
 	ports := map[string]int{}
 	used := map[int]bool{}
-	for _, name := range []string{"web", "ai", "static", "log"} {
+	for _, name := range []string{"web", "ai", "storage"} {
 		p := pickPort(defaultPorts[name], used, bind)
 		used[p] = true
 		ports[name] = p
@@ -137,23 +134,20 @@ func launch() {
 	}
 
 	specs := []*service{
-		{name: "log", bin: self,
-			args: []string{"serve-log", "--home", data,
-				"--bind", bind, "--port", strconv.Itoa(ports["log"])}},
-		{name: "static", bin: self,
-			args: []string{"serve-static", "--log", svcURL("log"),
-				"--bind", bind, "--port", strconv.Itoa(ports["static"])}},
+		{name: "storage", bin: self,
+			args: []string{"serve-storage", "--home", data,
+				"--bind", bind, "--port", strconv.Itoa(ports["storage"])}},
 		{name: "ai", bin: filepath.Join(binDir, "engineer-ai"),
 			args: []string{"--home", data,
 				"--bind", bind, "--port", strconv.Itoa(ports["ai"]),
 				"--agents", filepath.Join(pkg, "agents"),
 				"--docs", filepath.Join(pkg, "docs"),
-				"--log", svcURL("log"), "--static", svcURL("static")}},
+				"--storage", svcURL("storage")}},
 		{name: "web", bin: self,
 			args: []string{"serve-web",
 				"--bind", bind, "--port", strconv.Itoa(ports["web"]),
 				"--assets", filepath.Join(pkg, "web"),
-				"--static", svcURL("static"), "--ai", svcURL("ai"), "--log", svcURL("log")}},
+				"--storage", svcURL("storage"), "--ai", svcURL("ai")}},
 	}
 
 	started := make([]*service, 0, len(specs))
@@ -171,15 +165,14 @@ func launch() {
 	// A folder the user started the program in is a project they mean to work on:
 	// put it on the board (adding a folder that is already there keeps its
 	// history). The page can add and remove others.
-	if name := registerCwd(svcURL("log"), root); name != "" {
+	if name := registerCwd(svcURL("storage"), root); name != "" {
 		fmt.Printf("engineer up — project: %s (%s)\n", name, root)
 	} else {
 		fmt.Printf("engineer up — data: %s\n", data)
 	}
 	fmt.Printf("  web     %s\n", svcURL("web"))
 	fmt.Printf("  ai      %s\n", svcURL("ai"))
-	fmt.Printf("  static  %s\n", svcURL("static"))
-	fmt.Printf("  log     %s\n", svcURL("log"))
+	fmt.Printf("  storage %s\n", svcURL("storage"))
 	if isWildcard(bind) {
 		fmt.Printf("bind: %s — open to the whole network; reachable at %s\n", bind, urlHost(bind))
 	} else {
@@ -220,7 +213,7 @@ func launch() {
 // status prints the per-service state of the data home's instance.
 func status() {
 	runDir := filepath.Join(dataHome(), "run")
-	for _, name := range []string{"log", "static", "ai", "web"} {
+	for _, name := range []string{"storage", "ai", "web"} {
 		pid, err := readPid(filepath.Join(runDir, name+".pid"))
 		if err == nil && alive(pid) {
 			fmt.Printf("%s: running (pid %d)\n", name, pid)
@@ -303,7 +296,7 @@ func killAll(svcs []*service) {
 }
 
 func removePids(runDir string) {
-	for _, name := range []string{"web", "ai", "static", "log"} {
+	for _, name := range []string{"web", "ai", "storage"} {
 		_ = os.Remove(filepath.Join(runDir, name+".pid"))
 	}
 }
@@ -312,7 +305,7 @@ func removePids(runDir string) {
 // stray service started from this install's own binary) so we reuse its ports
 // instead of advancing past them. Another install's stack is never touched.
 func reclaim(runDir, self string) {
-	for _, name := range []string{"web", "ai", "static", "log"} {
+	for _, name := range []string{"web", "ai", "storage"} {
 		pf := filepath.Join(runDir, name+".pid")
 		if pid, err := readPid(pf); err == nil {
 			_ = syscall.Kill(pid, syscall.SIGTERM)
@@ -535,7 +528,7 @@ func dataHome() string {
 // an engineer project. It returns the project's name, or "" when this folder is
 // not a project (the program runs anywhere — starting it somewhere else is not an
 // error, and the page is where projects are added).
-func registerCwd(logURL, root string) string {
+func registerCwd(storageURL, root string) string {
 	if _, err := os.Stat(filepath.Join(root, "engineer.yaml")); err != nil {
 		return ""
 	}
@@ -543,11 +536,11 @@ func registerCwd(logURL, root string) string {
 	if err != nil {
 		return ""
 	}
-	// log has just been started, not necessarily listening yet: retry briefly
+	// storage has just been started, not necessarily listening yet: retry briefly
 	// rather than print a failure the user cannot act on.
-	var lastErr error = fmt.Errorf("log not reachable")
+	var lastErr error = fmt.Errorf("storage not reachable")
 	for attempt := 0; attempt < 30; attempt++ {
-		res, err := http.Post(logURL+"/log/project/add", "application/yaml", bytes.NewReader(body))
+		res, err := http.Post(storageURL+"/log/project/add", "application/yaml", bytes.NewReader(body))
 		if err != nil {
 			lastErr = err
 			time.Sleep(100 * time.Millisecond)

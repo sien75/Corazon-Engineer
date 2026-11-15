@@ -99,7 +99,8 @@
     import DOMPurify from "/vendor/dompurify.js";
     import { Graph, CanvasBlock } from "/vendor/graph.js";
 
-    const { static: STATIC, log: LOG } = ENGINEER;
+    // storage serves both the project's files (/static/*) and its records (/log/*).
+    const { storage: STORAGE } = ENGINEER;
     const HEAD = { "Content-Type": "application/yaml" };
     const md = new MarkdownIt({ linkify: true });
     const $ = (id) => document.getElementById(id);
@@ -364,7 +365,7 @@
       BACK_ATOM = from || null;
       setDetail(`<p class="hint">loading ${esc(id)}…</p>`, id);
       try {
-        const data = await call(STATIC, "/static/query-detail", { id, type: "contract", projectId: PID });
+        const data = await call(STORAGE, "/static/query-detail", { id, type: "contract", projectId: PID });
         const c = data.contract || {};
         const body = (b) => (b ? `<pre>${esc(yaml.dump(b))}</pre>` : "");
         DETAIL_NOW = { contract: id, html: `
@@ -401,8 +402,8 @@
 
     // ---------- boot ----------
     try {
-      PID = pageProject || (await call(LOG, "/log/session/detail", { sessionId: sid })).projectId;
-      VIEW = await call(STATIC, "/static/query", { projectId: PID });
+      PID = pageProject || (await call(STORAGE, "/log/session/detail", { sessionId: sid })).projectId;
+      VIEW = await call(STORAGE, "/static/query", { projectId: PID });
       VIEW.atoms = VIEW.atoms || [];
       VIEW.edges = VIEW.edges || [];
       VIEW.contracts = VIEW.contracts || [];

@@ -28,13 +28,13 @@ Run from the project root (the directory holding `engineer.yaml`).
 ```bash
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.web-search"
-# log's database and the project board live in the engineer home, not in a project.
+# storage's database and the project board live in the engineer home, not in a project.
 HOME_DIR="$ROOT/home"
 
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 9090 9091 9092; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 9090 9091; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
@@ -49,7 +49,7 @@ HTML
 printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 9091 >/tmp/web-search-log.log 2>&1 &
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9091 >/tmp/web-search-log.log 2>&1 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:9091/log/project/list -d '{}' && break
   sleep 1
@@ -57,13 +57,12 @@ done
 curl -s -X POST http://localhost:9091/log/project/add -H 'Content-Type: application/yaml' \
   --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
 PROJECT=$(cat "$ROOT/.project")
-/tmp/engineer serve-static --log http://localhost:9091 --bind 127.0.0.1 --port 9092 >/tmp/web-search-static.log 2>&1 &
 
-LOG=http://localhost:9091
+STORAGE=http://localhost:9091
 AI=http://localhost:9090
 
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9090 \
-  --log "$LOG" --static http://localhost:9092 \
+  --storage "$STORAGE" \
   --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/web-search-ai.log 2>&1 &)
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
@@ -79,7 +78,7 @@ PY
   curl -s -N -m 180 -X POST $AI/ai/stream -d "id: $1" >/tmp/web-search-stream-$1.txt
 }
 sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])'; }
-msgs() { curl -s -X POST $LOG/log/session/messages -d "sessionId: $1"; }
+msgs() { curl -s -X POST $STORAGE/log/session/messages -d "sessionId: $1"; }
 ```
 
 Expected: `PROJECT` 是 `p_…`；`/tmp/web-search-ai.log` 里没有 `--stub: model calls disabled`；
@@ -119,9 +118,8 @@ main 与 sub 的差别只在 `WORKSPACE_TOOLS`，`web_search` 在共享列表里
 ## Teardown
 
 ```bash
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-pkill -f "serve-static --log $LOG" 2>/dev/null || true
 rm -rf "$ROOT"
 ```
 

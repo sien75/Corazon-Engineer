@@ -20,11 +20,11 @@ ROOT="$ROOTDIR/.engineer/.blueprint-test"
 rm -rf "$ROOT" && mkdir -p "$ROOT"
 printf 'project: blueprint-test\n' > "$ROOT/engineer.yaml"
 
-# A scratch static service reading $ROOT's tree — the read side. static has no root
-# any more: it takes a projectId per request and resolves the folder through log,
-# so the case starts a small log too and registers the scratch project.
+# A scratch storage service holding $ROOT's tree — the read side. It has no root of
+# its own: it takes a projectId per request and resolves the folder against the
+# project board it stores, so the case registers the scratch project first.
 # Guard first: with an empty $HOME_DIR the pattern below degrades to
-# "serve-log --home " and kills every service on the machine —
+# "serve-storage --home " and kills every service on the machine —
 # including the one running the agent. Fail loudly instead.
 HOME_DIR="$ROOT/home"
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
@@ -32,13 +32,13 @@ HOME_DIR="$ROOT/home"
 # old database (or silently stops this run's from binding, so the frontend
 # talks to the other case's services) — and the failure that causes looks
 # like a wrong answer, not a dead service. This happens before, not after.
-pkill -f "serve-log --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
-for p in 8820 8821; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
+for p in 8821; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
-/tmp/engineer serve-log --home "$HOME_DIR" --bind 127.0.0.1 --port 8821 \
+/tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8821 \
   >/tmp/bp-log.log 2>&1 &
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8821/log/project/list -d '{}' && break
@@ -47,14 +47,12 @@ done
 curl -s -X POST http://localhost:8821/log/project/add -H 'Content-Type: application/yaml' \
   --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
 PROJECT=$(cat "$ROOT/.project")
-/tmp/engineer serve-static --log http://localhost:8821 --bind 127.0.0.1 --port 8820 \
-  >/tmp/bp-static.log 2>&1 &
 
-STATIC=http://localhost:8820
+STORAGE=http://localhost:8821
 BPS="$ROOT/.agents/blueprints"
 
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST $STATIC/static/query \
+  curl -s -o /dev/null -m 2 -X POST $STORAGE/static/query \
     -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" && break
   sleep 1
 done
@@ -69,13 +67,13 @@ printf '# Payment logs\n\nYou drive a page that lists payment logs.\n' \
 printf '<!doctype html>\n<html lang="zh"><head><meta charset="utf-8"><title>Payment logs</title></head>\n<body><div id="app"></div><script>document.getElementById("app").textContent = "hello";</script></body></html>\n' \
   > "$BPS/payment-logs/index.html"
 
-curl -s -X POST $STATIC/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A3 '^blueprints:'
-curl -s -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML | head -3
+curl -s -X POST $STORAGE/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A3 '^blueprints:'
+curl -s -X POST $STORAGE/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML | head -3
 projectId: $PROJECT
 type: blueprint
 id: .agents/blueprints/payment-logs/index.html
 YAML
-curl -s -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
+curl -s -X POST $STORAGE/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
 projectId: $PROJECT
 type: blueprint
 id: .agents/blueprints/payment-logs/README.md
@@ -92,7 +90,7 @@ is no manifest and no metadata beyond the files themselves.
 
 ```bash
 printf 'body { margin: 0; }\n' > "$BPS/payment-logs/style.css"
-curl -s -X POST $STATIC/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A4 '^blueprints:'
+curl -s -X POST $STORAGE/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A4 '^blueprints:'
 ```
 
 Expected: static lists all three files — it lists the tree and does not judge what
@@ -104,7 +102,7 @@ directory, so `style.css` ships with the page and `index.html` can link
 
 ```bash
 mkdir -p "$BPS/notes-only" && printf 'just notes\n' > "$BPS/notes-only/readme.txt"; touch "$BPS/notes-only/index.html"
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $STORAGE/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
 projectId: $PROJECT
 type: blueprint
 id: .agents/blueprints/notes-only/README.md
@@ -120,12 +118,12 @@ description; clicking it reports the 400 and nothing is created.
 
 ```bash
 printf '\n# more detail\n' >> "$BPS/payment-logs/README.md"
-curl -s -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML | grep -c 'more detail'
+curl -s -X POST $STORAGE/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML | grep -c 'more detail'
 projectId: $PROJECT
 type: blueprint
 id: .agents/blueprints/payment-logs/README.md
 YAML
-curl -s -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML | head -2
+curl -s -X POST $STORAGE/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML | head -2
 projectId: $PROJECT
 type: blueprint
 id: .agents/blueprints/payment-logs/index.html
@@ -139,7 +137,7 @@ never removes it.
 
 ```bash
 printf '\n# edited after instantiation\n' >> "$BPS/payment-logs/README.md"
-curl -s -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML | grep -c 'edited after instantiation'
+curl -s -X POST $STORAGE/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML | grep -c 'edited after instantiation'
 projectId: $PROJECT
 type: blueprint
 id: .agents/blueprints/payment-logs/README.md
@@ -155,7 +153,7 @@ step. (`case-core-agent-instantiate` covers the serving side.)
 
 ```bash
 rm -rf "$BPS/payment-logs"
-curl -s -X POST $STATIC/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A3 '^blueprints:'
+curl -s -X POST $STORAGE/static/query -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" | grep -A3 '^blueprints:'
 ```
 
 Expected: `payment-logs` is gone, directory and files together; `notes-only`
@@ -176,12 +174,12 @@ a blueprint, and it only reads it and records its slug — the page is never cop
 
 ```bash
 mkdir -p "$BPS/../skills/x" && printf -- '---\nname: x\n---\nbody\n' > "$BPS/../skills/x/SKILL.md"
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $STORAGE/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
 projectId: $PROJECT
 type: blueprint
 id: .agents/blueprints/../skills/x/SKILL.md
 YAML
-curl -s -X POST $STATIC/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
+curl -s -X POST $STORAGE/static/query-detail -H 'Content-Type: application/yaml' --data-binary @- <<YAML
 projectId: $PROJECT
 type: blueprint
 id: .agents/blueprints/../skills/x/SKILL.md
@@ -196,7 +194,6 @@ be served under the wrong type. Reading the same file as `type: skill` is `200`.
 ## Teardown
 
 ```bash
-pkill -f 'serve-static --log http://localhost:8821'
 rm -rf "$ROOTDIR/.engineer/.blueprint-test"
 ```
 projectId: $PROJECT

@@ -42,7 +42,7 @@
 //
 // The bytes go to the same content-addressed store as a pasted image
 // (<home>/.engineer/uploads/<sha256>.<ext>), so the picture is served by the
-// same /blobs/<sha256> route and the log keeps only the reference.
+// same /blobs/<sha256> route and storage keeps only the reference.
 //
 // A reference image turns generation into editing. The reference is a *path*, not
 // a blob handle: everything this system already hands a model names its file
@@ -341,7 +341,7 @@ export function makeImageTool(deps: ImageToolDeps) {
       const n = Math.max(1, Math.min(MAX_N, Math.round(Number(params.n ?? 1)) || 1));
       const size = String(params.size ?? "").trim() || DEFAULT_SIZE;
       // References are read, then copied into the blob store: what was sent is
-      // then also what the log keeps, even when the file came from outside.
+      // then also what storage keeps, even when the file came from outside.
       const asked = (Array.isArray(params.reference) ? params.reference : [])
         .map((v) => String(v ?? ""))
         .filter((v) => v.trim());

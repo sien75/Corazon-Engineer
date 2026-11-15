@@ -4,7 +4,7 @@ import { Registry } from "./registry.ts";
 import { serve } from "./server.ts";
 import { modelsConfigPath } from "./models-config.ts";
 
-// Local service-to-service calls (ai → log) must never be proxied. A system
+// Local service-to-service calls (ai → storage) must never be proxied. A system
 // proxy exported as http_proxy / https_proxy (e.g. Clash) also captures
 // localhost: the request reaches the remote proxy and returns 502, which
 // silently breaks history reads (resume → "session not found") and record
@@ -24,18 +24,18 @@ process.env.no_proxy = withLocalNoProxy(process.env.no_proxy);
 process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 
 // usage: bun run src/main.ts --bind <host> --port <n> --home <data dir>
-//        --log <url> --static <url> --agents <spec dir> --docs <docs dir> [--stub]
+//        --storage <url> --agents <spec dir> --docs <docs dir> [--stub]
 //
 // Every flag above is required and there is no fallback. The launcher owns the
 // addresses, the home directory and the spec file, and passes them all down; a
 // service that invents a default silently talks to a port nobody chose.
 //
 // There is no project root any more: a conversation belongs to a project, and
-// that project's folder (a row in log's home database) is where its agent runs.
-// The home is only this service's own data — uploaded images.
+// that project's folder (a row in storage's home database) is where its agent
+// runs. The home is only this service's own data — uploaded images.
 const USAGE =
   "usage: engineer-ai --bind <host> --port <n> --home <data dir> " +
-  "--log <url> --static <url> --agents <spec dir> --docs <docs dir> [--stub]";
+  "--storage <url> --agents <spec dir> --docs <docs dir> [--stub]";
 
 function parseFlags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -54,7 +54,7 @@ function parseFlags(argv: string[]): Record<string, string> {
 
 const flags = parseFlags(process.argv.slice(2));
 
-const REQUIRED = ["bind", "port", "home", "log", "static", "agents", "docs"];
+const REQUIRED = ["bind", "port", "home", "storage", "agents", "docs"];
 const missing = REQUIRED.filter((k) => !flags[k]);
 if (missing.length || !/^\d+$/.test(flags.port ?? "")) {
   if (missing.length) {
@@ -71,8 +71,7 @@ if (missing.length || !/^\d+$/.test(flags.port ?? "")) {
 const forceStub = flags.stub === "1";
 const home = flags.home;
 const addr = `${flags.bind}:${flags.port}`;
-const logBase = flags.log;
-const staticBase = flags.static;
+const storageBase = flags.storage;
 
 // The system prompt is the tool's own spec — how the agent behaves (verbs). Two
 // roles need two specs: main runs in the shell and owns the workspace (tabs,
@@ -108,8 +107,8 @@ const subReference = referenceLine(
   "schema.md, contract.md, enum.md (the project's schema, contract and enum conventions), " +
     "tools.md (recommended CLI tools)",
 );
-// Both roles call the log / ai / static interfaces through bash (main to operate
-// the workspace, a sub agent to write test records); the generated docs say how.
+// Both roles call the storage / ai interfaces through bash (main to operate the
+// workspace, a sub agent to write test records); the generated docs say how.
 const docsLine =
   "\n\n---\n\n# Interface docs position\n\n" +
   `They are in ${path.resolve(flags.docs)}; start with README.md there, then the file of the ` +
@@ -132,12 +131,11 @@ function aiBaseURL(a: string): string {
 const runtimeEndpoints =
   "\n\n---\n\n# Runtime endpoints\n\n" +
   "These services were started for this run; use exactly these addresses:\n" +
-  `- static (schema): ${staticBase}\n` +
-  `- log (records): ${logBase}\n` +
+  `- storage (records and project files): ${storageBase}\n` +
   `- ai (this service): ${aiBaseURL(addr)}\n`;
 const registry = new Registry({
   home,
-  logBase,
+  storageBase,
   specs: {
     main: specs.main + mainReference + docsLine + runtimeEndpoints,
     sub: specs.sub + subReference + docsLine + runtimeEndpoints,
@@ -153,7 +151,7 @@ if (registry.stub) {
           "pi's auth.json); ai falls back to echo stub",
   );
 }
-console.log(`engineer ai: log=${logBase}`);
+console.log(`engineer ai: storage=${storageBase}`);
 console.log(`engineer ai: models=${modelsConfigPath(home)}`);
 console.log(`engineer ai: spec=${path.resolve(flags.agents)}`);
 serve(registry, addr);

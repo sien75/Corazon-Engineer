@@ -5,7 +5,7 @@ tab 条按项目分组。下面的断言与这一点对齐。）
 
 ## Setup
 
-按 how-to/deploy/dev/BOOK.md 启动 dev。浏览器打开 8500，等待标签就绪。使用现有工作区，不创建、删除或发送会话。若已有 Pure Chat 标签，先展开它的分组再切换过去。浏览器命令清除代理并设置 NO_PROXY 与 no_proxy 为 *。
+按 how-to/deploy/dev/BOOK.md 启动 dev。浏览器打开 8500，等待标签就绪。使用现有工作区，不创建、删除或发送会话。若已有 Pure Chat 标签，先展开它的分组再切换过去。
 
 ## Run
 

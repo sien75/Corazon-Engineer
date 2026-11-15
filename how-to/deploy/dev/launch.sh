@@ -1,5 +1,5 @@
 #!/bin/sh
-# dev launcher — builds sources and starts all four services, choosing free ports.
+# dev launcher — builds sources and starts all three services, choosing free ports.
 #
 # Run it from anywhere; it works from the checkout it lives in, not from the
 # current directory:
@@ -12,10 +12,10 @@
 # install's). ENGINEER_INSTANCE names a second instance from the same checkout:
 # different ports, its own pids/logs, no interference.
 #
-# Ports have defaults (8500 web / 8501 ai / 8502 static / 8503 log); if a
-# default is already in use the launcher advances to the next free port. The
-# chosen ports are handed to each service as arguments and printed at the end,
-# so there is no port config file to keep in sync.
+# Ports have defaults (8500 web / 8501 ai / 8502 storage); if a default is
+# already in use the launcher advances to the next free port. The chosen ports
+# are handed to each service as arguments and printed at the end, so there is no
+# port config file to keep in sync.
 #
 # Services listen on loopback by default. Set ENGINEER_BIND to open the stack
 # up — 0.0.0.0 for the whole network, or this machine's IP for one interface
@@ -40,7 +40,7 @@ mkdir -p "$BIN"
 # (recorded pids, then strays started from our own bin dir) — matching just
 # "root $ROOT" would also kill a prod instance of the same project, which uses
 # its own ports (750x) and has every right to keep running.
-for s in web ai static log; do
+for s in web ai storage; do
   if [ -f "$D/$s.pid" ]; then
     kill "$(cat "$D/$s.pid")" 2>/dev/null || true
     rm -f "$D/$s.pid"
@@ -76,8 +76,7 @@ pick_port() {
 }
 PORT_WEB=$(pick_port 8500)
 PORT_AI=$(pick_port 8501 "$PORT_WEB")
-PORT_STATIC=$(pick_port 8502 "$PORT_WEB" "$PORT_AI")
-PORT_LOG=$(pick_port 8503 "$PORT_WEB" "$PORT_AI" "$PORT_STATIC")
+PORT_STORAGE=$(pick_port 8502 "$PORT_WEB" "$PORT_AI")
 
 # bind host: loopback unless ENGINEER_BIND opens the stack up
 BIND=${ENGINEER_BIND:-127.0.0.1}
@@ -89,15 +88,15 @@ esac
 BASE=http://$URLHOST
 
 # --- build ----------------------------------------------------------------
-# One multi-call binary: log / static / web are this same file re-run with a
+# One multi-call binary: storage / web are this same file re-run with a
 # subcommand (see how-to/deploy/prod/launch.go), so the local stack has a single
 # executable path instead of one file per service.
 ( cd "$ROOT/how-to/deploy/prod" && go build -o "$BIN/engineer" . )
-rm -f "$BIN/engineer-log" "$BIN/engineer-static" "$BIN/engineer-web"
+rm -f "$BIN/engineer-storage" "$BIN/engineer-web"
 
 # --- proxy ----------------------------------------------------------------
-# Two calls leave this stack: its own, which are loopback (log ↔ static ↔ ai ↔
-# web), and the provider calls ai makes out (zenmux, deepseek, …). Loopback must
+# Two calls leave this stack: its own, which are loopback (storage ↔ ai ↔ web),
+# and the provider calls ai makes out (zenmux, deepseek, …). Loopback must
 # bypass whatever proxy the user runs — Clash and friends 502 it, which breaks
 # history reads and record writes — while a provider reached through a gateway
 # may only be reachable *through* it. So NO_PROXY='*' is folded back to just
@@ -108,7 +107,7 @@ export no_proxy
 NO_PROXY=$no_proxy
 export NO_PROXY
 
-# --- start (order: log → static → ai → web) -------------------------------
+# --- start (order: storage → ai → web) ------------------------------------
 # Nothing is migrated here: the data home is the only database this program
 # reads. A leftover `<checkout>/.engineer/engineer.db` from before the home
 # existed is not consulted at all — the migration code that would have moved it
@@ -121,26 +120,25 @@ mkdir -p "$DATA"
 bun "$ROOT/how-to/deploy/gen-docs.ts" "$ROOT" "$ROOT/structure/docs" ||
   echo "gen-docs: see above — structure/docs/README.md needs updating before a pack" >&2
 
-nohup "$BIN/engineer" serve-log --home "$DATA" --bind "$BIND" --port "$PORT_LOG" >"$D/log.log" 2>&1 </dev/null &
-echo $! >"$D/log.pid"
-nohup "$BIN/engineer" serve-static --log "$BASE:$PORT_LOG" --bind "$BIND" --port "$PORT_STATIC" >"$D/static.log" 2>&1 </dev/null &
-echo $! >"$D/static.pid"
+# One service holds both the records and the project files: /log/* and /static/*
+# are two prefixes on this one address.
+nohup "$BIN/engineer" serve-storage --home "$DATA" --bind "$BIND" --port "$PORT_STORAGE" >"$D/storage.log" 2>&1 </dev/null &
+echo $! >"$D/storage.pid"
 # exec so the recorded pid IS the server process (not a wrapper that outlives kill)
 ( cd "$ROOT/workspace/ai" && exec nohup bun src/main.ts \
     --home "$DATA" --agents "$ROOT/agents" --docs "$ROOT/structure/docs" \
     --bind "$BIND" --port "$PORT_AI" \
-    --log "$BASE:$PORT_LOG" --static "$BASE:$PORT_STATIC" >"$D/ai.log" 2>&1 </dev/null ) &
+    --storage "$BASE:$PORT_STORAGE" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
 nohup "$BIN/engineer" serve-web --bind "$BIND" --port "$PORT_WEB" \
     --assets "$ROOT/workspace/web" \
-    --static "$BASE:$PORT_STATIC" --ai "$BASE:$PORT_AI" --log "$BASE:$PORT_LOG" >"$D/web.log" 2>&1 </dev/null &
+    --storage "$BASE:$PORT_STORAGE" --ai "$BASE:$PORT_AI" >"$D/web.log" 2>&1 </dev/null &
 echo $! >"$D/web.pid"
 
 echo "engineer dev up — checkout: $ROOT"
 printf '  data    %s\n' "$DATA"
 printf '  web     %s\n' "$BASE:$PORT_WEB"
 printf '  ai      %s\n' "$BASE:$PORT_AI"
-printf '  static  %s\n' "$BASE:$PORT_STATIC"
-printf '  log     %s\n' "$BASE:$PORT_LOG"
+printf '  storage %s\n' "$BASE:$PORT_STORAGE"
 printf '  bind    %s\n' "$BIND"
 echo "logs: $D/*.log    stop: how-to/deploy/dev/stop.sh"

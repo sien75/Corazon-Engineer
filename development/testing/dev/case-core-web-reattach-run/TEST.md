@@ -53,7 +53,7 @@ Bun.serve({
     if (p === "/config.js") {
       const base = "http://127.0.0.1:9072";
       return new Response(
-        `export const ENGINEER = {static:${JSON.stringify(base)}, ai:${JSON.stringify(base)}, log:${JSON.stringify(base)}};\nexport default ENGINEER;\n`,
+        `export const ENGINEER = {storage:${JSON.stringify(base)}, ai:${JSON.stringify(base)}};\nexport default ENGINEER;\n`,
         { headers: { "Content-Type": "application/javascript" } },
       );
     }
@@ -109,7 +109,7 @@ done
 curl -s http://127.0.0.1:9072/config.js
 ```
 
-Expected：`export const ENGINEER = {"static":"http://127.0.0.1:9072", ...}`（三段地址都指向夹具）。
+Expected：`export const ENGINEER = {"storage":"http://127.0.0.1:9072", ...}`（两段地址都指向夹具）。
 
 ## 1. 挂载后什么都不点，stop 就是亮的，事件在画，流从水位续
 

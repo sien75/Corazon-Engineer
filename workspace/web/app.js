@@ -8,14 +8,15 @@ import hljs from "./vendor/highlight.js";
 // to be listening there. Without the config the page cannot reach any service,
 // so say so rather than pretending to work.
 import { ENGINEER as RUNTIME } from "/config.js";
-if (!RUNTIME?.ai || !RUNTIME?.log) {
-  const message = "engineer web: /config.js did not provide ai / log";
+if (!RUNTIME?.ai || !RUNTIME?.storage) {
+  const message = "engineer web: /config.js did not provide ai / storage";
   document.body.innerHTML = `<div class="empty-hint">${message}</div>`;
   throw new Error(message);
 }
-const STATIC_BASE = RUNTIME.static; // static: the project tree (blueprints)
-const AI_BASE = RUNTIME.ai;         // ai: conversation
-const LOG_BASE = RUNTIME.log;       // log: records, sessions, current
+// Two services, two addresses. storage is one service behind two prefixes: /log/*
+// for records and sessions, /static/* for a project's files (blueprints included).
+const STORAGE_BASE = RUNTIME.storage;
+const AI_BASE = RUNTIME.ai; // ai: conversation
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -141,7 +142,7 @@ async function loadProjects() {
 }
 
 async function logCall(path, body = {}) {
-  const res = await fetch(`${LOG_BASE}${path}`, {
+  const res = await fetch(`${STORAGE_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
     body: yaml.dump(body),
@@ -882,7 +883,7 @@ function launcherRoute(path, state, mode) {
 }
 
 async function staticCall(path, body = {}) {
-  const res = await fetch(`${STATIC_BASE}${path}`, {
+  const res = await fetch(`${STORAGE_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/yaml" },
     body: yaml.dump(body),
@@ -1586,7 +1587,7 @@ async function followWorkspace() {
     let skipInitial = firstConnection;
     firstConnection = false;
     try {
-      const res = await fetch(`${LOG_BASE}/log/workspace/stream`, {
+      const res = await fetch(`${STORAGE_BASE}/log/workspace/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/yaml" },
         body: yaml.dump({}),
