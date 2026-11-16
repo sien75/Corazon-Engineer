@@ -340,12 +340,18 @@ function wire(host, root, id, RT, project = "", blueprint = "") {
 
   // 外壳的 aiMarkdown：把累计的 markdown 每帧渲染一次，而不是每个 delta 一次。
   function assistantBubble() {
-    const el = addMessage("ai-msg ai-assistant ai-markdown");
+    // 惰性建元素：模型常在 thinking 与工具之间吐一个空（或只有换行的）text 块，
+    // 先建壳会留下一个带 margin/padding 的空气泡。有了非空白内容才真正画出来。
+    let el = null;
     let raw = "";
     let scheduled = false;
     let raf = 0;
     const render = () => {
       scheduled = false;
+      if (!el) {
+        if (!raw.trim()) return;
+        el = addMessage("ai-msg ai-assistant ai-markdown");
+      }
       const stick = pinned;
       el.innerHTML = renderMarkdown(raw);
       if (stick) toBottom();
