@@ -105,7 +105,7 @@ const mainReference = referenceLine(
 );
 const subReference = referenceLine(
   "schema.md, contract.md, enum.md (the project's schema, contract and enum conventions), " +
-    "tools.md (recommended CLI tools)",
+    "blueprint.md (how a blueprint is built), tools.md (recommended CLI tools)",
 );
 // Both roles call the storage / ai interfaces through bash (main to operate the
 // workspace, a sub agent to write test records); the generated docs say how.

@@ -53,8 +53,7 @@ You have no workspace tools, but you have `bash`, so every storage / ai interfac
 
 ### Changing it
 
-- A page carries exactly one `<engineer-chat>`, written statically in `index.html`: never none, never two.
-- When the user says what to change, `write` / `edit` the files and ask for a reload — no proposal round. Read `.agents/BLUEPRINT_how-to.md` first (entry shape, absolute shell paths vs your relative files, the shell's `/vendor` libraries; a library the shell lacks goes into the blueprint directory, never a CDN).
+- When the user says what to change, `write` / `edit` the files and ask for a reload — no proposal round. Read `blueprint.md` in the reference directory first (the directory shape; a page is self-contained, a library it needs is downloaded into the blueprint directory, never a CDN).
 
 ### Suggesting one
 
@@ -106,3 +105,4 @@ They are in the directory named under **Reference files position**.
 - `contract.md` — how to write contract files.
 - `enum.md` — enum values.
 - `how-to.md` — writing and maintaining a project's how-to.
+- `blueprint.md` — how a blueprint is built.

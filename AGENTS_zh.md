@@ -22,7 +22,7 @@
 
 **阶段一：设计。** 范围：`development/`。把需求整理为设计记录:AI 生成的方案写入 `development/iterations/`,一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`,在此创建并随设计演进更新;`humanwrite/<迭代编号>/` 只放人工的讨论与原始笔记。
 
-**阶段二:契约、测试、代码。** 范围:`structure/contracts/`、`structure/atoms/` `structure/edges/`、`development/testing/`、`workspace/`、`.agents/blueprints/`。顺序很重要:先定义 **contracts**,再定义静态关系(`structure/atoms/` `structure/edges/`),再定义测试(`development/testing/`),最后才开发代码(`workspace/`)。
+**阶段二:契约、测试、代码。** 范围:`structure/contracts/`、`structure/atoms/` `structure/edges/`、`development/testing/`、`workspace/`、`.agents/`。顺序很重要:先定义 **contracts**,再定义静态关系(`structure/atoms/` `structure/edges/`),再定义测试(`development/testing/`),最后才开发代码(`workspace/`)。
 
 **阶段三:打包、运行、测试。** 按 `how-to/deploy/dev/BOOK.md` 重新打包并运行,**只跑改动对应的用例**——不是整个用例集。判断标准和产出这次改动时的推理相同:这个用例的断言读到了你改的东西(同一个文件、同一个端点、同一处 DOM、同一份 schema),它就该跑。开工前先说明跑哪些、跳过哪些、为什么。通过则继续;不通过则带着报错回到阶段二。
 
@@ -40,11 +40,9 @@
 
 ### 第三类：更改说明内容
 
-改的是说明本身 —— 告诉人和 agent 如何开发、如何操作这个项目的内容：`how-to/`、`humanwrite/notes/`、本项目的 `AGENTS.md` 等等。初始化不是另一类,而是这一类的最初形态:项目还没有 how-to,只是尚未写出;此后让它与现实保持一致,是同一件事的延续。
+改的是说明本身 —— 告诉人和 agent 如何开发、如何操作这个项目的内容：`how-to/`（怎么构建和操作）、`agents/`（随工具发布的 AI 能力规范及其参考文件，中文镜像在 `agents/zh/`）、本项目的 `AGENTS.md` 等等。初始化不是另一类,而是这一类的最初形态:项目还没有 how-to,只是尚未写出;此后让它与现实保持一致,是同一件事的延续。
 
-按指示修改：按用户指定的文件修改。若英文与 `_zh` 版本都存在，则两个都要改。范围就是说明内容：`how-to/`、`humanwrite/notes/`、本项目的 `AGENTS.md`，以及 `.agents/` 下的说明材料 —— `.agents/BLUEPRINT_how-to.md` / `_zh` 与 `.agents/skills/<slug>/SKILL.md`。
-
-`.agents/` 下两类东西都有,归属看文件本身是什么:Blueprint 的 `README.md` + `index.html` **就是**那个页面 —— 产品产物,改它属于第一类;而 how-to 模板与 skill 是给 Agent 读、告诉它该怎么干活的文字,改它们属于第三类。
+按指示修改：按用户指定的文件修改。若英文与 `_zh` 版本都存在，则两个都要改。范围就是说明内容：`how-to/`、`agents/`、本项目的 `AGENTS.md`。**`humanwrite/` 默认不改** —— 那是人工手写的内容，只有用户明确要求才改。
 
 初始化就是同一类型应用在「还没有 how-to」的项目上:建项目标记 `engineer.yaml`,铺好 how-to 材料（`how-to/`，以及 `how-to/README.md` 和开发 SOP），和用户一起完成。
 
@@ -52,8 +50,8 @@
 
 - `development/` —— 开发过程的产出:`iterations/`(AI 生成的方案,一个方案一个 md 文件、命名为 `[YYMM]-[2位序号]-[简短标题].md`,阶段一创建、随迭代更新)、`testing/`(E2E 测试)。
 - `how-to/` —— 系统怎么构建与操作:`deploy/`(构建 / 打包 / 启动 / 部署,按环境)、`operation/`(连接 / 观测资源)。
-- `agents/` —— 随工具发布的 AI 能力规范(`agents/AGENTS.md`,中文在 `agents/zh/`),以及 schema / contract / enum 参考和 how-to 书写指南(`agents/how-to.md`)。
-- `.agents/` —— Agent 以文件形式保留的项目资源:`blueprints/<slug>/`(Blueprint 页面)与 `skills/<slug>/SKILL.md`(保留的 skill)。**Blueprint 模板在 `.agents/BLUEPRINT_how-to_zh.md`** —— 写新的 Blueprint 就照它,它才是页面 `<title>` / 主题 / 最小入口的唯一出处。
+- `agents/` —— 随工具发布的 AI 能力规范(`agents/main/AGENTS.md` 与 `agents/sub/AGENTS.md`,中文在 `agents/zh/`)及参考文件(schema / contract / enum、how-to 书写指南等)。属于说明内容:第三类。
+- `.agents/` —— Agent 以文件形式保留的项目资源:`blueprints/<slug>/`(Blueprint 页面)与 `skills/<slug>/SKILL.md`(保留的 skill)。
 - `structure/` —— 系统的描述:`atoms/` `edges/` `contracts/` `docs/`。
-- `humanwrite/` —— 人工手写的内容:`<迭代编号>/`(人工的讨论与原始笔记,每个迭代一个目录,如 `2611/`)与 `notes/`(自由笔记)。
+- `humanwrite/` —— 人工手写的内容:`<迭代编号>/`(人工的讨论与原始笔记,每个迭代一个目录,如 `2611/`)与 `notes/`(自由笔记)。用户没有明确要求就不改。
 - `workspace/` —— 本项目的代码。

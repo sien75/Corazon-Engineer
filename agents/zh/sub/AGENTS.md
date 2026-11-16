@@ -53,8 +53,7 @@
 
 ### 改它
 
-- 页面必须有且只有一个 `<engineer-chat>`, 静态写在 `index.html` 里: 不能没有, 也不能两个.
-- 用户说改什么就用 `write` / `edit` 改文件, 然后请用户刷新 — 不用先提方案. 动手前先读 `.agents/BLUEPRINT_how-to.md` (入口的形状, 外壳用绝对路径而自己的文件用相对路径, 外壳的 `/vendor` 库; 外壳没有的库下载进 blueprint 目录, 不要用 CDN).
+- 用户说改什么就用 `write` / `edit` 改文件, 然后请用户刷新 — 不用先提方案. 动手前先读参考目录里的 `blueprint.md` (目录的形状; 页面自成一体, 需要的库下载进 blueprint 目录, 不要用 CDN).
 
 ### 建议新建
 
@@ -106,3 +105,4 @@ Corazon-like 项目通过 schema 文件描述 atoms, edges, contracts, 代码放
 - `contract.md` — 契约文件怎么写.
 - `enum.md` — 枚举值.
 - `how-to.md` — 编写和维护项目的 how-to.
+- `blueprint.md` — blueprint 怎么写.
