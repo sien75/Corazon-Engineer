@@ -792,11 +792,11 @@ export class Registry {
             // layer, since every level above it only *adds* a budget — and the
             // retries happen here, at this level, on the whole call.
             //
-            // 256, not 64: some models think even when no budget is asked for
-            // (deepseek-v4.1-flash does), and at 64 the thinking ate the whole
-            // ceiling — `stop=length`, no text, no name. A title is a handful of
-            // tokens; the rest is headroom for a model that thinks before it answers.
-            maxTokens: 256,
+            // No `maxTokens`: pi then uses the model's own ceiling. A cap here only
+            // ever hurt — a model that thinks even when no budget is asked for
+            // (gemini-4-hydrogen, deepseek-v4.1-flash) spent a 256 ceiling on
+            // thinking and returned no text. What bounds the call is the deadline
+            // below, not a token count.
             // No `temperature`: the newest Claude models reject the field outright
             // (400, "`temperature` is deprecated for this model"), and a rejected
             // call is no name at all — worse than a name that is not reproducible.
@@ -818,7 +818,7 @@ export class Registry {
           : "";
         title = failure ? "" : cleanTitle(text);
         if (title) break;
-        if (!failure) dbg(sess.id, "title empty", `attempt ${attempt}/${TITLE_ATTEMPTS}`);
+        if (!failure) dbg(sess.id, "title empty", `attempt ${attempt}/${TITLE_ATTEMPTS}`, `stop=${reply?.stopReason}`);
       } catch (err) {
         failure = String(err);
       }
