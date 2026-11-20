@@ -11,8 +11,8 @@
 - **agent-browser** —— 通用浏览器自动化:导航、快照、点击、填表、取数据。
   - 安装:`npm install -g agent-browser`(全平台;macOS 也可 `brew install agent-browser`);再 `agent-browser install`(首次下载 Chrome)
   - 检测:`command -v agent-browser`
-- **Ego(`ego-browser`)** —— Agent 原生浏览器运行时,自带 Chromium 和独立 Space。仅 macOS。
-  - 安装:`sh ~/.agents/skills/ego-browser/scripts/install.sh`,然后在 App 里完成 onboarding(onboarding 会注册 `ego-browser` 命令)。其他平台去 `https://lite.ego.app/` 下载。
+- **Ego(`ego-browser`)** —— Agent 原生浏览器运行时,自带 Chromium 和独立 Space(支持 macOS 和 Windows)。
+  - 安装:从 `https://lite.ego.app/` 下载并安装客户端,然后在 App 里完成 onboarding(onboarding 会注册 `ego-browser` 命令和 Skill);也可先通过 `npx skills add citrolabs/ego-lite` 安装 Skill 后按其 `references/install.md` 操作(macOS 可运行 Skill 目录下的 `scripts/install.sh`)。
   - 检测:`command -v ego-browser`
 
 ## Computer Use

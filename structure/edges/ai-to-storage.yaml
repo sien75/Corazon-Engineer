@@ -6,7 +6,7 @@ edges:
     to_interface: log-session-record-add
     channel: network
     protocol: http
-    description: ai writes records (call / observe / conversation) into storage after an operation
+    description: ai appends each message of a conversation to storage as it happens
   - id: ai-to-storage-session-messages
     from: ai
     from_interface: log-session-messages
@@ -30,7 +30,7 @@ edges:
     to_interface: log-session-upsert
     channel: network
     protocol: http
-    description: ai records a new conversation's kind, blueprint and display name
+    description: ai records a session's cwd, system text, display name and the chat / image models it runs
   - id: ai-to-storage-session-detail
     from: ai
     from_interface: log-session-detail
@@ -38,12 +38,4 @@ edges:
     to_interface: log-session-detail
     channel: network
     protocol: http
-    description: resume reads a conversation's kind and blueprint to pick the role spec and the page
-  - id: ai-to-storage-project-get
-    from: ai
-    from_interface: log-project-get
-    to: storage
-    to_interface: log-project-get
-    channel: network
-    protocol: http
-    description: a new or resumed sub session resolves its project to the folder the agent runs in and reads its page from
+    description: resume reads a session's cwd and system text to rebuild the conversation it describes

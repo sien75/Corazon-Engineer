@@ -7,3 +7,6 @@ workspace/ai/engineer-ai
 
 # Packaged deploy artifacts (cookbooks/prod.deploy.md)
 dist/
+
+# Built by `go build ./...` in the deploy dir
+how-to/deploy/prod/launcher

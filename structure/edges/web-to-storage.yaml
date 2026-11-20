@@ -6,39 +6,7 @@ edges:
     to_interface: log-session-list
     channel: network
     protocol: http
-    description: the launcher lists recent sessions (title, blueprint, last activity)
-  - id: web-to-storage-session-on
-    from: web
-    from_interface: log-session-on
-    to: storage
-    to_interface: log-session-on
-    channel: network
-    protocol: http
-    description: the launcher's pick puts the new — or an earlier — session on screen as a tab
-  - id: web-to-storage-session-off
-    from: web
-    from_interface: log-session-off
-    to: storage
-    to_interface: log-session-off
-    channel: network
-    protocol: http
-    description: the shell closes a tab the user clicked away (the session keeps its records)
-  - id: web-to-storage-session-current-get
-    from: web
-    from_interface: log-session-current-get
-    to: storage
-    to_interface: log-session-current-get
-    channel: network
-    protocol: http
-    description: the shell reads which sessions are open and the main session on load
-  - id: web-to-storage-session-current-put
-    from: web
-    from_interface: log-session-current-put
-    to: storage
-    to_interface: log-session-current-put
-    channel: network
-    protocol: http
-    description: the shell repairs the open list (drops session ids that no longer exist) and records a new main session
+    description: the shell takes the most recently active session — page 1, first entry — as the conversation it draws
   - id: web-to-storage-session-detail
     from: web
     from_interface: log-session-detail
@@ -46,7 +14,7 @@ edges:
     to_interface: log-session-detail
     channel: network
     protocol: http
-    description: the shell checks that the main session still exists before starting main on it
+    description: the shell checks that the session it is about to draw still exists, and reads its cwd and display name
   - id: web-to-storage-session-messages
     from: web
     from_interface: log-session-messages
@@ -55,67 +23,3 @@ edges:
     channel: network
     protocol: http
     description: the shell replays a conversation into its chat view on load
-  - id: web-to-storage-project-add
-    from: web
-    from_interface: log-project-add
-    to: storage
-    to_interface: log-project-add
-    channel: network
-    protocol: http
-    description: after checking that a folder the user typed is an engineer project (engineer.yaml), web hands it to storage to be remembered
-  - id: web-to-storage-project-list
-    from: web
-    from_interface: log-project-list
-    to: storage
-    to_interface: log-project-list
-    channel: network
-    protocol: http
-    description: the Engineer launcher draws the board the program remembers
-  - id: web-to-storage-project-get
-    from: web
-    from_interface: log-project-get
-    to: storage
-    to_interface: log-project-get
-    channel: network
-    protocol: http
-    description: /agent/<sessionId>/ resolves the session's project to its folder before serving the page
-  - id: web-to-storage-project-remove
-    from: web
-    from_interface: log-project-remove
-    to: storage
-    to_interface: log-project-remove
-    channel: network
-    protocol: http
-    description: the Engineer launcher takes a project off the board — soft, so the folder and the conversations stay
-  - id: web-to-storage-project-visible
-    from: web
-    from_interface: log-project-visible
-    to: storage
-    to_interface: log-project-visible
-    channel: network
-    protocol: http
-    description: the eye button in the Engineer launcher hides or shows a project's titlebar group; the state is stored so it survives a reload
-  - id: web-to-storage-workspace-stream
-    from: web
-    from_interface: log-workspace-stream
-    to: storage
-    to_interface: log-workspace-stream
-    channel: network
-    protocol: http
-    description: web subscribes to workspace changes and re-reads the workspace on each event, so tabs follow whoever changed it (main's curl, another window)
-  - id: web-to-storage-query
-    from: web
-    from_interface: static-query
-    to: storage
-    to_interface: static-query
-    channel: network
-    protocol: http
-    description: the launcher lists the project's blueprints
-  - id: web-to-storage-query-detail
-    from: web
-    from_interface: static-query-detail
-    to: storage
-    to_interface: static-query-detail
-    channel: network
-    protocol: http
-    description: the launcher reads a blueprint's index.html (its name) and README (its one-line description)

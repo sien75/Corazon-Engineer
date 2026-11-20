@@ -22,10 +22,8 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -140,13 +138,12 @@ func launch() {
 		{name: "ai", bin: filepath.Join(binDir, "engineer-ai"),
 			args: []string{"--home", data,
 				"--bind", bind, "--port", strconv.Itoa(ports["ai"]),
-				"--agents", filepath.Join(pkg, "agents"),
-				"--docs", filepath.Join(pkg, "docs"),
 				"--storage", svcURL("storage")}},
 		{name: "web", bin: self,
 			args: []string{"serve-web",
 				"--bind", bind, "--port", strconv.Itoa(ports["web"]),
 				"--assets", filepath.Join(pkg, "web"),
+				"--cwd", root,
 				"--storage", svcURL("storage"), "--ai", svcURL("ai")}},
 	}
 
@@ -162,14 +159,7 @@ func launch() {
 		started = append(started, s)
 	}
 
-	// A folder the user started the program in is a project they mean to work on:
-	// put it on the board (adding a folder that is already there keeps its
-	// history). The page can add and remove others.
-	if name := registerCwd(svcURL("storage"), root); name != "" {
-		fmt.Printf("engineer up — project: %s (%s)\n", name, root)
-	} else {
-		fmt.Printf("engineer up — data: %s\n", data)
-	}
+	fmt.Printf("engineer up — data: %s\n", data)
 	fmt.Printf("  web     %s\n", svcURL("web"))
 	fmt.Printf("  ai      %s\n", svcURL("ai"))
 	fmt.Printf("  storage %s\n", svcURL("storage"))
@@ -522,41 +512,6 @@ func dataHome() string {
 		return d
 	}
 	return filepath.Join(engineerHome(), "data")
-}
-
-// registerCwd puts the folder the program was started in on the board when it is
-// an engineer project. It returns the project's name, or "" when this folder is
-// not a project (the program runs anywhere — starting it somewhere else is not an
-// error, and the page is where projects are added).
-func registerCwd(storageURL, root string) string {
-	if _, err := os.Stat(filepath.Join(root, "engineer.yaml")); err != nil {
-		return ""
-	}
-	body, err := yaml.Marshal(map[string]string{"path": root, "name": projectName(root)})
-	if err != nil {
-		return ""
-	}
-	// storage has just been started, not necessarily listening yet: retry briefly
-	// rather than print a failure the user cannot act on.
-	var lastErr error = fmt.Errorf("storage not reachable")
-	for attempt := 0; attempt < 30; attempt++ {
-		res, err := http.Post(storageURL+"/log/project/add", "application/yaml", bytes.NewReader(body))
-		if err != nil {
-			lastErr = err
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
-		status := res.StatusCode
-		res.Body.Close()
-		if status != http.StatusOK {
-			lastErr = fmt.Errorf("HTTP %d", status)
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
-		return projectName(root)
-	}
-	fmt.Fprintf(os.Stderr, "engineer: could not register %s: %v\n", root, lastErr)
-	return ""
 }
 
 // projectName is the display name out of the project marker, or the folder name.

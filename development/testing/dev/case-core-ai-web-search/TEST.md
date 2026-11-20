@@ -3,10 +3,10 @@
 `web_search` 是第一个「真的出网」的工具：一个工具面，底下一张 provider 表，第一家是
 DeepSeek 的 `POST https://api.deepseek.com/v1/tools/search`。用例要钉住三件事：
 
-1. **sub（蓝图 agent）能搜**：一次 ask 之后，会话记录里有一条 `role: toolResult`，
+1. **会话里能搜**：一次 ask 之后，会话记录里有一条 `role: toolResult`，
    正文带工具自己渲染的前缀 `web_search · deepseek` 和一个 `https://` 链接 ——
    这个前缀只有工具会写，所以它同时证明「工具真的跑了」和「结果真的回来了」；
-2. **main 也能搜**：同一个工具在 main 的会话里同样可用（`registry.ts` 的共享
+2. **另一个会话也能搜**：同一个工具在每一个会话里都可用（`registry.ts` 的共享
    `customTools`，不是 `WORKSPACE_TOOLS`）；
 3. **key 来自 pi 的配置**：ai 启动时不带任何 `--key`/环境变量，`~/.pi/agent/auth.json`
    里 `deepseek` 那一条既是对话用的 key、也是搜索用的 key，所以能通就说明复用成立。
@@ -37,33 +37,21 @@ pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 for p in 9090 9091; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
-printf 'project: web-search\n' > "$ROOT/engineer.yaml"
-cat > "$ROOT/.agents/blueprints/probe/index.html" <<'HTML'
-<!doctype html>
-<html lang="zh">
-<head><meta charset="UTF-8"><title>Probe Page</title><link rel="stylesheet" href="/theme.css"></head>
-<body><h1>probe</h1><engineer-chat></engineer-chat></body>
-</html>
-HTML
-printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9091 >/tmp/web-search-log.log 2>&1 &
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:9091/log/project/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:9091/log/session/list -d 'pageNum: 1' && break
   sleep 1
 done
-curl -s -X POST http://localhost:9091/log/project/add -H 'Content-Type: application/yaml' \
-  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
-PROJECT=$(cat "$ROOT/.project")
 
 STORAGE=http://localhost:9091
 AI=http://localhost:9090
 
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9090 \
   --storage "$STORAGE" \
-  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/web-search-ai.log 2>&1 &)
+  >/tmp/web-search-ai.log 2>&1 &)
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
   sleep 1
@@ -81,15 +69,15 @@ sid() { python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"]
 msgs() { curl -s -X POST $STORAGE/log/session/messages -d "sessionId: $1"; }
 ```
 
-Expected: `PROJECT` 是 `p_…`；`/tmp/web-search-ai.log` 里没有 `--stub: model calls disabled`；
+Expected: `$ROOT` 是本次用例的根目录；`/tmp/web-search-ai.log` 里没有 `--stub: model calls disabled`；
 `python3 -c "import json;print(json.load(open('$HOME/.pi/agent/auth.json')).get('deepseek',{}).get('type'))"`
 是 `api_key`（这是第 3 条断言的前提，不是它本身）。
 
-## 1. sub（蓝图 agent）能搜，结果进了记录
+## 1. 会话里能搜，结果进了记录
 
 ```bash
 SUB=$(curl -s -X POST $AI/ai/new \
-  --data-binary "{\"blueprint\":\"probe\",\"projectId\":\"$PROJECT\"}" | sid)
+  --data-binary "{\"cwd\":\"$ROOT\"}" | sid)
 echo "sub=$SUB"
 ask $SUB "call the web_search tool right now with query \"DeepSeek API search\", count 3, then report the titles and urls it returned. Use the tool itself: do not use bash or curl, and do not answer from memory."
 grep -o 'toolName: web_search' /tmp/web-search-stream-$SUB.txt | wc -l
@@ -102,18 +90,18 @@ Expected: `/ai/stream` 是 YAML 帧，`toolName: web_search` 出现至少 3 次�
 其中出现 `web_search · deepseek`（工具自己写的前缀）和至少一个 `https://` 链接。
 工具报错时记录里会是 `isError: true` 且正文是失败原因——那就是这条断言红的样子。
 
-## 2. main 也有这个工具
+## 2. 每个会话都有这个工具
 
 ```bash
-MAIN=$(curl -s -X POST $AI/ai/new -d 'kind: main' | sid)
+MAIN=$(curl -s -X POST $AI/ai/new -d "cwd: $ROOT" | sid)
 echo "main=$MAIN"
 ask $MAIN "call the web_search tool right now with query \"Corazon Engineer\", count 2, then report the titles and urls it returned. Use the tool itself: do not use bash or curl, and do not answer from memory."
 grep -o 'toolName: web_search' /tmp/web-search-stream-$MAIN.txt | wc -l
 msgs $MAIN | grep -o 'web_search · deepseek' | head -1
 ```
 
-Expected: main 的会话同样出现 `web_search` 的调用，且记录里同样有 `web_search · deepseek`。
-main 与 sub 的差别只在 `WORKSPACE_TOOLS`，`web_search` 在共享列表里，所以两边都该有。
+Expected: 第二个会话同样出现 `web_search` 的调用，且记录里同样有 `web_search · deepseek`。
+所有会话共用同一份工具列表，`web_search` 在其中，所以每个会话都该有。
 
 ## Teardown
 

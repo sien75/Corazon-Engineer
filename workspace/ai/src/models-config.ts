@@ -1,24 +1,22 @@
-// The engineer's own model config: which model a conversation of each role runs
-// by default. It lives in the data home (models.yaml).
+// The engineer's own model config: which models a conversation runs by default.
+// It lives in the data home (models.yaml).
 //
 // It is the second of three layers: a session's own row (what the `model` tool
 // switched it to, or what it was created with) comes first, this file second, and
 // pi's own default third. pi keeps the catalog, models.json and the credentials;
 // its settings still name a default model, but only as that last resort.
 //
-// Edited as a file — by hand, or by main with write / edit; ai reads it fresh for
-// every session it builds, so an edit applies to the next session (or the next
+// Edited as a file — by hand, or by an agent with write / edit; ai reads it fresh
+// for every session it builds, so an edit applies to the next session (or the next
 // resume), not to one already running.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 
-export type Role = "main" | "sub";
-
-export interface RoleModels {
+export interface ModelsConfig {
   // The conversation model: a provider/model-id from pi's chat catalog. This is
-  // the one a `model` tool switch and a creation-time `model` override.
+  // the one a `model` tool switch and a creation-time `chat` override.
   chat: string;
   // The image-generation model: a provider/model-id naming an OpenAI-compatible
   // /images/generations endpoint (pi's own catalog + credential decide whether it
@@ -27,19 +25,14 @@ export interface RoleModels {
   image: string;
 }
 
-export interface ModelsConfig {
-  main: RoleModels;
-  sub: RoleModels;
-}
-
 export const DEFAULT_CHAT = "deepseek/deepseek-flash";
 export const DEFAULT_IMAGE = "";
 
-function defaults(): RoleModels {
+function defaults(): ModelsConfig {
   return { chat: DEFAULT_CHAT, image: DEFAULT_IMAGE };
 }
 
-const DEFAULT_FILE = `# Engineer's own model config: one default per role, provider/model-id.
+const DEFAULT_FILE = `# Engineer's own model config: one default, provider/model-id.
 # chat:  the conversation model (pi's chat catalog).
 # image: the image-generation model, reached over an OpenAI-compatible
 #        /images/generations endpoint, e.g. zenmux-openai/openai/gpt-image-2.
@@ -48,13 +41,8 @@ const DEFAULT_FILE = `# Engineer's own model config: one default per role, provi
 # and pi's own default model is the last resort after it. Edited as a file; pi
 # keeps the catalog and the credentials.
 
-main:
-  chat: ${DEFAULT_CHAT}
-  image: ""
-
-sub:
-  chat: ${DEFAULT_CHAT}
-  image: ""
+chat: ${DEFAULT_CHAT}
+image: ""
 `;
 
 export function modelsConfigPath(home: string): string {
@@ -83,31 +71,41 @@ export function isModelRef(ref: string): boolean {
   return i > 0 && i < ref.length - 1;
 }
 
-// roleModels reads one role's two slots. Every slot it has to replace (missing,
-// empty where it must not be, or not a provider/model-id) costs a warning and
-// falls back to the built-in default; the service keeps going either way.
-function roleModels(name: string, raw: any): RoleModels {
+// readModelsConfig reads the file fresh. A missing or unreadable file, or one
+// that is not a mapping, falls back to the built-in defaults with a warning.
+// Every slot it has to replace (missing, empty where it must not be, or not a
+// provider/model-id) costs a warning and falls back to its built-in default; the
+// service keeps going either way.
+export function readModelsConfig(home: string): ModelsConfig {
+  const file = modelsConfigPath(home);
   const out = defaults();
-  if (raw === undefined || raw === null) {
-    console.error(`warning: models.yaml has no ${name}; using defaults`);
+  let raw: any;
+  try {
+    raw = YAML.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    console.error(`warning: could not read ${file}: ${String(err)}; using defaults`);
     return out;
   }
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    console.error(`warning: models.yaml ${name} is not a mapping; using defaults`);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    console.error(`warning: ${file} is not a mapping; using defaults`);
     return out;
   }
+  // A file from before the roles were dropped carries `main` / `sub`; its `main`
+  // slot is the one that spoke for the tool, so it is read as the default rather
+  // than thrown away and silently replaced.
+  const legacy = raw.main && typeof raw.main === "object" ? raw.main : {};
   for (const slot of ["chat", "image"] as const) {
-    const value = String((raw as any)[slot] ?? "").trim();
+    const value = String(raw[slot] ?? legacy[slot] ?? "").trim();
     // "" is a valid image slot (no image model chosen yet); chat always needs one.
     if (!value) {
       if (slot === "chat") {
-        console.error(`warning: models.yaml ${name}.${slot} is empty; using ${out[slot]}`);
+        console.error(`warning: models.yaml ${slot} is empty; using ${out[slot]}`);
       }
       continue;
     }
     if (!isModelRef(value)) {
       console.error(
-        `warning: models.yaml ${name}.${slot} is not provider/model-id: ${value}; using ` +
+        `warning: models.yaml ${slot} is not provider/model-id: ${value}; using ` +
           `${out[slot] || "(empty)"}`,
       );
       continue;
@@ -115,22 +113,4 @@ function roleModels(name: string, raw: any): RoleModels {
     out[slot] = value;
   }
   return out;
-}
-
-// readModelsConfig reads the file fresh. A missing or unreadable file, or one
-// that is not a mapping, falls back to the built-in defaults with a warning.
-export function readModelsConfig(home: string): ModelsConfig {
-  const file = modelsConfigPath(home);
-  let raw: any;
-  try {
-    raw = YAML.parse(readFileSync(file, "utf8"));
-  } catch (err) {
-    console.error(`warning: could not read ${file}: ${String(err)}; using defaults`);
-    return { main: defaults(), sub: defaults() };
-  }
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    console.error(`warning: ${file} is not a mapping; using defaults`);
-    return { main: defaults(), sub: defaults() };
-  }
-  return { main: roleModels("main", raw.main), sub: roleModels("sub", raw.sub) };
 }

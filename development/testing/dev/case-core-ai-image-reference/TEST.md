@@ -36,16 +36,7 @@ pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 for p in 9130 9131; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
-printf 'project: image-reference\n' > "$ROOT/engineer.yaml"
-cat > "$ROOT/.agents/blueprints/probe/index.html" <<'HTML'
-<!doctype html>
-<html lang="zh">
-<head><meta charset="UTF-8"><title>Probe Page</title><link rel="stylesheet" href="/theme.css"></head>
-<body><h1>probe</h1><engineer-chat></engineer-chat></body>
-</html>
-HTML
-printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 
 # 用例自己定模型：chat 用 deepseek，image 用收参考图的 gpt-image-2。
 cat > "$HOME_DIR/models.yaml" <<'YAML'
@@ -77,12 +68,9 @@ echo "paste sha=$SHA"
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9131 >/tmp/image-reference-log.log 2>&1 &
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:9131/log/project/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:9131/log/session/list -d 'pageNum: 1' && break
   sleep 1
 done
-curl -s -X POST http://localhost:9131/log/project/add -H 'Content-Type: application/yaml' \
-  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
-PROJECT=$(cat "$ROOT/.project")
 
 STORAGE=http://localhost:9131
 AI=http://localhost:9130
@@ -90,7 +78,7 @@ AI=http://localhost:9130
 (cd workspace/ai && bun run src/main.ts \
   --home "$HOME_DIR" --bind 127.0.0.1 --port 9130 \
   --storage "$STORAGE" \
-  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/image-reference-ai.log 2>&1 &)
+  >/tmp/image-reference-ai.log 2>&1 &)
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
   sleep 1
@@ -114,7 +102,7 @@ PY
 }
 ```
 
-Expected: `PROJECT` 是 `p_…`；`$(cd workspace/ai && bunx tsc --noEmit)` 干净；
+Expected: `$ROOT` 是本次用例的根目录；`$(cd workspace/ai && bunx tsc --noEmit)` 干净；
 `python3 -c "import json;print(json.load(open('$HOME/.pi/agent/auth.json')).get('zenmux-openai',{}).get('type'))"`
 是 `api_key` —— 这是能生图的前提，不是断言本身。
 
@@ -122,7 +110,7 @@ Expected: `PROJECT` 是 `p_…`；`$(cd workspace/ai && bunx tsc --noEmit)` 干�
 
 ```bash
 SUB=$(curl -s -X POST $AI/ai/new \
-  --data-binary "{\"blueprint\":\"probe\",\"projectId\":\"$PROJECT\"}" | sid)
+  --data-binary "{\"cwd\":\"$ROOT\"}" | sid)
 echo "sub=$SUB"
 
 askWithImage $SUB "The image in this message carries a marker line in the prompt that names its file path \

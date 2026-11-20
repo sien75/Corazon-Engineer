@@ -1,3 +1,0 @@
-id: core-web-route-restore
-description: URL follows launcher and sessions and restores the same page on refresh and history navigation
-atoms: [web, log, ai]

@@ -1,3 +1,0 @@
-id: core-web-launcher-pointer
-description: launcher remains visible while pressing the nested plus label; only the current label is underlined
-atoms: [web]

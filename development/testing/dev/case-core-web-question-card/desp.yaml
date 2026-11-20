@@ -1,3 +1,0 @@
-id: core-web-question-card
-description: an ask_user question card survives a reload — replayed from log history with its question text, its padding, and disabled controls
-atoms: [web, log]

@@ -1,11 +1,12 @@
 # Test: core-ai-session-model
 
-模型选择的三层优先级端到端：会话行（创建时传入 / 会话内切换，同一层）> `models.yaml` 的角色默认
+模型选择的三层优先级端到端：会话行（创建时传入 / 会话内切换，同一层）> `models.yaml` 的默认
 > pi 自己的默认（只有 chat）。chat 和 image 两个 slot 各自独立，image 到 `models.yaml` 为止。
+`models.yaml` 不再分角色：一份 `chat` / `image`。
 
-1. **不传 chat** → 跑在 `models.yaml` 的 `sub.chat` 上，会话行 `model` 仍是空串
+1. **不传 chat** → 跑在 `models.yaml` 的 `chat` 上，会话行 `model` 仍是空串
    （空 = 没有显式选择，所以改 `models.yaml` 对下一次恢复生效）；
-2. `ai/new` 带 `chat`（旧名 `model` 仍是别名）→ 落到会话行；
+2. `ai/new` 带 `chat` → 落到会话行；
 3. 会话内让 agent 调 `model` 工具切换 chat → **只改会话行**，记录里不再有任何
    `role: model` 条目；
 4. 创建时带 `image` → 落到会话行 `imageModel`；会话内 `model` 工具 `slot=image`
@@ -14,7 +15,7 @@
    切换后的那个（会话行压过创建时的 image 和配置）；
 6. `models.yaml` 里的 chat 名 pi 用不了 → 退到 pi settings 的
    `defaultProvider` / `defaultModel`；那个也用不了 → 退到 pi 能用的第一个模型；
-7. main 用 `edit` 改 `models.yaml` 的默认值 → 文件里的注释还在，新 build 跟上；
+7. agent 用 `edit` 改 `models.yaml` 的默认值 → 文件里的注释还在，新 build 跟上；
    运行中的会话不变。
 
 `MODEL_A` / `MODEL_B` 从 pi 自己的 chat 可用目录里取（`~/.pi/agent/models.json`），
@@ -44,16 +45,7 @@ pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 for p in 9070 9071; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
-printf 'project: session-model\n' > "$ROOT/engineer.yaml"
-cat > "$ROOT/.agents/blueprints/probe/index.html" <<'HTML'
-<!doctype html>
-<html lang="zh">
-<head><meta charset="UTF-8"><title>Probe Page</title><link rel="stylesheet" href="/theme.css"></head>
-<body><h1>probe</h1><engineer-chat></engineer-chat></body>
-</html>
-HTML
-printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 
 # Two chat refs pi can use right now, from its own catalog. MODEL_B is written
 # into models.yaml as the role default; MODEL_A is the switch target.
@@ -82,23 +74,16 @@ echo "IMAGE_A=$IMAGE_A IMAGE_B=$IMAGE_B"
 # defaults when it is missing; here it is written with MODEL_B so the default is
 # distinguishable from the switch target.
 cat > "$HOME_DIR/models.yaml" <<EOF
-main:
-  chat: $MODEL_B
-  image: ""
-sub:
-  chat: $MODEL_B
-  image: ""
+chat: $MODEL_B
+image: ""
 EOF
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9071 >/tmp/session-model-log.log 2>&1 &
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:9071/log/project/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:9071/log/session/list -d 'pageNum: 1' && break
   sleep 1
 done
-curl -s -X POST http://localhost:9071/log/project/add -H 'Content-Type: application/yaml' \
-  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
-PROJECT=$(cat "$ROOT/.project")
 
 STORAGE=http://localhost:9071
 AI=http://localhost:9070
@@ -109,7 +94,7 @@ start_ai() {
   sleep 1
   (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9070 \
     --storage "$STORAGE" \
-    --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >>/tmp/session-model-ai.log 2>&1 &)
+    >>/tmp/session-model-ai.log 2>&1 &)
   for i in $(seq 1 60); do
     curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
     sleep 1
@@ -130,13 +115,15 @@ detail() { curl -s -X POST $STORAGE/log/session/detail -d "sessionId: $1"; }
 # new_with writes a JSON body: ai speaks YAML, so several fields need one document,
 # not curl's `-d` (which joins them with `&`, and YAML rejects that).
 new_with() {
-  python3 - "$1" "$2" "${3:-}" "${4:-}" > /tmp/session-model-new.json <<'JSON'
-import json, sys
-body = {"blueprint": sys.argv[1], "projectId": sys.argv[2]}
+  python3 - "${1:-}" "${2:-}" "${3:-}" > /tmp/session-model-new.json <<'JSON'
+import json, sys, os
+body = {"cwd": os.environ["ROOT"]}
+if sys.argv[1]:
+    body["chat"] = sys.argv[1]
+if sys.argv[2]:
+    body["image"] = sys.argv[2]
 if sys.argv[3]:
-    body["chat"] = sys.argv[3]
-if sys.argv[4]:
-    body["image"] = sys.argv[4]
+    body["title"] = sys.argv[3]
 print(json.dumps(body))
 JSON
   curl -s -X POST $AI/ai/new --data-binary @/tmp/session-model-new.json
@@ -144,40 +131,38 @@ JSON
 ```
 
 Expected: `A=…` / `B=…` 是 `provider/model-id`；`IMAGE_A` / `IMAGE_B` 各是
-`openrouter/<org>/<id>`；`$HOME_DIR/models.yaml` 存在且 `sub.chat` 是 `$MODEL_B`；
+`openrouter/<org>/<id>`；`$HOME_DIR/models.yaml` 存在且 `chat` 是 `$MODEL_B`；
 ai 服务不打印 `--stub: model calls disabled`。
 
-## 1. 不传 chat：落到 models.yaml 的 sub.chat
+## 1. 不传 chat：落到 models.yaml 的 chat
 
 ```bash
-SUB0=$(new_with probe "$PROJECT" "" "" | sid)
+SUB0=$(new_with "" "" "" | sid)
 echo "sub0=$SUB0"
 detail $SUB0
 ask $SUB0 "用 model 工具 list 一下，把标着 current 的那一行原样念出来。不要用 bash 或 curl，不要问我任何问题。"
 grep -o "${MODEL_B}[^\"]*current" /tmp/session-model-stream.txt | head -1
 ```
 
-Expected: `sub0` 是 `s_…`；`detail` 里 `kind: sub`、`blueprint: probe`、
-**`model: ""`**（没有显式选择，默认值不写进会话行）；agent 自己报的 current 是
+Expected: `sub0` 是 `s_…`；`detail` 里 `cwd: $ROOT`、**`model: ""`**（没有显式选择，默认值不写进会话行）；agent 自己报的 current 是
 `$MODEL_B`——这是「配置里的默认真的被 build 用上了」的独立证据。
 
-## 2. ai/new 的 chat 落到会话行（旧名 model 仍是别名）
+## 2. ai/new 的 chat 落到会话行
 
 ```bash
 curl -s -o /dev/null -w 'unknown chat: %{http_code}\n' -X POST $AI/ai/new \
-  --data-binary "{\"blueprint\":\"probe\",\"projectId\":\"$PROJECT\",\"chat\":\"no-such-provider/no-such-model\"}"
-SUB=$(new_with probe "$PROJECT" "$MODEL_A" "" | sid)
+  --data-binary "{\"cwd\":\"$ROOT\",\"chat\":\"no-such-provider/no-such-model\"}"
+SUB=$(new_with "$MODEL_A" "" "" | sid)
 echo "sub=$SUB"
 detail $SUB
 ALIAS=$(curl -s -X POST $AI/ai/new \
-  --data-binary "{\"blueprint\":\"probe\",\"projectId\":\"$PROJECT\",\"model\":\"$MODEL_A\"}" | sid)
+  --data-binary "{\"cwd\":\"$ROOT\",\"chat\":\"$MODEL_A\"}" | sid)
 echo "alias=$ALIAS"
 detail $ALIAS
 ```
 
 Expected: 未知 chat 是 `400`（pi 用不了的名字在这里就被挡下，不会写一个假的会话行）；
-`SUB` 与 `ALIAS` 都是 `s_…`，`detail` 里 `kind: sub`、`blueprint: probe`、
-`title: Probe Page`、`model: $MODEL_A`——旧字段 `model` 与 `chat` 等价。
+`SUB` 与 `ALIAS` 都是 `s_…`，`detail` 里 `cwd: $ROOT`、`model: $MODEL_A`——两者都写在会话行上。
 
 ## 3. 会话内 model 工具切换 chat：只写会话行
 
@@ -194,8 +179,8 @@ Expected: `model records: 0`——会话记录里没有 `role: model` 条目了�
 
 ```bash
 curl -s -o /dev/null -w 'bad image: %{http_code}\n' -X POST $AI/ai/new \
-  --data-binary "{\"blueprint\":\"probe\",\"projectId\":\"$PROJECT\",\"image\":\"no-slash\"}"
-SUB_IMG=$(new_with probe "$PROJECT" "" "$IMAGE_A" | sid)
+  --data-binary "{\"cwd\":\"$ROOT\",\"image\":\"no-slash\"}"
+SUB_IMG=$(new_with "" "$IMAGE_A" "" | sid)
 echo "sub_img=$SUB_IMG"
 detail $SUB_IMG
 ask $SUB_IMG "用 model 工具，slot 用 image，把本会话的 image 模型设为 ${IMAGE_B}。不要用 bash 或 curl，不要问我任何问题。"
@@ -209,17 +194,13 @@ Expected: 形状不对的 image 是 `400`；`SUB_IMG` 的 `detail` 里 `model: "
 
 ## 5. 杀掉 ai 重启：会话行压过 models.yaml
 
-重启前把配置里的 `sub.chat` 也写成 `$MODEL_A`（和记录里的 `$MODEL_B` 相反），
+重启前把配置里的 `chat` 也写成 `$MODEL_A`（和记录里的 `$MODEL_B` 相反），
 `image` 保持空：
 
 ```bash
 cat > "$HOME_DIR/models.yaml" <<EOF
-main:
-  chat: $MODEL_A
-  image: ""
-sub:
-  chat: $MODEL_A
-  image: ""
+chat: $MODEL_A
+image: ""
 EOF
 start_ai
 for s in "$SUB" "$SUB_IMG"; do
@@ -247,12 +228,8 @@ Expected: 两条 `resume` 都是 `200`；`SUB` 的 `model` 仍是 `$MODEL_B`（�
 
 ```bash
 cat > "$HOME_DIR/models.yaml" <<EOF
-main:
-  chat: no-such-provider/no-such-model
-  image: ""
-sub:
-  chat: no-such-provider/no-such-model
-  image: ""
+chat: no-such-provider/no-such-model
+image: ""
 EOF
 PI_DEFAULT=$(python3 - <<'PY'
 import json, os
@@ -261,7 +238,7 @@ print(f"{d.get('defaultProvider', '')}/{d.get('defaultModel', '')}")
 PY
 )
 echo "pi default: $PI_DEFAULT"
-SUB_PI=$(new_with probe "$PROJECT" "" "" | sid)
+SUB_PI=$(new_with "" "" "" | sid)
 echo "sub_pi=$SUB_PI"
 detail $SUB_PI
 ask $SUB_PI "用 model 工具 list 一下，把标着 current 的那一行原样念出来。不要用 bash 或 curl，不要问我任何问题。"
@@ -274,21 +251,21 @@ Expected: `SUB_PI` 的 `detail` 里 `model: ""`（没有显式选择）；日志
 current 是 `$PI_DEFAULT`——pi settings 的默认就是第 3 层。`$PI_DEFAULT` 本身也不可用时，
 再退到 pi 能用的第一个模型；那一支要动用户的 pi settings 才能造出来，这里不断言。
 
-## 7. main 改 models.yaml 的默认值（改文件，不是工具）
+## 7. agent 改 models.yaml 的默认值（改文件，不是工具）
 
-没有"改默认值"的工具：默认值就是文件里的一格，main 用 `edit` 改。先删掉文件让 ai 重新
-写出带注释的模板，再改 `sub.chat`：
+没有"改默认值"的工具：默认值就是文件里的一格，agent 用 `edit` 改。先删掉文件让 ai 重新
+写出带注释的模板，再改 `chat`：
 
 ```bash
 rm -f "$HOME_DIR/models.yaml"
 start_ai
 echo "comments before: $(grep -c '^#' "$HOME_DIR/models.yaml")"
-MAIN=$(curl -s -X POST $AI/ai/new --data-binary '{"kind":"main"}' | sid)
+MAIN=$(curl -s -X POST $AI/ai/new --data-binary "{\"cwd\":\"$ROOT\"}" | sid)
 echo "main=$MAIN"
-ask $MAIN "用 edit 工具把 ${HOME_DIR}/models.yaml 里 sub 的 chat 改成 ${MODEL_B}，其它行不要动。改完把新的 sub 段念一遍。不要用 bash 或 curl，不要问我任何问题。"
+ask $MAIN "用 edit 工具把 ${HOME_DIR}/models.yaml 里的 chat 改成 ${MODEL_B}，其它行不要动。改完把改后的整份文件念一遍。不要用 bash 或 curl，不要问我任何问题。"
 echo "comments after: $(grep -c '^#' "$HOME_DIR/models.yaml")"
-grep -A2 '^sub:' "$HOME_DIR/models.yaml"
-SUB_DM=$(new_with probe "$PROJECT" "" "" | sid)
+grep -A2 '^chat:' "$HOME_DIR/models.yaml"
+SUB_DM=$(new_with "" "" "" | sid)
 echo "sub_dm=$SUB_DM"
 detail $SUB_DM
 ask $SUB_DM "用 model 工具 list 一下，把标着 current 的那一行原样念出来。不要用 bash 或 curl，不要问我任何问题。"
@@ -296,7 +273,7 @@ grep -o "${MODEL_B}[^\"]*current" /tmp/session-model-stream.txt | head -1
 ```
 
 Expected: `comments before` / `comments after` 都大于 0（`edit` 是定点修改，注释不会掉）；
-`sub.chat` 变成 `$MODEL_B`；`SUB_DM` 的 `detail` 里 `model: ""`，agent 自己报的 current 是
+`chat` 变成 `$MODEL_B`；`SUB_DM` 的 `detail` 里 `model: ""`，agent 自己报的 current 是
 `$MODEL_B`——新 build 跟上了改过的文件。已经运行着的会话不受影响（第 5 段已经验证过：
 它们读的是自己的会话行）。
 

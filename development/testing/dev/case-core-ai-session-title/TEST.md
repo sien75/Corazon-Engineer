@@ -1,6 +1,6 @@
 # Test: core-ai-session-title
 
-标题自动总结端到端。起点是 blueprint 页面的 `<title>`（`Probe Page`），第 1 轮对话结算后
+标题自动总结端到端。起点是 `ai/new` 传入的 `title`（`Probe Page`），第 1 轮对话结算后
 ai 用本会话的模型生成一个新标题写回 `/log/session/upsert`，于是 `/log/session/detail` 的
 `title` 变了——tab 名下一次刷新就跟着变（`app.js` 的 `doRefreshWorkspace` 读的就是这个字段，
 浏览器侧不新增断言）。
@@ -22,29 +22,17 @@ pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 for p in 9080 9081; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
-printf 'project: session-title\n' > "$ROOT/engineer.yaml"
-cat > "$ROOT/.agents/blueprints/probe/index.html" <<'HTML'
-<!doctype html>
-<html lang="zh">
-<head><meta charset="UTF-8"><title>Probe Page</title><link rel="stylesheet" href="/theme.css"></head>
-<body><h1>probe</h1><engineer-chat></engineer-chat></body>
-</html>
-HTML
-printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9081 >/tmp/session-title-log.log 2>&1 &
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:9081/log/project/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:9081/log/session/list -d 'pageNum: 1' && break
   sleep 1
 done
-curl -s -X POST http://localhost:9081/log/project/add -H 'Content-Type: application/yaml' \
-  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
-PROJECT=$(cat "$ROOT/.project")
 (cd workspace/ai && bun run src/main.ts --home "$HOME_DIR" --bind 127.0.0.1 --port 9080 \
   --storage http://localhost:9081 \
-  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/session-title-ai.log 2>&1 &)
+  >/tmp/session-title-ai.log 2>&1 &)
 
 STORAGE=http://localhost:9081
 AI=http://localhost:9080
@@ -69,12 +57,12 @@ PY
 # ai speaks YAML, so two fields are one document — not curl's `-d` (it joins them
 # with `&`, which YAML rejects).
 SUB=$(curl -s -X POST $AI/ai/new --data-binary \
-  "{\"blueprint\":\"probe\",\"projectId\":\"$PROJECT\"}" | sid)
+  "{\"cwd\":\"$ROOT\",\"title\":\"Probe Page\"}" | sid)
 echo "sub=$SUB"
 echo "title0=$(title_of $SUB)"
 ```
 
-Expected: `sub` 是 `s_…`，`title0=Probe Page`——起点是页面的 `<title>`，还没有任何对话。
+Expected: `sub` 是 `s_…`，`title0=Probe Page`——起点是创建时传入的 title，还没有任何对话。
 
 ## 0. 窗口与清洗（纯函数，不需要模型）
 
@@ -188,7 +176,7 @@ Expected: 所有行都是 `PASS`，退出码 0。
 
 ```bash
 # 这一轮的流整段留在一个文件里：名字应该出现在 agent_settled 之后，随后服务端关流。
-ask $SUB "帮我看一下这个项目里 .agents/blueprints 下有哪些蓝图目录，用一句话告诉我结论。" \
+ask $SUB "看一眼当前目录，用一句话告诉我这是不是一个空目录。" \
   /tmp/session-title-stream.txt
 echo "--- 事件顺序："
 grep -n '^data: type: \(agent_settled\|session_title\)' /tmp/session-title-stream.txt

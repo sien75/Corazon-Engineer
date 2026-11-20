@@ -30,7 +30,6 @@ ROOT="$ROOTDIR/.engineer/.recover-test"
 # storage's database lives in the engineer home; the home is not a project.
 HOME_DIR="$ROOT/home"
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
-printf 'project: recover-test\n' > "$ROOT/engineer.yaml"
 
 # Guard first: with an empty $HOME_DIR the pattern below degrades to
 # "serve-storage --home " and kills every service on the machine —
@@ -50,11 +49,9 @@ sleep 1
 # the storage service the crafted history is written to
 /tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8810 >/tmp/recover-log.log 2>&1 &
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8810/log/project/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8810/log/session/list -d 'pageNum: 1' && break
   sleep 1
 done
-curl -s -X POST http://localhost:8810/log/project/add -H 'Content-Type: application/yaml' \
-  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
 
 # ai A — the real thing, against the real storage service. Not --stub: the provider
 # rejection this case is about can only happen with a real provider. Without one
@@ -63,7 +60,6 @@ curl -s -X POST http://localhost:8810/log/project/add -H 'Content-Type: applicat
 ENGINEER_AI_DEBUG=/tmp/recover-ai-debug.log \
   bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8811 --home "$HOME_DIR" \
   --storage http://localhost:8810 \
-  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/recover-ai.log 2>&1 &
 
 # two fake log endpoints, so the writer can be driven off the happy path
@@ -97,20 +93,18 @@ python3 /tmp/recover-fake-log.py 8597 /tmp/recover-reject-count.txt reject &
 # ai B — writes through the flaky endpoint (first two requests 500, then 200)
 bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8812 --home "$HOME_DIR" --stub \
   --storage http://localhost:8599 \
-  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/recover-retry.log 2>&1 &
 
 # ai C — writes through an endpoint that answers 400 to everything
 bun run workspace/ai/src/main.ts --bind 127.0.0.1 --port 8813 --home "$HOME_DIR" --stub \
   --storage http://localhost:8597 \
-  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" \
   >/tmp/recover-reject.log 2>&1 &
 
 sleep 2
 curl -s -o /dev/null -w 'log %{http_code}\n' -X POST http://localhost:8810/log/session/list -d ''
-curl -s -o /dev/null -w 'ai A %{http_code}\n' -X POST http://localhost:8811/ai/new -d 'kind: main'
-curl -s -o /dev/null -w 'ai B %{http_code}\n' -X POST http://localhost:8812/ai/new -d 'kind: main'
-curl -s -o /dev/null -w 'ai C %{http_code}\n' -X POST http://localhost:8813/ai/new -d 'kind: main'
+curl -s -o /dev/null -w 'ai A %{http_code}\n' -X POST http://localhost:8811/ai/new -d "cwd: $ROOT"
+curl -s -o /dev/null -w 'ai B %{http_code}\n' -X POST http://localhost:8812/ai/new -d "cwd: $ROOT"
+curl -s -o /dev/null -w 'ai C %{http_code}\n' -X POST http://localhost:8813/ai/new -d "cwd: $ROOT"
 ```
 
 Expected on startup: all four print `200`, `/tmp/recover-flaky-count.txt` does not
@@ -327,7 +321,7 @@ demands.
 ## 4. a healthy session is left alone
 
 ```bash
-SID=$(curl -s -X POST http://localhost:8811/ai/new -d 'kind: main' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+SID=$(curl -s -X POST http://localhost:8811/ai/new -d "cwd: $ROOT" | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
 curl -s -X POST http://localhost:8811/ai/ask -d "id: $SID
 blocks:
   - type: text
@@ -347,7 +341,7 @@ ai B writes through an endpoint that answers `500` to the first two requests and
 `200` afterwards.
 
 ```bash
-RID=$(curl -s -X POST http://localhost:8812/ai/new -d 'kind: main' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+RID=$(curl -s -X POST http://localhost:8812/ai/new -d "cwd: $ROOT" | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
 curl -s -X POST http://localhost:8812/ai/ask -d "id: $RID
 blocks:
   - type: text
@@ -369,7 +363,7 @@ ai C writes through an endpoint that answers `400` to everything. A 4xx is the
 client's fault, so it is not retried — but it is no longer silent.
 
 ```bash
-CID=$(curl -s -X POST http://localhost:8813/ai/new -d 'kind: main' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+CID=$(curl -s -X POST http://localhost:8813/ai/new -d "cwd: $ROOT" | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
 curl -s -X POST http://localhost:8813/ai/ask -d "id: $CID
 blocks:
   - type: text

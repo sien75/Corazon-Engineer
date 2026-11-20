@@ -1,49 +1,26 @@
-// Package server is the web frontend's file server.
-//
-// Serves the assets in workspace/web and generates /config.js carrying the
-// addresses the launcher picked. /config.js is an ES module: the frontend and
-// every blueprint page read it with `import { ENGINEER } from "/config.js"`,
-// so there is no global to race with.
+// Package web is the frontend's file server: it serves the app assets, generates
+// /config.js carrying the addresses the launcher picked, mirrors the ai service's
+// image store on this same origin, and hands every path that is not a file back to
+// the app shell.
 //
 // It is not a program of its own. The engineer binary is a multi-call binary —
 // one executable that the launcher also runs as each service, so that a machine
 // which whitelists process execution sees as few distinct paths as possible.
 // Serve is the entry point behind the `serve-web` subcommand:
 //
-//	engineer serve-web --bind <host> --port <n> --assets <dir> --storage <url> --ai <url>
+//	engineer serve-web --bind <host> --port <n> --assets <dir> --cwd <dir>
+//	                  --storage <url> --ai <url>
 //
-// Every flag is required and there is no fallback. The launcher owns the bind
-// host (loopback unless ENGINEER_BIND opened the stack up), the port and the
-// two runtime addresses; the frontend only ever reaches a service through the
-// URLs served back as /config.js, so an invented default would point the page
-// at a port nobody chose.
+// Every flag is required and there is no fallback: an invented default silently
+// binds a port nobody chose.
 //
-// --assets is the directory holding the frontend files (index.html, app.js,
-// style.css). There is no project flag: which folders the program works on is
-// data in storage's home database, and a page is found through it.
-//
-// /agent/<sessionId>/ serves the blueprint directory of the project that session
-// belongs to (storage knows the session's project and blueprint; its project row
-// knows the folder) — or, when the slug is one the tool ships (an asset directory
-// under --assets, e.g. `pure-chat`), that page, with the project not consulted at
-// all. A page is not copied per agent, so every agent of one blueprint shares
-// it — an edit reaches all of them on reload.
-//
-// The path is a session id, not a slug, because a session is more than its page
-// — it has the conversation. /agent/… is where the page's directory is, and the
-// session is what the user is talking to.
-//
-// /project/add is the one place a folder is admitted as a project: this service
-// is what reads the disk, so the rule ("an engineer project has an
-// engineer.yaml") lives here, in front of storage's registry.
-//
-// `/agent/<sessionId>` with no trailing slash names a session, not a directory:
-// a page is only ever addressed with the slash the iframe uses, and the
-// slashless form is a 404 rather than a redirect.
-package server
+// The shell is one conversation and a theme switch. --cwd is the folder that
+// conversation's agent works in — the page reads it from /config.js and passes it
+// to /ai/new — and it is the only thing this server knows about where the work
+// happens. There is no project board: a folder is an argument, not a record.
+package web
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,13 +32,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
-// Extension → content type, matching serve.js.
+// Extension → content type.
 var types = map[string]string{
 	".html": "text/html; charset=utf-8",
 	".js":   "text/javascript; charset=utf-8",
@@ -72,41 +45,17 @@ var types = map[string]string{
 	".svg":  "image/svg+xml",
 }
 
-// The two addresses a page can call. storage carries both prefixes — /log/* for
-// records and /static/* for a project's files — so there is one address, not two.
+// The addresses and the folder a page needs to run one conversation. storage
+// carries both prefixes — /log/* for records and sessions, /static/* for a
+// folder's files — so there is one address, not two.
 type runtimeConfig struct {
 	Storage string `json:"storage"`
 	AI      string `json:"ai"`
+	Cwd     string `json:"cwd"`
 }
 
 const usage = "usage: engineer serve-web --bind <host> --port <n> --assets <dir> " +
-	"--storage <url> --ai <url>"
-
-// agentPrefix is the URL prefix pages are served under: /agent/<sessionId>/…
-const agentPrefix = "/agent/"
-
-// pagePrefix is the same thing without a session: /agent/p/<projectId>/<slug>/… serves
-// a blueprint for browsing, before any conversation exists.
-const pagePrefix = "/agent/p/"
-
-// projectIDOkay is the shape log's project ids have. It arrives in a URL here, so it
-// is checked before it is used to look a folder up.
-func projectIDOkay(id string) bool {
-	if !strings.HasPrefix(id, "p_") || len(id) != 14 {
-		return false
-	}
-	for _, r := range id[2:] {
-		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
-			return false
-		}
-	}
-	return true
-}
-
-// blueprintSlug is the only shape a slug may have. It arrives from log, but log's
-// row is written from a request body — validating here is what keeps a bad row
-// from becoming a path.
-var blueprintSlug = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	"--cwd <dir> --storage <url> --ai <url>"
 
 // Serve runs the web file server until it is killed. argv is the argument list
 // following the subcommand; on failure it prints to stderr and exits.
@@ -127,6 +76,9 @@ func Serve(argv []string) {
 		case argv[i] == "--assets" && i+1 < len(argv):
 			i++
 			root = argv[i]
+		case argv[i] == "--cwd" && i+1 < len(argv):
+			i++
+			rt.Cwd = argv[i]
 		case argv[i] == "--storage" && i+1 < len(argv):
 			i++
 			rt.Storage = argv[i]
@@ -136,7 +88,7 @@ func Serve(argv []string) {
 		}
 	}
 
-	if bind == "" || port == 0 || root == "" || rt.Storage == "" || rt.AI == "" {
+	if bind == "" || port == 0 || root == "" || rt.Cwd == "" || rt.Storage == "" || rt.AI == "" {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
@@ -145,6 +97,14 @@ func Serve(argv []string) {
 	if err != nil {
 		log.Fatalf("engineer web: bad --assets %q: %v", root, err)
 	}
+	cwd, err := filepath.Abs(rt.Cwd)
+	if err != nil {
+		log.Fatalf("engineer web: bad --cwd %q: %v", rt.Cwd, err)
+	}
+	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+		log.Fatalf("engineer web: --cwd is not a folder: %s", cwd)
+	}
+	rt.Cwd = cwd
 
 	addr := net.JoinHostPort(bind, strconv.Itoa(port))
 	// Bind first, then announce: the banner must never claim a port we did not
@@ -169,174 +129,13 @@ func displayHost(bind string) string {
 	return bind
 }
 
-// sessionPages turns a session id into the page it shows: the project the
-// session belongs to, and the blueprint slug inside that project. The mapping is
-// written once, by ai, when the session is created; log owns it, and this
-// remembers the answer briefly so a page's burst of asset requests costs one
-// lookup instead of one per file. Short-lived on purpose: deleting a
-// conversation removes its log row, and the page must stop being served without
-// waiting for the process to restart.
-type sessionPages struct {
-	storageBase string
-	mu      sync.Mutex
-	seen    map[string]cachedPage
-}
-
-// page is one session's page: a directory inside a project's blueprint tree.
-type page struct {
-	projectID string
-	slug      string
-}
-
-type cachedPage struct {
-	page page
-	at   time.Time
-}
-
-// slugTTL is how long a resolved mapping is trusted. A page load is a handful of
-// requests in a few milliseconds; anything older asks log again.
-const slugTTL = 5 * time.Second
-
-// sessionMeta is the part of log's session row this server reads.
-type sessionMeta struct {
-	SessionID string `yaml:"sessionId"`
-	Kind      string `yaml:"kind"`
-	ProjectID string `yaml:"projectId"`
-	Blueprint string `yaml:"blueprint"`
-}
-
-// pageFor asks log which project and blueprint this session was made from. A
-// zero page means "this session has no page" (an unknown id, or main). An error
-// means log could not answer — the caller turns that into a 502 instead of
-// guessing a directory.
-func (p *sessionPages) pageFor(sessionID string) (page, error) {
-	p.mu.Lock()
-	entry, ok := p.seen[sessionID]
-	p.mu.Unlock()
-	if ok && time.Since(entry.at) < slugTTL {
-		return entry.page, nil
-	}
-
-	body, err := json.Marshal(map[string]string{"sessionId": sessionID})
-	if err != nil {
-		return page{}, err
-	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(p.storageBase, "/")+"/log/session/detail",
-		bytes.NewReader(body))
-	if err != nil {
-		return page{}, err
-	}
-	req.Header.Set("Content-Type", "application/yaml")
-	client := &http.Client{Timeout: 3 * time.Second}
-	res, err := client.Do(req)
-	if err != nil {
-		return page{}, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode == http.StatusNotFound {
-		return page{}, nil // no such session: not a page
-	}
-	if res.StatusCode != http.StatusOK {
-		return page{}, fmt.Errorf("storage /log/session/detail → HTTP %d", res.StatusCode)
-	}
-	raw, err := io.ReadAll(res.Body)
-	if err != nil {
-		return page{}, err
-	}
-	var meta sessionMeta
-	if err := yaml.Unmarshal(raw, &meta); err != nil {
-		return page{}, fmt.Errorf("storage /log/session/detail: %v", err)
-	}
-	out := page{
-		projectID: strings.TrimSpace(meta.ProjectID),
-		slug:      strings.TrimSpace(meta.Blueprint),
-	}
-	// The row is written from a request body, so the path it becomes is checked
-	// here too: a slug that could escape the blueprint directory is no page at
-	// all.
-	if out.projectID == "" || out.slug == "" || !blueprintSlug.MatchString(out.slug) {
-		out = page{}
-	}
-	p.mu.Lock()
-	p.seen[sessionID] = cachedPage{page: out, at: time.Now()}
-	p.mu.Unlock()
-	return out, nil
-}
-
-// projectPaths turns a project id into its folder. Projects are data in log's
-// home database, so this server has no project directory of its own; the folder
-// is remembered briefly, like a session's page.
-type projectPaths struct {
-	storageBase string
-	mu      sync.Mutex
-	seen    map[string]projectPath
-}
-
-type projectPath struct {
-	dir string
-	at  time.Time
-}
-
-// dir resolves a project id to its folder. ok is false when the id names no
-// project; an error means log could not answer.
-func (p *projectPaths) dir(projectID string) (string, bool, error) {
-	p.mu.Lock()
-	entry, ok := p.seen[projectID]
-	p.mu.Unlock()
-	if ok && time.Since(entry.at) < slugTTL {
-		return entry.dir, true, nil
-	}
-	body, err := json.Marshal(map[string]string{"projectId": projectID})
-	if err != nil {
-		return "", false, err
-	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(p.storageBase, "/")+"/log/project/get",
-		bytes.NewReader(body))
-	if err != nil {
-		return "", false, err
-	}
-	req.Header.Set("Content-Type", "application/yaml")
-	client := &http.Client{Timeout: 3 * time.Second}
-	res, err := client.Do(req)
-	if err != nil {
-		return "", false, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode == http.StatusNotFound {
-		return "", false, nil
-	}
-	if res.StatusCode != http.StatusOK {
-		return "", false, fmt.Errorf("storage /log/project/get → HTTP %d", res.StatusCode)
-	}
-	raw, err := io.ReadAll(res.Body)
-	if err != nil {
-		return "", false, err
-	}
-	var row struct {
-		Path string `yaml:"path"`
-	}
-	if err := yaml.Unmarshal(raw, &row); err != nil {
-		return "", false, fmt.Errorf("storage /log/project/get: %v", err)
-	}
-	dir := strings.TrimSpace(row.Path)
-	if dir == "" {
-		return "", false, nil
-	}
-	p.mu.Lock()
-	p.seen[projectID] = projectPath{dir: dir, at: time.Now()}
-	p.mu.Unlock()
-	return dir, true, nil
-}
-
 func handler(assets string, rt runtimeConfig) http.Handler {
 	index := filepath.Join(assets, "index.html")
-	pages := &sessionPages{storageBase: rt.Storage, seen: map[string]cachedPage{}}
-	projects := &projectPaths{storageBase: rt.Storage, seen: map[string]projectPath{}}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// This is a local tool: its files change when the tool or a project does,
-		// and a cached app.js served next to a fresh index.html is a broken shell.
-		// Never store anything the shell loads.
+		// This is a local tool: its files change when the tool does, and a cached
+		// app.js served next to a fresh index.html is a broken shell. Never store
+		// anything the shell loads.
 		w.Header().Set("Cache-Control", "no-store")
 
 		// net/http has already percent-decoded the path.
@@ -369,83 +168,8 @@ func handler(assets string, rt runtimeConfig) http.Handler {
 			return
 		}
 
-		if urlPath == "/project/add" {
-			if r.Method != http.MethodPost {
-				// The route is a write, not a page: a GET must not look like a
-				// missing path (the SPA fallback would answer it with the shell).
-				w.Header().Set("Allow", http.MethodPost)
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-			handleProjectAdd(w, r, rt.Storage)
-			return
-		}
-
-		// Two roots: /agent/<sessionId>/… is the blueprint the session was made
-		// from, everything else the app's own assets. The session id is resolved
-		// through log, never treated as a directory name: the URL carries the
-		// conversation, not the class.
-		base := assets
-		rel := urlPath
-		// A page without a conversation: /agent/p/<projectId>/<slug>/… is the blueprint
-		// itself, straight out of that project's folder. Browsing has to work before a
-		// session exists — a session row is written when the first message is sent, not
-		// when the page is looked at — so this route names the project instead.
-		if strings.HasPrefix(urlPath, pagePrefix) {
-			rest := strings.TrimPrefix(urlPath, pagePrefix)
-			parts := strings.SplitN(rest, "/", 3)
-			if len(parts) < 3 || !projectIDOkay(parts[0]) || !blueprintSlug.MatchString(parts[1]) {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			dir, ok, err := projects.dir(parts[0])
-			if err != nil {
-				http.Error(w, "engineer web: cannot resolve project: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-			if !ok {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			base = filepath.Join(dir, ".agents", "blueprints")
-			rel = "/" + parts[1] + "/" + parts[2]
-			// /agent/p/… also starts with /agent/, so this is an `else`: the session
-			// branch would otherwise read "p" as a session id.
-		} else if strings.HasPrefix(urlPath, agentPrefix) {
-			rest := strings.TrimPrefix(urlPath, agentPrefix)
-			slash := strings.Index(rest, "/")
-			if slash < 0 {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			sessionID, tail := rest[:slash], rest[slash:]
-			pg, err := pages.pageFor(sessionID)
-			if err != nil {
-				// Never fall back to the shell here: the shell drawn inside the
-				// page's own frame would hide the cause, and a page that cannot be
-				// resolved is not a page.
-				http.Error(w, "engineer web: cannot resolve session: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-			if pg.projectID == "" {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			dir, ok, err := projects.dir(pg.projectID)
-			if err != nil {
-				http.Error(w, "engineer web: cannot resolve project: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-			if !ok {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			base = filepath.Join(dir, ".agents", "blueprints")
-			rel = "/" + pg.slug + tail
-		}
-
-		file := filepath.Join(base, filepath.FromSlash(rel))
-		if !strings.HasPrefix(file, base) {
+		file := filepath.Join(assets, filepath.FromSlash(urlPath))
+		if !strings.HasPrefix(file, assets) {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -459,15 +183,8 @@ func handler(assets string, rt runtimeConfig) http.Handler {
 			return
 		}
 
-		// Under /agent/ there is no SPA: the blueprint either has the file or it
-		// does not. Falling back to the shell would draw the shell inside the
-		// page's own frame (a missing asset is not a route).
-		if strings.HasPrefix(urlPath, agentPrefix) {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		// Anything not on disk falls back to the app shell (SPA routing).
+		// Anything not on disk is the app shell: the shell has one page, and every
+		// path is it.
 		html, err := os.ReadFile(index)
 		if err != nil {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -490,7 +207,7 @@ const blobsPrefix = "/blobs/"
 // not look accepted here.
 var blobName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-var blobsClient = &http.Client{Timeout: 15 * time.Second}
+var blobsClient = &http.Client{}
 
 // handleBlob proxies one blob read to the ai service. It is a read only: storing
 // a blob stays the ai service's business, and this server has no write route.
@@ -540,119 +257,4 @@ func contentType(file string) string {
 		return t
 	}
 	return "application/octet-stream"
-}
-
-// ---------- project/add ----------
-//
-// The one place a folder becomes a project. web is the service that reads the
-// disk, so the rule lives here: a folder is an engineer project when it holds an
-// engineer.yaml. log stores the answer; a path already on record keeps its id,
-// so re-adding a folder brings its conversations back instead of starting a
-// second, empty project beside them.
-
-func handleProjectAdd(w http.ResponseWriter, r *http.Request, storageBase string) {
-	var req struct {
-		Path string `yaml:"path"`
-	}
-	if r.Body != nil {
-		raw, err := io.ReadAll(r.Body)
-		if err != nil {
-			writeErrYAML(w, http.StatusBadRequest, "bad_request", "invalid body: "+err.Error())
-			return
-		}
-		if len(raw) > 0 {
-			if err := yaml.Unmarshal(raw, &req); err != nil {
-				writeErrYAML(w, http.StatusBadRequest, "bad_request", "invalid yaml body: "+err.Error())
-				return
-			}
-		}
-	}
-	path := strings.TrimSpace(req.Path)
-	if path == "" {
-		writeErrYAML(w, http.StatusBadRequest, "bad_request", "path missing")
-		return
-	}
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			writeErrYAML(w, http.StatusInternalServerError, "internal", "cannot expand ~: "+err.Error())
-			return
-		}
-		path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		writeErrYAML(w, http.StatusBadRequest, "bad_request", "bad path: "+err.Error())
-		return
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		writeErrYAML(w, http.StatusBadRequest, "bad_request", "no such folder: "+abs)
-		return
-	}
-	if !info.IsDir() {
-		writeErrYAML(w, http.StatusBadRequest, "bad_request", "not a folder: "+abs)
-		return
-	}
-	if _, err := os.Stat(filepath.Join(abs, "engineer.yaml")); err != nil {
-		writeErrYAML(w, http.StatusBadRequest, "bad_request",
-			"not an engineer project (no engineer.yaml in "+abs+")")
-		return
-	}
-
-	post, err := yaml.Marshal(map[string]string{"path": abs, "name": projectName(abs)})
-	if err != nil {
-		writeErrYAML(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	req2, err := http.NewRequest(http.MethodPost, strings.TrimRight(storageBase, "/")+"/log/project/add",
-		bytes.NewReader(post))
-	if err != nil {
-		writeErrYAML(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	req2.Header.Set("Content-Type", "application/yaml")
-	res, err := (&http.Client{Timeout: 5 * time.Second}).Do(req2)
-	if err != nil {
-		writeErrYAML(w, http.StatusBadGateway, "internal", "log /log/project/add: "+err.Error())
-		return
-	}
-	defer res.Body.Close()
-	raw, err := io.ReadAll(res.Body)
-	if err != nil {
-		writeErrYAML(w, http.StatusBadGateway, "internal", "log /log/project/add: "+err.Error())
-		return
-	}
-	if res.StatusCode != http.StatusOK {
-		writeErrYAML(w, res.StatusCode, "internal", "log /log/project/add → HTTP "+strconv.Itoa(res.StatusCode)+": "+string(raw))
-		return
-	}
-	w.Header().Set("Content-Type", "application/yaml")
-	w.Write(raw)
-}
-
-// projectName reads the display name out of the project marker, falling back to
-// the folder name. The marker, not the path, is what a user
-// recognizes.
-func projectName(dir string) string {
-	if data, err := os.ReadFile(filepath.Join(dir, "engineer.yaml")); err == nil {
-		var doc struct {
-			Project string `yaml:"project"`
-		}
-		if yaml.Unmarshal(data, &doc) == nil {
-			if name := strings.TrimSpace(doc.Project); name != "" {
-				return name
-			}
-		}
-	}
-	return filepath.Base(dir)
-}
-
-func writeErrYAML(w http.ResponseWriter, status int, code, msg string) {
-	body, _ := yaml.Marshal(map[string]interface{}{
-		"error": map[string]string{"code": code, "message": msg},
-	})
-	w.Header().Set("Content-Type", "application/yaml")
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
 }

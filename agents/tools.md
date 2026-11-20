@@ -11,8 +11,8 @@ Each entry below gives: what it is for, how to install it (a cross-platform meth
 - **agent-browser** — general browser automation: navigate, snapshot, click, fill forms, extract data.
   - install: `npm install -g agent-browser` (all platforms; macOS can also `brew install agent-browser`); then `agent-browser install` (downloads Chrome, first time only)
   - detect: `command -v agent-browser`
-- **Ego (`ego-browser`)** — agent-native browser runtime with its own Chromium and space. macOS only.
-  - install: `sh ~/.agents/skills/ego-browser/scripts/install.sh`, then finish onboarding in the app (onboarding registers the `ego-browser` command). On other platforms, download from `https://lite.ego.app/`.
+- **Ego (`ego-browser`)** — agent-native browser runtime with its own Chromium and space (macOS and Windows).
+  - install: download and install the app from `https://lite.ego.app/`, then finish onboarding in the app (onboarding registers the `ego-browser` command and skill); or add the skill first via `npx skills add citrolabs/ego-lite` and follow its `references/install.md` (macOS can run `scripts/install.sh` inside the installed skill directory).
   - detect: `command -v ego-browser`
 
 ## Computer Use

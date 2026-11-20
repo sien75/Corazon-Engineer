@@ -1,6 +1,6 @@
 # POST /log/session/detail
 
-Read one conversation's role, the project it belongs to, the blueprint it was made from and its display name (POST /log/session/detail); a session with no row is not an error to the caller, but this endpoint answers 404
+Read one conversation's folder, system text, display name and the chat / image models it runs; a session with no row is not an error to the caller, but this endpoint answers 404
 
 ## Request
 
@@ -15,13 +15,12 @@ body:
 status: 200
 body:
   sessionId: string
-  kind: main | sub
-  projectId: string  # the project this session belongs to, "" for main; static / ai / web resolve the folder through it
-  blueprint: string  # slug of the page this session drives, "" when it has none; the web server resolves /agent/<sessionId>/ through this
+  cwd: string  # absolute folder the agent works in, "" when none was ever written
+  system: string  # text carried on the session's system prompt, "" when none
   title: string  # display name, "" when none was ever written
-  model: string  # provider/model-id of the chat model chosen for this session, "" when the role default in models.yaml applies
-  imageModel: string  # provider/model-id of the image-generation model chosen for this session, "" when the role's `image` in models.yaml applies or none is set
-  createdAt: string
+  model: string  # provider/model-id of the chat model chosen for this session, "" when the models.yaml default applies
+  imageModel: string  # provider/model-id of the image-generation model chosen for this session, "" when the models.yaml default applies or none is set
+  createdAt: string  # first write time, RFC3339
 ```
 
 ## Errors

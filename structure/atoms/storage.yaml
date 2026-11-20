@@ -1,6 +1,6 @@
 atoms:
   - name: storage
-    description: "Corazon Engineer storage service — one service, one process, one home. It owns the engineer home's sqlite state — records (call / observe / conversation), projects (the board of folders the program works on — path, name, whether it is still on the board (removal is soft) and whether its group is drawn in the titlebar (hiding is not removal)), sessions (each conversation's kind, main or sub, the project it belongs to, the blueprint it drives, its display name and the chat and image models it runs — \"\" meaning the role default in the engineer home's models.yaml applies) and current (which sessions are open — the shell's tab bar — and which one is main); a tab is not stored — it is one open session, so the open list is all the workspace needs; the home is the program's own data directory, not a project — the program runs anywhere and the folders it serves are rows in projects — and it serves the read-only views of those projects' file trees: query / query-detail / stream over atoms, edges, contracts and the prose beside them — how-to, development, docs, humanwrite, and the dot-directory resources skills (.agents/skills) and blueprints (.agents/blueprints) — covering every file type, without validating the tree (a malformed atom or a dangling edge is not its business; writes go through the ai shell). The routes keep the two prefixes the two halves had as separate services — /log/* for the records, /static/* for a project's files — because each path names the thing it acts on. Being one process is what removes the cross-service call that used to resolve a request's projectId to a folder: the project board is a table here, so a /static/* request reads it with a query instead of calling /log/project/get over HTTP and caching the answer. It exposes log query/detail/search/mutation/stream/list/delete APIs, a workspace stream that pushes an event after every change to sessions or projects plus the session, project and current ones, and the static query/detail/stream ones whose stream is fed by a one-second poll of every project's file tree."
+    description: "Corazon Engineer storage service — one service, one process, one home. It owns the engineer home's sqlite state and the read-only views of a project folder's file tree. Two tables only: records (the messages of every conversation) and sessions (each conversation's folder — the absolute path its agent works in, and the cwd of a resumed session — the text appended to its system prompt, its display name and the chat and image models it runs, \"\" meaning the models.yaml default applies; there is no role, no project, no blueprint and no open / main position, so a session is a plain conversation and its id is the only thing that says which). It knows nothing about projects: a folder is not a row anywhere, and the /static/* endpoints take the folder's absolute path in the request. One service answering two prefixes — /log/* for the records and sessions, /static/* for a folder's files — because each path names the thing it acts on. The static side reads atoms, edges, contracts and the prose beside them — how-to, development, docs, humanwrite, and the dot-directory resources skills (.agents/skills) and blueprints (.agents/blueprints) — covering every file type, without validating the tree (a malformed atom or a dangling edge is not its business; writes go through the ai shell), and rejects path escapes outside the tree it was given. Its two static streams are fed by a one-second poll of the folder each request named."
     path: ./workspace/storage
     runtime_type: go
     runtime_version: "1.22"
@@ -8,41 +8,6 @@ atoms:
 
     interfaces:
       provides:
-        - id: log-project-list
-          channel: network
-          protocol: http
-          contract: ./contracts/log-project-list.yaml
-          extend:
-            path: /log/project/list
-            method: POST
-        - id: log-project-get
-          channel: network
-          protocol: http
-          contract: ./contracts/log-project-get.yaml
-          extend:
-            path: /log/project/get
-            method: POST
-        - id: log-project-add
-          channel: network
-          protocol: http
-          contract: ./contracts/log-project-add.yaml
-          extend:
-            path: /log/project/add
-            method: POST
-        - id: log-project-remove
-          channel: network
-          protocol: http
-          contract: ./contracts/log-project-remove.yaml
-          extend:
-            path: /log/project/remove
-            method: POST
-        - id: log-project-visible
-          channel: network
-          protocol: http
-          contract: ./contracts/log-project-visible.yaml
-          extend:
-            path: /log/project/visible
-            method: POST
         - id: log-session-list
           channel: network
           protocol: http
@@ -71,20 +36,6 @@ atoms:
           extend:
             path: /log/session/upsert
             method: POST
-        - id: log-session-on
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-on.yaml
-          extend:
-            path: /log/session/on
-            method: POST
-        - id: log-session-off
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-off.yaml
-          extend:
-            path: /log/session/off
-            method: POST
         - id: log-session-delete
           channel: network
           protocol: http
@@ -92,89 +43,12 @@ atoms:
           extend:
             path: /log/session/delete
             method: POST
-        - id: log-session-current-get
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-current-get.yaml
-          extend:
-            path: /log/session/current/get
-            method: POST
-        - id: log-session-current-put
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-current-put.yaml
-          extend:
-            path: /log/session/current/put
-            method: POST
         - id: log-session-record-add
           channel: network
           protocol: http
           contract: ./contracts/log-session-record-add.yaml
           extend:
             path: /log/session/record/add
-            method: POST
-        - id: log-test-add
-          channel: network
-          protocol: http
-          contract: ./contracts/log-test-add.yaml
-          extend:
-            path: /log/test/add
-            method: POST
-        - id: log-test-query
-          channel: network
-          protocol: http
-          contract: ./contracts/log-test-query.yaml
-          extend:
-            path: /log/test/query
-            method: POST
-        - id: log-test-detail
-          channel: network
-          protocol: http
-          contract: ./contracts/log-test-detail.yaml
-          extend:
-            path: /log/test/detail
-            method: POST
-        - id: log-telemetry-add
-          channel: network
-          protocol: http
-          contract: ./contracts/log-telemetry-add.yaml
-          extend:
-            path: /log/telemetry/add
-            method: POST
-        - id: log-telemetry-query
-          channel: network
-          protocol: http
-          contract: ./contracts/log-telemetry-query.yaml
-          extend:
-            path: /log/telemetry/query
-            method: POST
-        - id: log-telemetry-detail
-          channel: network
-          protocol: http
-          contract: ./contracts/log-telemetry-detail.yaml
-          extend:
-            path: /log/telemetry/detail
-            method: POST
-        - id: log-search
-          channel: network
-          protocol: http
-          contract: ./contracts/log-search.yaml
-          extend:
-            path: /log/search
-            method: POST
-        - id: log-stream
-          channel: network
-          protocol: http
-          contract: ./contracts/log-stream.yaml
-          extend:
-            path: /log/stream
-            method: POST
-        - id: log-workspace-stream
-          channel: network
-          protocol: http
-          contract: ./contracts/log-workspace-stream.yaml
-          extend:
-            path: /log/workspace/stream
             method: POST
         - id: static-query
           channel: network

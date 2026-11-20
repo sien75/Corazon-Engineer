@@ -13,15 +13,14 @@ rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/
 # has no main package, so building inside it yields an archive, not a runnable
 # ./engineer.
 #
-# storage has no root of its own: a /static/* request names a projectId, which it
-# resolves to a folder with a query against the database it already holds. The case
-# registers the mock project first and keeps its id in a file the request blocks
-# below read.
+# storage has no root of its own and keeps no board of projects: every /static/*
+# request names the folder it wants by absolute path.
 #
 # Reclaim a previous run of this case. A leftover service keeps serving its old
 # database (or silently stops this run's from binding) — and the failure that
 # causes looks like a wrong answer, not a dead service. This happens before, not
 # after.
+PLAYGROUND="$PWD/.engineer/.playground"
 HOME_DIR="$PWD/.engineer/.playground-home"
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
@@ -32,18 +31,14 @@ rm -rf "$HOME_DIR" && mkdir -p "$HOME_DIR"
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8871 >/tmp/static-query-log.log 2>&1 &
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8871/log/project/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8871/log/session/list -d 'pageNum: 1' && break
   sleep 1
 done
-curl -s -X POST http://localhost:8871/log/project/add -H 'Content-Type: application/yaml' \
-  --data-binary "path: $PWD/.engineer/.playground" \
-  | awk '$1=="projectId:" {print $2}' > .engineer/.playground-project
-PROJECT=$(cat .engineer/.playground-project)
 
 # wait for it before querying: the blocks below run back to back
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8871/static/query \
-    -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" && break
+    -H 'Content-Type: application/yaml' --data-binary "path: $PLAYGROUND" && break
   sleep 1
 done
 ```
@@ -51,9 +46,8 @@ done
 ## 1. static-query full query
 
 ```bash
-PROJECT=$(cat .engineer/.playground-project)
 curl -s -X POST http://localhost:8871/static/query \
-  -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT"
+  -H 'Content-Type: application/yaml' --data-binary "path: $PLAYGROUND"
 ```
 
 Expected: 200, body contains:
@@ -67,10 +61,9 @@ Expected: 200, body contains:
 ## 2. static-query-detail how-to content
 
 ```bash
-PROJECT=$(cat .engineer/.playground-project)
 curl -s -X POST http://localhost:8871/static/query-detail \
   -H 'Content-Type: application/yaml' \
-  --data-binary "$(printf 'projectId: %s\ntype: how-to\nid: how-to/README.md' "$PROJECT")"
+  --data-binary "$(printf 'path: %s\ntype: how-to\nid: how-to/README.md' "$PLAYGROUND")"
 ```
 
 Expected: 200, `how-to` is the raw file text starting with `# how-to`.
@@ -78,10 +71,9 @@ Expected: 200, `how-to` is the raw file text starting with `# how-to`.
 ## 3. static-query-detail contract content
 
 ```bash
-PROJECT=$(cat .engineer/.playground-project)
 curl -s -X POST http://localhost:8871/static/query-detail \
   -H 'Content-Type: application/yaml' \
-  --data-binary "$(printf 'projectId: %s\ntype: contract\nid: structure/contracts/demo-api.yaml' "$PROJECT")"
+  --data-binary "$(printf 'path: %s\ntype: contract\nid: structure/contracts/demo-api.yaml' "$PLAYGROUND")"
 ```
 
 Expected: 200, `contract.id` is `demo-api`, `contract.response.body.ok` is `boolean`.
@@ -89,10 +81,9 @@ Expected: 200, `contract.id` is `demo-api`, `contract.response.body.ok` is `bool
 ## 4. static-query-detail development raw text
 
 ```bash
-PROJECT=$(cat .engineer/.playground-project)
 curl -s -X POST http://localhost:8871/static/query-detail \
   -H 'Content-Type: application/yaml' \
-  --data-binary "$(printf 'projectId: %s\ntype: development\nid: development/note.md' "$PROJECT")"
+  --data-binary "$(printf 'path: %s\ntype: development\nid: development/note.md' "$PLAYGROUND")"
 ```
 
 Expected: 200, `development` is the raw markdown starting with `# Playground Note`.
@@ -100,19 +91,17 @@ Expected: 200, `development` is the raw markdown starting with `# Playground Not
 ## 5. static-query-detail error branches
 
 ```bash
-PROJECT=$(cat .engineer/.playground-project)
 curl -s -X POST http://localhost:8871/static/query-detail \
   -H 'Content-Type: application/yaml' \
-  --data-binary "$(printf 'projectId: %s\ntype: atom\nid: structure/atoms/demo-service.yaml' "$PROJECT")"
+  --data-binary "$(printf 'path: %s\ntype: atom\nid: structure/atoms/demo-service.yaml' "$PLAYGROUND")"
 ```
 
 Expected: 400, `error.code` is `bad_request` (atom is not a leaf file type).
 
 ```bash
-PROJECT=$(cat .engineer/.playground-project)
 curl -s -X POST http://localhost:8871/static/query-detail \
   -H 'Content-Type: application/yaml' \
-  --data-binary "$(printf 'projectId: %s\ntype: contract\nid: structure/contracts/nope.yaml' "$PROJECT")"
+  --data-binary "$(printf 'path: %s\ntype: contract\nid: structure/contracts/nope.yaml' "$PLAYGROUND")"
 ```
 
 Expected: 404, `error.code` is `not_found`.
@@ -121,9 +110,8 @@ Expected: 404, `error.code` is `not_found`.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8871/static/query \
-  -H 'Content-Type: application/yaml' --data-binary 'projectId: p_ffffffffffff'
+  -H 'Content-Type: application/yaml' --data-binary 'path: /nonexistent-folder'
 ```
 
-Expected: 404 — static resolves the id through storage, and storage has no such project. A
-request with no `projectId` is a 400 for the same reason: static no longer has a
-root to fall back to.
+Expected: 404 — there is no such folder. A request with no `path` is a 400 for the
+same reason: static has no root to fall back to.

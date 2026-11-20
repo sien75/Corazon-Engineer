@@ -1,3 +1,0 @@
-id: core-web-chat-scroll
-description: web chat scrolling — the conversation scrolls over the whole pane while its content stays a centred 1000px column, so the wheel works to the left and right of the column
-atoms: [web, ai]

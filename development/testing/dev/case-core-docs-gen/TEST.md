@@ -45,41 +45,42 @@ Expected: `exit=0`；输出里没有 `added` / `removed` / `changed`（拷过来
 ## 2. 报告变化
 
 ```bash
-rm "$W/structure/docs/log-session-on.md"
+rm "$W/structure/docs/log-session-detail.md"
 echo "stale" > "$W/structure/docs/old-interface.md"
-sed -i.bak 's/^description: Close sessions/description: Close some sessions/' "$W/structure/contracts/log-session-off.yaml"
+sed -i.bak 's/^description: Store a conversation/description: Store one conversation/' "$W/structure/contracts/log-session-upsert.yaml"
 bun how-to/deploy/gen-docs.ts "$W" "$W/structure/docs"; echo "exit=$?"
 ls "$W/structure/docs/old-interface.md" 2>&1 | head -1
 ```
 
-Expected: `exit=0`；输出 `added: log-session-on`、`removed: old-interface`、`changed: log-session-off`（改了 contract 的描述）、没有别的；`old-interface.md` 已不存在。
+Expected: `exit=0`；输出 `added: log-session-detail`、`removed: old-interface`、`changed: log-session-upsert`（改了 contract 的描述）、没有别的；`old-interface.md` 已不存在。
 再跑一次：没有任何变化行。
 
 ## 3. 接口文件的内容
 
 ```bash
-cat "$W/structure/docs/log-session-on.md"
-head -1 "$W/structure/docs/ai-new.md" "$W/structure/docs/ai-blobs.md" "$W/structure/docs/log-workspace-stream.md"
+cat "$W/structure/docs/log-session-upsert.md"
+head -1 "$W/structure/docs/ai-new.md" "$W/structure/docs/ai-blobs.md" "$W/structure/docs/log-session-list.md"
 ```
 
-Expected: `log-session-on.md` 含标题 `POST /log/session/on`、说明、请求里的 `sessionIds` / `index`、
-响应里的 `openSessions`、错误里的 `400`；`ai-new.md` 首行 `POST /ai/new`；`ai-blobs.md` 首行 `GET /blobs/{sha256}`；`log-workspace-stream.md` 首行 `POST /log/workspace/stream`。
+Expected: `log-session-upsert.md` 含标题 `POST /log/session/upsert`、说明、请求里的 `cwd` / `system` /
+`title` / `model` / `imageModel`、响应里的同名字段、错误里的 `400`；`ai-new.md` 首行 `POST /ai/new`；
+`ai-blobs.md` 首行 `GET /blobs/{sha256}`；`log-session-list.md` 首行 `POST /log/session/list`。
 
 ## 4. 不一致就失败
 
 ```bash
 cp -R "$W/structure" "$W/bad" 2>/dev/null; B="$W/bad"
 # a contract nothing provides
-cp structure/contracts/log-session-on.yaml "$B/contracts/orphan-contract.yaml"
-sed -i.bak 's/^id: log-session-on/id: orphan-contract/' "$B/contracts/orphan-contract.yaml"
+cp structure/contracts/log-session-detail.yaml "$B/contracts/orphan-contract.yaml"
+sed -i.bak 's/^id: log-session-detail/id: orphan-contract/' "$B/contracts/orphan-contract.yaml"
 mkdir -p "$W/p1" && cp -R "$B" "$W/p1/structure"
 bun how-to/deploy/gen-docs.ts "$W/p1" "$W/p1/structure/docs" 2>&1 | tail -2; echo "exit=${PIPESTATUS[0]}"
 # an interface without a contract
-mkdir -p "$W/p2" && cp -R "$W/structure" "$W/p2/structure" && rm "$W/p2/structure/contracts/log-session-off.yaml"
+mkdir -p "$W/p2" && cp -R "$W/structure" "$W/p2/structure" && rm "$W/p2/structure/contracts/log-session-detail.yaml"
 bun how-to/deploy/gen-docs.ts "$W/p2" "$W/p2/structure/docs" 2>&1 | tail -2; echo "exit=${PIPESTATUS[0]}"
 # README misses an interface
 mkdir -p "$W/p3" && cp -R "$W/structure" "$W/p3/structure"
-sed -i.bak '/(log-session-off.md)/d' "$W/p3/structure/docs/README.md"
+sed -i.bak '/(log-session-detail.md)/d' "$W/p3/structure/docs/README.md"
 bun how-to/deploy/gen-docs.ts "$W/p3" "$W/p3/structure/docs" 2>&1 | tail -2; echo "exit=${PIPESTATUS[0]}"
 # README links something that is not an interface
 mkdir -p "$W/p4" && cp -R "$W/structure" "$W/p4/structure"
@@ -87,8 +88,8 @@ printf '%s\n' '- [ghost](ghost.md)' >> "$W/p4/structure/docs/README.md"
 bun how-to/deploy/gen-docs.ts "$W/p4" "$W/p4/structure/docs" 2>&1 | tail -2; echo "exit=${PIPESTATUS[0]}"
 ```
 
-Expected: 四次都非零退出；输出里分别有 `orphan-contract`、`log-session-off`（没有 contract）、
-`README.md does not list log-session-off`、`README.md links ghost`。
+Expected: 四次都非零退出；输出里分别有 `orphan-contract`、`log-session-detail`（没有 contract）、
+`README.md does not list log-session-detail`、`README.md links ghost`。
 
 ## 5. 仓库里提交的 docs 是最新的
 

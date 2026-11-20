@@ -1,3 +1,0 @@
-id: core-web-input-history
-description: the chat composer recalls the prompts sent in this conversation with ArrowUp / ArrowDown, per tab, and gives the draft back
-atoms: [web]

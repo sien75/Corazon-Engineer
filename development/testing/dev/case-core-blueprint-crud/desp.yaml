@@ -1,3 +1,0 @@
-id: core-blueprint-crud
-description: blueprints as files — static lists/reads .agents/blueprints/, the agent writes them, no discovery, no sqlite
-atoms: [static]

@@ -110,6 +110,14 @@ body {
   color: var(--fg);
 }
 
+/* The one tab is a label, not a control: it is the name of the conversation
+   being shown, and there is nothing else to switch to. */
+#tabs .tab.tab-static {
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 #tabs .tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
@@ -285,6 +293,9 @@ html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
 }
 
 #theme-wrap {
+  /* The theme lives in the top-right corner: it is a setting, not part of the
+     name, so it is pushed away from the brand to the far end of the bar. */
+  margin-left: auto;
   position: relative;
   align-self: stretch;
   display: flex;
@@ -368,6 +379,16 @@ html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* The shell draws one conversation and nothing else, so the element it mounts is
+   the whole stage: it has to take the pane's width and height (a flex item would
+   otherwise shrink to its content, leaving the centred column stuck at the left).
+   The column inside then centres itself on that width. */
+#panes > engineer-chat {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* The author rule above beats the UA's `[hidden]`, so the hide has to be spelled

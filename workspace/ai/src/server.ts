@@ -1,7 +1,6 @@
 import YAML from "yaml";
 import type { Registry, EngineerEvent, IncomingBlock } from "./registry.ts";
 import { readBlob } from "./blobs.ts";
-import { BlueprintError, slugFrom } from "./blueprint.ts";
 import { isModelRef } from "./models-config.ts";
 
 // The ai API speaks YAML on the wire (application/yaml), like static / log.
@@ -92,68 +91,41 @@ export function serve(registry: Registry, addr: string): void {
 
       switch (url.pathname) {
         case "/ai/new": {
-          // An agent is made from a blueprint inside a project: the prototype's
-          // two files are checked, its slug and the project are recorded on the
-          // session row in log, and its README plus its path become the tail of
-          // the system prompt. A bad slug / a prototype that breaks the two-file
-          // rule is the caller's mistake (400), not a server failure.
-          let blueprint = "";
-          if (body.blueprint !== undefined && body.blueprint !== null) {
-            try {
-              blueprint = slugFrom(body.blueprint);
-            } catch (err) {
-              if (err instanceof BlueprintError) {
-                return errRes(400, "bad_request", err.message);
-              }
-              throw err;
-            }
-          }
-          // kind picks the role: "main" is the shell's own chat (no blueprint),
-          // anything else is a blueprint agent. Unknown values are the caller's
-          // mistake, not a server failure.
-          const kind = body.kind === undefined || body.kind === null ? "sub" : String(body.kind);
-          if (kind !== "main" && kind !== "sub") {
-            return errRes(400, "bad_request", `kind must be main | sub, got ${JSON.stringify(kind)}`);
-          }
-          // The project a sub agent belongs to: its folder is the agent's cwd and
-          // the blueprint tree its page comes from. main belongs to none.
-          const projectId = String(body.projectId ?? "").trim();
-          if (kind === "sub" && !projectId) {
-            return errRes(400, "bad_request", "projectId required for kind=sub");
-          }
-          // The chat model this agent runs, if the caller wants to choose it instead
-          // of the role's `chat` default in models.yaml. `model` is the old name
-          // for it, kept as an alias. It is checked against what pi can use right
-          // now — a name nothing can serve would make a session that fails on its
-          // first turn, which is worse than a rejected request. In stub mode there
-          // is no catalog to check against, and nothing runs anyway.
-          const chat = String(body.chat ?? body.model ?? "").trim();
+          // A session is a plain conversation: the caller names the folder the
+          // agent works in, the text to append to its system prompt and an
+          // optional display name. Nothing here says what the conversation is for.
+          const cwd = String(body.cwd ?? "").trim();
+          if (!cwd) return errRes(400, "bad_request", "cwd missing");
+          // The chat model this session runs, if the caller wants to choose it
+          // instead of the default in models.yaml. It is checked against what pi
+          // can use right now — a name nothing can serve would make a session that
+          // fails on its first turn, which is worse than a rejected request. In
+          // stub mode there is no catalog to check against, and nothing runs.
+          const chat = String(body.chat ?? "").trim();
           if (chat && !registry.stub && !registry.modelFor(chat)) {
             return errRes(400, "bad_request", `model not available: ${chat}`);
           }
           // The image-generation model. There is no image catalog wired yet, so
           // only the provider/model-id shape is checked; the choice is recorded
-          // for the tool that will run on it.
+          // for the tool that runs on it.
           const image = String(body.image ?? "").trim();
           if (image && !isModelRef(image)) {
             return errRes(400, "bad_request", `image is not a provider/model-id: ${image}`);
           }
           let sess;
           try {
-            sess = await registry.new(
-              blueprint || undefined,
-              kind,
-              kind === "sub" ? projectId : "",
+            sess = await registry.new({
+              cwd,
+              system: String(body.system ?? ""),
+              title: String(body.title ?? ""),
               chat,
               image,
-            );
+            });
           } catch (err) {
-            if (err instanceof BlueprintError) {
-              return errRes(400, "bad_request", err.message);
-            }
-            throw err;
+            // A relative cwd is the caller's mistake, not a server failure.
+            return errRes(400, "bad_request", String(err instanceof Error ? err.message : err));
           }
-          return yamlRes({ sessionId: sess.id, kind, chat, image });
+          return yamlRes({ sessionId: sess.id, chat, image });
         }
 
         case "/ai/resume": {
@@ -276,7 +248,7 @@ export function serve(registry: Registry, addr: string): void {
           if (!registry.delete(id)) {
             return errRes(404, "not_found", "session not found");
           }
-          // The page belongs to the blueprint and is shared, so deleting an
+          // The conversation and its records go; nothing else refers to it.
           // agent leaves it alone.
           return yamlRes({ sessionId: id });
         }

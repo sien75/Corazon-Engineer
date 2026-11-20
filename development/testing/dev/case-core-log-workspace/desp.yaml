@@ -1,3 +1,0 @@
-id: core-log-workspace
-description: log owns the workspace — sessions (kind / blueprint / title) and current (open sessions + main session); session on/off are idempotent, log/delete removes the records, the row and the open-list entry, and one delete leaves one consistent workspace
-atoms: [log]

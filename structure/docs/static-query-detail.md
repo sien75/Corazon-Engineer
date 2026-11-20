@@ -6,7 +6,7 @@ Fetch content of a single leaf file
 
 ```yaml
 body:
-  projectId: string  # p_<12 hex> — whose tree to read
+  path: string  # absolute path of the project folder whose tree to read
   type: how-to | development | contract | docs | humanwrite | skill | blueprint  # leaf file type
   id: string  # relative path inside that project (directory entry from static-query), e.g. "structure/contracts/ai-ask.yaml"
 ```
@@ -45,10 +45,10 @@ body:
 ```yaml
 - status: 400
   code: bad_request
-  description: projectId missing, or invalid type or id
+  description: path missing or not an absolute path, or invalid type or id
 - status: 404
   code: not_found
-  description: no such project, or file not found
+  description: no such folder, or file not found
 - status: 500
   code: internal
   description: server error

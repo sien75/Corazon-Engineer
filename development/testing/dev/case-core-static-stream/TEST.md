@@ -11,12 +11,13 @@ Note: the static API speaks YAML (`application/yaml`) — request and response b
 rm -rf .engineer/.playground && mkdir -p .engineer && cp -R development/testing/.playground .engineer/.playground
 # The watcher polls every project on the board — rows in the database the same
 # service holds — so the case registers the mock project and then queries its tree.
-# There is no root: a request names a projectId and the folder comes from the store.
+# There is no root and no board: a request names the folder by absolute path.
 #
 # Reclaim a previous run of this case. A leftover service keeps serving its old
 # database (or silently stops this run's from binding) — and the failure that
 # causes looks like a wrong answer, not a dead service. This happens before, not
 # after.
+PLAYGROUND="$PWD/.engineer/.playground"
 HOME_DIR="$PWD/.engineer/.playground-home"
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
@@ -27,18 +28,14 @@ rm -rf "$HOME_DIR" && mkdir -p "$HOME_DIR"
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8881 >/tmp/static-stream-log.log 2>&1 &
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8881/log/project/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8881/log/session/list -d 'pageNum: 1' && break
   sleep 1
 done
-curl -s -X POST http://localhost:8881/log/project/add -H 'Content-Type: application/yaml' \
-  --data-binary "path: $PWD/.engineer/.playground" \
-  | awk '$1=="projectId:" {print $2}' > .engineer/.playground-project
-PROJECT=$(cat .engineer/.playground-project)
 
 # wait for it before streaming: the blocks below run back to back
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 -X POST http://localhost:8881/static/query \
-    -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT" && break
+    -H 'Content-Type: application/yaml' --data-binary "path: $PLAYGROUND" && break
   sleep 1
 done
 ```
@@ -48,9 +45,8 @@ done
 Terminal A (subscribe):
 
 ```bash
-PROJECT=$(cat .engineer/.playground-project)
 curl -N -X POST http://localhost:8881/static/stream \
-  -H 'Content-Type: application/yaml' --data-binary "projectId: $PROJECT"
+  -H 'Content-Type: application/yaml' --data-binary "path: $PLAYGROUND"
 ```
 
 Terminal B (change files directly — writes go through the shell, not an API):
@@ -64,7 +60,7 @@ sleep 2
 rm .engineer/.playground/humanwrite/notes/stream-test.md
 ```
 
-Expected: terminal A receives, in order, an `add` then an `update` then a `remove` event — consecutive `data:` lines forming one YAML doc each, containing `seq`, `ts`, `kind: schema`, `payload.projectId` (the mock project's id), `payload.type: humanwrite`, `payload.id: humanwrite/notes/stream-test.md`, and (on add/update) `payload.humanwrite` holding the raw file content.
+Expected: terminal A receives, in order, an `add` then an `update` then a `remove` event — consecutive `data:` lines forming one YAML doc each, containing `seq`, `ts`, `kind: schema`, `payload.type: humanwrite`, `payload.id: humanwrite/notes/stream-test.md`, and (on add/update) `payload.humanwrite` holding the raw file content.
 
 ## 2. atom changes are emitted as parsed objects
 
@@ -80,26 +76,21 @@ Expected: terminal A receives an `update` event with `payload.type: atom` and `p
 ## 3. event kinds filter
 
 ```bash
-PROJECT=$(cat .engineer/.playground-project)
 curl -N -X POST http://localhost:8881/static/stream \
   -H 'Content-Type: application/yaml' \
-  --data-binary "$(printf 'projectId: %s\nkinds: how-to' "$PROJECT")"
+  --data-binary "$(printf 'path: %s\nkinds: how-to' "$PLAYGROUND")"
 ```
 
 Terminal B: touch a humanwrite file again.
 
 Expected: connection established (with `: heartbeat` comments), but the `kind=schema` events are not pushed (filtered out).
 
-## 4. another project's events do not leak in
+## 4. a folder that is not there is refused
 
 ```bash
-PROJECT=$(cat .engineer/.playground-project)
 curl -N -X POST http://localhost:8881/static/stream \
-  -H 'Content-Type: application/yaml' --data-binary 'projectId: p_ffffffffffff'
+  -H 'Content-Type: application/yaml' --data-binary 'path: /nonexistent-folder'
 ```
 
-Terminal B: touch a humanwrite file again.
-
-Expected: the subscription is accepted, but no event for the mock project arrives —
-events are published per project and filtered by the `projectId` the subscriber
-asked for.
+Expected: 404 `not_found` — a subscription names the folder it wants, so a folder
+that does not exist is refused rather than watched into silence.

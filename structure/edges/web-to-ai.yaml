@@ -6,7 +6,7 @@ edges:
     to_interface: ai-new
     channel: network
     protocol: http
-    description: Web frontend creates an ai conversation session
+    description: the shell starts the conversation it draws, naming the folder the agent works in and the system text to append
   - id: web-to-ai-ask
     from: web
     from_interface: ai-ask
@@ -14,7 +14,7 @@ edges:
     to_interface: ai-ask
     channel: network
     protocol: http
-    description: Web frontend sends a prompt to ai; ai orchestrates the operation (reply streams back)
+    description: web sends a prompt to ai; ai orchestrates the operation (reply streams back)
   - id: web-to-ai-stream
     from: web
     from_interface: ai-stream
@@ -22,7 +22,7 @@ edges:
     to_interface: ai-stream
     channel: network
     protocol: http
-    description: Web frontend consumes the session's SSE event stream; a run ends when ai closes it on agent_settled
+    description: web consumes the session's SSE event stream; a run ends when ai closes it on agent_settled
   - id: web-to-ai-resume
     from: web
     from_interface: ai-resume
@@ -30,7 +30,7 @@ edges:
     to_interface: ai-resume
     channel: network
     protocol: http
-    description: Web frontend resumes a history session; ai rebuilds its text context from log
+    description: web resumes the session it draws; ai rebuilds its context from storage records and its cwd / system from the session row
   - id: web-to-ai-stop
     from: web
     from_interface: ai-stop
@@ -38,7 +38,7 @@ edges:
     to_interface: ai-stop
     channel: network
     protocol: http
-    description: Web frontend aborts the run in flight; the session stays and can be asked again
+    description: web aborts the run in flight; the session stays and can be asked again
   - id: web-to-ai-blobs
     from: web
     from_interface: ai-blobs
@@ -46,4 +46,4 @@ edges:
     to_interface: ai-blobs
     channel: network
     protocol: http
-    description: Web frontend loads an image by its content address; ai serves the stored bytes
+    description: web loads an image by its content address; ai serves the stored bytes

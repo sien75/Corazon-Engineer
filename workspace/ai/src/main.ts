@@ -1,5 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 import { Registry } from "./registry.ts";
 import { serve } from "./server.ts";
 import { modelsConfigPath } from "./models-config.ts";
@@ -24,18 +22,18 @@ process.env.no_proxy = withLocalNoProxy(process.env.no_proxy);
 process.env.NO_PROXY = withLocalNoProxy(process.env.NO_PROXY);
 
 // usage: bun run src/main.ts --bind <host> --port <n> --home <data dir>
-//        --storage <url> --agents <spec dir> --docs <docs dir> [--stub]
+//        --storage <url> [--stub]
 //
 // Every flag above is required and there is no fallback. The launcher owns the
-// addresses, the home directory and the spec file, and passes them all down; a
-// service that invents a default silently talks to a port nobody chose.
+// addresses and the home directory and passes them down; a service that invents a
+// default silently talks to a port nobody chose.
 //
-// There is no project root any more: a conversation belongs to a project, and
-// that project's folder (a row in storage's home database) is where its agent
-// runs. The home is only this service's own data — uploaded images.
+// ai injects no spec, no reference files and no interface docs: those describe a
+// caller's world, and the caller passes what it wants through /ai/new's `system`.
+// The home is only this service's own data — uploaded images.
 const USAGE =
   "usage: engineer-ai --bind <host> --port <n> --home <data dir> " +
-  "--storage <url> --agents <spec dir> --docs <docs dir> [--stub]";
+  "--storage <url> [--stub]";
 
 function parseFlags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -54,7 +52,7 @@ function parseFlags(argv: string[]): Record<string, string> {
 
 const flags = parseFlags(process.argv.slice(2));
 
-const REQUIRED = ["bind", "port", "home", "storage", "agents", "docs"];
+const REQUIRED = ["bind", "port", "home", "storage"];
 const missing = REQUIRED.filter((k) => !flags[k]);
 if (missing.length || !/^\d+$/.test(flags.port ?? "")) {
   if (missing.length) {
@@ -73,75 +71,7 @@ const home = flags.home;
 const addr = `${flags.bind}:${flags.port}`;
 const storageBase = flags.storage;
 
-// The system prompt is the tool's own spec — how the agent behaves (verbs). Two
-// roles need two specs: main runs in the shell and owns the workspace (tabs,
-// sessions); sub is a blueprint's page and only talks. --agents points at the
-// directory holding both (`main/AGENTS.md`, `sub/AGENTS.md`), so the packaged
-// case works from wherever the package sits and dev runs from the checkout.
-function resolveSpec(agentsDir: string, role: "main" | "sub"): string {
-  const file = path.join(path.resolve(agentsDir), role, "AGENTS.md");
-  if (!existsSync(file)) {
-    console.error(`engineer ai: spec not found at ${file}`);
-    process.exit(1);
-  }
-  return readFileSync(file, "utf8");
-}
-
-const specs = {
-  main: resolveSpec(flags.agents, "main"),
-  sub: resolveSpec(flags.agents, "sub"),
-};
-// Both roles' reference files live beside the spec, and neither has another way
-// to know where: cwd is the home or a project folder, never the checkout. Naming
-// the directory is what turns "the spec mentions schema.md" into a file it can
-// read. main is not told the schema / contract / enum references — it develops no
-// project; a sub agent is.
-const specDir = path.resolve(flags.agents);
-const referenceLine = (files: string) =>
-  "\n\n---\n\n# Reference files position\n\n" +
-  `They are in ${specDir}, beside your spec, readable with the read tool: ${files}.\n`;
-const mainReference = referenceLine(
-  "models.md (the three model layers, models.yaml, pi's own config), tools.md (recommended CLI tools)",
-);
-const subReference = referenceLine(
-  "schema.md, contract.md, enum.md (the project's schema, contract and enum conventions), " +
-    "blueprint.md (how a blueprint is built), tools.md (recommended CLI tools)",
-);
-// Both roles call the storage / ai interfaces through bash (main to operate the
-// workspace, a sub agent to write test records); the generated docs say how.
-const docsLine =
-  "\n\n---\n\n# Interface docs position\n\n" +
-  `They are in ${path.resolve(flags.docs)}; start with README.md there, then the file of the ` +
-  "interface you need.\n";
-// The address the model should call this service by: a wildcard or loopback
-// bind is reached as localhost; anything else (the launcher opened the stack to
-// a specific interface) keeps its host.
-function aiBaseURL(a: string): string {
-  const i = a.lastIndexOf(":");
-  const host = i < 0 ? a : a.slice(0, i);
-  const port = i < 0 ? "" : a.slice(i + 1);
-  const local = host === "" || host === "0.0.0.0" || host === "::" ||
-    host === "::1" || host === "localhost" || host.startsWith("127.");
-  return `http://${local ? "localhost" : host}:${port}`;
-}
-
-// The launcher owns port selection and passes the actual addresses down; append
-// them so the model always calls the services on this run's ports rather than
-// any address hard-coded in the prose.
-const runtimeEndpoints =
-  "\n\n---\n\n# Runtime endpoints\n\n" +
-  "These services were started for this run; use exactly these addresses:\n" +
-  `- storage (records and project files): ${storageBase}\n` +
-  `- ai (this service): ${aiBaseURL(addr)}\n`;
-const registry = new Registry({
-  home,
-  storageBase,
-  specs: {
-    main: specs.main + mainReference + docsLine + runtimeEndpoints,
-    sub: specs.sub + subReference + docsLine + runtimeEndpoints,
-  },
-  forceStub,
-});
+const registry = new Registry({ home, storageBase, forceStub });
 await registry.init();
 if (registry.stub) {
   console.error(
@@ -153,5 +83,4 @@ if (registry.stub) {
 }
 console.log(`engineer ai: storage=${storageBase}`);
 console.log(`engineer ai: models=${modelsConfigPath(home)}`);
-console.log(`engineer ai: spec=${path.resolve(flags.agents)}`);
 serve(registry, addr);

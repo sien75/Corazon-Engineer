@@ -50,16 +50,7 @@ pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 for p in 9133 9134; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
 
-rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$ROOT/.agents/blueprints/probe"
-printf 'project: image-gemini\n' > "$ROOT/engineer.yaml"
-cat > "$ROOT/.agents/blueprints/probe/index.html" <<'HTML'
-<!doctype html>
-<html lang="zh">
-<head><meta charset="UTF-8"><title>Probe Page</title><link rel="stylesheet" href="/theme.css"></head>
-<body><h1>probe</h1><engineer-chat></engineer-chat></body>
-</html>
-HTML
-printf '# Probe\n\nthe probe blueprint\n' > "$ROOT/.agents/blueprints/probe/README.md"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 
 # 用例自己定模型：Gemini 生图挂在 vertex 协议的 provider 上。
 cat > "$HOME_DIR/models.yaml" <<'YAML'
@@ -89,12 +80,9 @@ PY
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 9134 >/tmp/image-gemini-log.log 2>&1 &
 for i in $(seq 1 30); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:9134/log/project/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:9134/log/session/list -d 'pageNum: 1' && break
   sleep 1
 done
-curl -s -X POST http://localhost:9134/log/project/add -H 'Content-Type: application/yaml' \
-  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
-PROJECT=$(cat "$ROOT/.project")
 
 STORAGE=http://localhost:9134
 AI=http://localhost:9133
@@ -102,7 +90,7 @@ AI=http://localhost:9133
 (cd workspace/ai && bun run src/main.ts \
   --home "$HOME_DIR" --bind 127.0.0.1 --port 9133 \
   --storage "$STORAGE" \
-  --agents "$ROOTDIR/agents" --docs "$ROOTDIR/.engineer/docs" >/tmp/image-gemini-ai.log 2>&1 &)
+  >/tmp/image-gemini-ai.log 2>&1 &)
 for i in $(seq 1 60); do
   curl -s -o /dev/null -m 2 -X POST $AI/ai/new -d '{}' && break
   sleep 1
@@ -120,14 +108,14 @@ PY
 }
 ```
 
-Expected: `PROJECT` 是 `p_…`；两条前置检查都是 `True`；`$(cd workspace/ai && bunx tsc --noEmit)` 干净；
+Expected: `$ROOT` 是本次用例的根目录；两条前置检查都是 `True`；`$(cd workspace/ai && bunx tsc --noEmit)` 干净；
 ai 日志里没有 `zenmux-vertex` 的解析告警（provider 与凭据都被 pi 认了）。
 
 ## 1. 一次调用，落在 `:generateContent`
 
 ```bash
 SUB=$(curl -s -X POST $AI/ai/new \
-  --data-binary "{\"blueprint\":\"probe\",\"projectId\":\"$PROJECT\"}" | sid)
+  --data-binary "{\"cwd\":\"$ROOT\"}" | sid)
 echo "sub=$SUB"
 
 ask $SUB "Call the image tool exactly once with prompt \"a red apple on a wooden table\" and size 1024x1024. \
@@ -175,7 +163,7 @@ sha256 等于 `$NEW`。
 
 ```bash
 SUB2=$(curl -s -X POST $AI/ai/new \
-  --data-binary "{\"blueprint\":\"probe\",\"projectId\":\"$PROJECT\",\"image\":\"zenmux-vertex/qwen/qwen-image-3.0\"}" | sid)
+  --data-binary "{\"cwd\":\"$ROOT\",\"image\":\"zenmux-vertex/qwen/qwen-image-3.0\"}" | sid)
 echo "sub2=$SUB2"
 
 ask $SUB2 "Call the image tool exactly once with prompt \"a red apple on a wooden table\" and size 1024x1024. \

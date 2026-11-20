@@ -1,10 +1,9 @@
 // The tab's name, summarized from the conversation itself.
 //
-// A session starts out named after its blueprint page's <title> — true of every
-// agent made from that page, and therefore useless once a project has two of
-// them. On the first user turn the shell asks the session's own model for a title
-// instead, from what was actually said. It is written once: later turns do not
-// rename the conversation.
+// A session starts out named after the title its caller gave it — a page's name,
+// or "chat" — which says nothing about what is being discussed. On the first user
+// turn the session's own model is asked for a title instead, from what was
+// actually said. It is written once: later turns do not rename the conversation.
 //
 // The material is the conversation's *prose only*: the user's prompts and the
 // assistant's answers. Tool calls, tool results and thinking are left out — they

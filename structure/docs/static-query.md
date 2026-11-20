@@ -6,7 +6,7 @@ Return full schema data for rendering the architecture graph and atom/edge detai
 
 ```yaml
 body:
-  projectId: string  # p_<12 hex> — whose tree to read; static has no root of its own any more
+  path: string  # absolute path of the project folder whose tree to read; static has no root of its own
 ```
 
 ## Response
@@ -61,10 +61,10 @@ body:
 ```yaml
 - status: 400
   code: bad_request
-  description: projectId missing
+  description: path missing, or not an absolute path
 - status: 404
   code: not_found
-  description: no such project
+  description: no such folder
 - status: 500
   code: internal
   description: server error (including log being unreachable)

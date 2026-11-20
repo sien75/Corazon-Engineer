@@ -1,14 +1,14 @@
 # POST /static/stream
 
-Long-lived connection pushing schema-change events; the service watches every project on the board and emits an event whenever a content file is added, updated or removed. Each event names the project it happened in. Execution events (call / test / development) reserved.
+Long-lived connection pushing schema-change events; the service watches the tree under the folder the request names and emits an event whenever a content file is added, updated or removed. Execution events (call / test / development) reserved.
 
 ## Request
 
 ```yaml
 body:
+  path: string  # absolute path of the project folder to watch, required — static has no board of its own
   kinds?: string  # event kinds to subscribe (comma-separated); empty = all
   edges?: string  # edge ids to subscribe; only for kind=how-to (reserved); empty = all
-  projectId?: string  # only this project's events; empty = every project on the board
 ```
 
 ## Response
@@ -23,7 +23,6 @@ body:
 
   payload:
     # kind=schema: content snapshot of the changed file, shape matches the type below
-    projectId: string  # p_<12 hex> — the project the changed file belongs to
     op: add | update | remove
     type: atom | edge | how-to | development | contract | docs | humanwrite
     id: string  # changed file path, e.g. "structure/contracts/ai-ask.yaml"
@@ -84,7 +83,7 @@ body:
 ```yaml
 - status: 400
   code: bad_request
-  description: bad request
+  description: path missing or not an absolute path
 - status: 500
   code: internal
   description: server error

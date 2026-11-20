@@ -10,7 +10,6 @@ AI session flow: new → ask → stream → delete.
 ROOT="$PWD/.engineer/.ai-flow"
 HOME_DIR="$ROOT/home"
 rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
-printf 'project: ai-flow\n' > "$ROOT/engineer.yaml"
 
 # Guard first: with an empty $HOME_DIR the pattern below degrades to
 # "serve-storage --home " and kills every service on the machine —
@@ -28,34 +27,28 @@ sleep 1
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 /tmp/engineer serve-storage --home "$HOME_DIR" --bind 127.0.0.1 --port 8800 >/tmp/ai-flow-log.log 2>&1 &
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8800/log/project/list -d '{}' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8800/log/session/list -d 'pageNum: 1' && break
   sleep 1
 done
-curl -s -X POST http://localhost:8800/log/project/add -H 'Content-Type: application/yaml' \
-  --data-binary "path: $ROOT" | awk '$1=="projectId:" {print $2}' > "$ROOT/.project"
-PROJECT=$(cat "$ROOT/.project")
-
 cd workspace/ai && bun install && bun run src/main.ts \
   --bind 127.0.0.1 --port 8801 --home "$HOME_DIR" \
-  --storage http://localhost:8800 \
-  --agents ../../agents --docs "$PWD/.engineer/docs" &
+  --storage http://localhost:8800 &
 
 # wait for it before asking: the blocks below run back to back
 for i in $(seq 1 60); do
-  curl -s -o /dev/null -m 2 -X POST http://localhost:8801/ai/new -d 'kind: main' && break
+  curl -s -o /dev/null -m 2 -X POST http://localhost:8801/ai/new -d "cwd: $ROOT" && break
   sleep 1
 done
 ```
 
 ## 1. ai-new creates a conversation
 
-A conversation belongs to no tab. Whether it is shown is the shell's business, and
-this case does not touch the shell. It creates a **main** conversation: a
-blueprint agent would need a `projectId`, which is the launcher's business (see
-`case-core-agent-instantiate`).
+A session is a plain conversation: the caller names the folder the agent works in
+and nothing else. Whether it is shown is the shell's business, and this case does
+not touch the shell.
 
 ```bash
-SID=$(curl -s -X POST http://localhost:8801/ai/new -d 'kind: main' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
+SID=$(curl -s -X POST http://localhost:8801/ai/new -d "cwd: $ROOT" | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["sessionId"])')
 echo $SID
 ```
 

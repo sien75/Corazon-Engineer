@@ -1,6 +1,6 @@
 # POST /ai/resume
 
-Resume an existing conversation session, rebuilding its text context from log records (to bring an earlier main back, ai-resume it, then point log-session-current-put at it); malformed history (orphan tool results, tool calls without a result, duplicate seq) is repaired in memory before it is replayed
+Resume an existing conversation session, rebuilding its text context from storage records and its cwd / system from the session row; malformed history (orphan tool results, tool calls without a result, duplicate seq) is repaired in memory before it is replayed
 
 ## Request
 

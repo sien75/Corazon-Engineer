@@ -114,9 +114,10 @@ export NO_PROXY
 # is gone, and that file is no longer part of the program.
 mkdir -p "$DATA"
 
-# The interface docs the agents are told to read live in structure/docs. The
-# per-interface files are regenerated here (what changed is printed); the README
-# is kept by hand, and a mismatch is only a warning in dev — packing refuses it.
+# The interface docs (structure/docs) are a project convention, not something the
+# agent is handed: they are regenerated here so the checkout stays honest (what
+# changed is printed). The README is kept by hand, and a mismatch is only a
+# warning in dev — packing refuses it.
 bun "$ROOT/how-to/deploy/gen-docs.ts" "$ROOT" "$ROOT/structure/docs" ||
   echo "gen-docs: see above — structure/docs/README.md needs updating before a pack" >&2
 
@@ -126,12 +127,12 @@ nohup "$BIN/engineer" serve-storage --home "$DATA" --bind "$BIND" --port "$PORT_
 echo $! >"$D/storage.pid"
 # exec so the recorded pid IS the server process (not a wrapper that outlives kill)
 ( cd "$ROOT/workspace/ai" && exec nohup bun src/main.ts \
-    --home "$DATA" --agents "$ROOT/agents" --docs "$ROOT/structure/docs" \
+    --home "$DATA" \
     --bind "$BIND" --port "$PORT_AI" \
     --storage "$BASE:$PORT_STORAGE" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
 nohup "$BIN/engineer" serve-web --bind "$BIND" --port "$PORT_WEB" \
-    --assets "$ROOT/workspace/web" \
+    --assets "$ROOT/workspace/web" --cwd "$ROOT" \
     --storage "$BASE:$PORT_STORAGE" --ai "$BASE:$PORT_AI" >"$D/web.log" 2>&1 </dev/null &
 echo $! >"$D/web.pid"
 

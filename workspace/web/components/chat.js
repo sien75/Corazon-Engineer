@@ -1,24 +1,18 @@
 // <engineer-chat> — the shell's conversation view as a custom element.
 //
-// It is the *only* chat implementation: main (the shell's own conversation) and a
-// blueprint's page both mount this element. Shadow DOM keeps the page's CSS out;
+// It is the only chat implementation, and it draws exactly one conversation: the
+// one its `session` attribute names. Shadow DOM keeps the page's CSS out;
 // /components/chat.css styles it, and the theme's CSS variables inherit through.
 //
 //   <script type="module" src="/components/chat.js"></script>
 //   <engineer-chat session="s_…" autofocus></engineer-chat>
 //
-// `session` is optional: without it the element reads the page's own URL, which is
-// either /agent/<sessionId>/ (a page a session is already looking at) or
-// /agent/p/<projectId>/<slug>/ (the same blueprint, browsed before any conversation
-// exists). `project` / `blueprint` mount a conversation with no session at all: the
-// first message creates one — `POST /ai/new` with those two — and the shell is told
-// through the `engineer-session` event. The ai address comes from /config.js, which
-// the element imports itself, so a page does not have to do anything for the
-// conversation to work.
+// `session` is required: creating a session is the shell's business, and the shell
+// sets the attribute when it has one. The addresses come from /config.js, which
+// the element imports itself.
 //
 // Events (bubbling, for the shell): "engineer-tool" with { name, isError } after
-// every tool call — main's session-* tools are what make the shell re-read the
-// workspace.
+// every tool call.
 
 import yaml from "/vendor/js-yaml.js";
 import MarkdownIt from "/vendor/markdown-it.js";
@@ -29,9 +23,8 @@ const TEMPLATE = `
 <link rel="stylesheet" href="/components/chat.css">
 <div class="pane">
   <div class="scroll">
-    <!-- Content a host wants above the conversation (the shell puts a project's
-         blueprints and recents here): it scrolls with the messages, in the same
-         column. Empty for a blueprint page. -->
+    <!-- Content a host wants above the conversation: it scrolls with the
+         messages, in the same column. Unused by the one-conversation shell. -->
     <slot name="before"></slot>
     <div class="ai-messages"></div>
   </div>
@@ -58,19 +51,6 @@ async function runtime() {
   }
 }
 
-// routeFromUrl reads what the page's own URL says it is. A page is served either
-// under a session (/agent/<sessionId>/, which knows its project through log) or
-// under a project and a blueprint (/agent/p/<projectId>/<slug>/, which is the same
-// page before a conversation exists and therefore carries both itself).
-function routeFromUrl() {
-  const page = location.pathname.match(/^\/agent\/p\/([^/]+)\/([^/]+)\//);
-  if (page) {
-    return { session: "", project: decodeURIComponent(page[1]), blueprint: decodeURIComponent(page[2]) };
-  }
-  const session = location.pathname.match(/^\/agent\/([^/]+)\//);
-  return { session: session ? decodeURIComponent(session[1]) : "", project: "", blueprint: "" };
-}
-
 class EngineerChat extends HTMLElement {
   #mounted = false;
   #cleanup = null;
@@ -84,16 +64,9 @@ class EngineerChat extends HTMLElement {
   }
 
   async #mount(root) {
-    const route = routeFromUrl();
-    const id = this.getAttribute("session") || route.session;
-    // A page with no session yet — a project's own chat, or a blueprint being
-    // browsed — names its project (and, for a blueprint, its slug) here: the
-    // session is made on the first message.
-    const project = this.getAttribute("project") || route.project;
-    const blueprint = this.getAttribute("blueprint") || route.blueprint;
-    if (!id && !project) {
-      root.querySelector(".ai-messages").textContent =
-        "engineer-chat: no session (give `session` or `project`, or serve the page at /agent/<sessionId>/ or /agent/p/<projectId>/<slug>/)";
+    const id = this.getAttribute("session") || "";
+    if (!id) {
+      root.querySelector(".ai-messages").textContent = "engineer-chat: no session (set `session`)";
       return;
     }
     const rt = await runtime();
@@ -102,7 +75,7 @@ class EngineerChat extends HTMLElement {
         "engineer-chat: no ai address (is /config.js reachable?)";
       return;
     }
-    this.#cleanup = wire(this, root, id, rt, project, blueprint);
+    this.#cleanup = wire(this, root, id, rt);
   }
 
   focus() {
@@ -119,9 +92,7 @@ class EngineerChat extends HTMLElement {
 
 // wire is the conversation itself: ask / stream / render / stop, all scoped to
 // this element. `host` is the custom element (for events), `root` its shadow root.
-// `project` is set when the element is a project's home page: `id` is then empty
-// until the first message creates the session.
-function wire(host, root, id, RT, project = "", blueprint = "") {
+function wire(host, root, id, RT) {
   const AI = RT.ai;
   // One address carries both prefixes: /log/* for the records, /static/* for files.
   const STORAGE = RT.storage;
@@ -764,53 +735,10 @@ function wire(host, root, id, RT, project = "", blueprint = "") {
     finish();
   }
 
-  // ---------- 会话：第一次发送时才建 ----------
-  //
-  // 项目的首页挂的是「没有 session、有 project」的这个元素：用户还没说话之前什么
-  // 都不该存在，所以这里什么都不建。第一条消息发出时才 POST /ai/new（这个项目自己
-  // 的对话：没有 blueprint，也就没有页面），建好后告诉外壳 —— 它把这条会话作为一
-  // 个 tab 打开。
-  async function createSession(firstBlocks) {
-    try {
-      const res = await fetch(AI + "/ai/new", {
-        method: "POST",
-        headers: { "Content-Type": "application/yaml" },
-        body: yaml.dump({ projectId: project, kind: "sub", ...(blueprint ? { blueprint } : {}) }),
-      });
-      const data = yaml.load(await res.text()) || {};
-      if (!res.ok) {
-        fail(data.error?.message || `HTTP ${res.status}`);
-        return false;
-      }
-      id = String(data.sessionId ?? "");
-      host.dispatchEvent(
-        new CustomEvent("engineer-session", {
-          // firstText: what the first message says. A conversation without a page
-          // has no name yet, and the shell names its tab after this until the
-          // turn's own summary arrives.
-          detail: {
-            sessionId: id,
-            firstText: (firstBlocks || [])
-              .filter((b) => b?.type === "text")
-              .map((b) => String(b.text ?? ""))
-              .join(" "),
-          },
-          bubbles: true,
-        }),
-      );
-      return Boolean(id);
-    } catch (err) {
-      fail(String(err?.message || err));
-      return false;
-    }
-  }
-
   // ---------- 发一轮 ----------
 
   async function ask(blocks) {
     if (!blocks.length) return;
-    // Home page, first message: the conversation exists from here on.
-    if (!id && !(await createSession(blocks))) return;
     // 已经在跑：这一条是插话。服务端把它 steer 进正在跑的那一轮，流还是原来那条，
     // 所以这里不重开 pump、不动 running / tools，只把上面那段收尾。
     const steer = running;

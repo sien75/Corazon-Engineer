@@ -1,64 +1,36 @@
 atoms:
   - name: web
-    description: Corazon Engineer web shell — one conversation — main, which is global and belongs to no project — plus the open sessions on screen. The titlebar is grouped by project, Chrome-style — one chip per project on the board carrying the project's name, expanding to that project's tabs followed by a `+` — a button, not a tab, that makes a new tab of that group (a browser's `+`); a tab there is either an open session or a draft — a tab with no session behind it, showing the project's home (blueprints + recents above an empty conversation) or a blueprint's page, which becomes that session's tab when its first message creates the session, so looking at a page writes nothing; a group survives its last closed tab. Hiding a group (the eye in the Engineer launcher) keeps it on the board and keeps its sessions open — it only stops drawing them. main is global and sits outside every group. The + button opens the Engineer launcher — the board of projects, where a folder is added, removed, hidden or opened — and a project opens its own launcher (that project's blueprints and recents); both are routes, so a reload comes back to the same page. A project is a folder added from that page, not the folder the program was started in — this service is also where a folder is admitted (POST /project/add checks for engineer.yaml and hands it to storage), because it is the service that reads the disk. every session is one view — main and a blueprint agent whose page is an iframe onto its own /agent/<sessionId>/, and the shell draws them with the <engineer-chat> custom element under components/ (one implementation, shadow DOM, /components/chat.css) or that iframe. There is no tab record — a tab is one open session or a draft, so the workspace (which sessions are open, in display order, and which one is main) is read from storage's session rows, the shell resumes each open session before drawing it, and drafts live only in the window that made them; the shell subscribes to storage's workspace stream and re-reads the workspace on every event, so a change made by anyone (main calling the interfaces, another window) shows up. Routes are / for main, /new for the Engineer launcher, /project/<projectId>/new for a new tab of a project, /project/<projectId>/blueprint/<slug> for one browsing a blueprint, and /session/<id> for a session, so a reload and history land back on the same page. The file server (workspace/web/server) serves /config.js (an ES module whose ENGINEER export holds the storage / ai addresses) and the app assets from --assets, /agent/<sessionId>/ from the blueprint of the session (session → project and blueprint through storage), and /agent/p/<projectId>/<slug>/ from the same directory with no session behind it — that is the page a draft browses, which is why a page can be read before anything is written; a slug that is not there is no page, and anything else from the blueprint tree under the project's folder — so one page is shared by every agent made from it; a project's `+` makes a draft on that project's home page — its blueprints (static-query) and recents above one `<engineer-chat>`, with no session and no request until the user sends the first message (that POST /ai/new is what creates the conversation — no blueprint, so its tab shows the shell's element rather than a page in a frame); a blueprint picked there opens in the same tab, still with no session, until the page's own chat sends its first message. POST /project/add is the one door a folder comes in by. It owns the page theme — /theme.css is the palette both the shell and blueprints link, and the shell writes the current data-theme into a page's document
+    description: "Corazon Engineer web shell — one conversation and a theme switch, nothing else. It draws a single conversation with the <engineer-chat> custom element under components/ (one implementation, shadow DOM, /components/chat.css) and answers every other page URL with that same conversation; there is no tab, no project group, no launcher, no blueprint page and no iframe onto a page. Which session that conversation is comes from storage: the shell reads the most recently active session (log-session/list, page 1, first entry) and resumes it, and when there is none it starts one with /ai/new — the shell is the one that names the folder the agent works in (the folder the program was started in, resolved from --assets' checkout) and the text appended to its system prompt. A prompt goes to /ai/ask and the reply is followed on /ai/stream; a run in flight is aborted with /ai/stop, and a reload replays the session's messages (log-session/messages) before reattaching. ai owns the models; the shell never names one. It also serves /config.js (an ES module whose ENGINEER export holds the storage / ai addresses) and the app assets from --assets, and /theme.css is the palette the shell links, with the current data-theme written into the document — a theme switch is the one setting the shell keeps, and it is kept in the browser, not in storage."
     path: ./workspace/web
     runtime_type: browser
     role: service
 
     interfaces:
       # provides nothing: every endpoint this service answers is a page URL, loaded
-      # by a browser (assets, /agent/<sessionId>/ pages, /blobs/<sha256> in a
-      # rendered image), never called by an agent or another atom
+      # by a browser (assets, /blobs/<sha256> in a rendered image), never called by
+      # an agent or another atom
       provides: []
       consumes:
-        - id: log-project-list
+        - id: log-session-list
           channel: network
           protocol: http
-          contract: ./contracts/log-project-list.yaml
+          contract: ./contracts/log-session-list.yaml
           extend:
-            path: /log/project/list
+            path: /log/session/list
             method: POST
-        - id: log-project-get
+        - id: log-session-detail
           channel: network
           protocol: http
-          contract: ./contracts/log-project-get.yaml
+          contract: ./contracts/log-session-detail.yaml
           extend:
-            path: /log/project/get
+            path: /log/session/detail
             method: POST
-        - id: log-project-add
+        - id: log-session-messages
           channel: network
           protocol: http
-          contract: ./contracts/log-project-add.yaml
+          contract: ./contracts/log-session-messages.yaml
           extend:
-            path: /log/project/add
-            method: POST
-        - id: log-project-remove
-          channel: network
-          protocol: http
-          contract: ./contracts/log-project-remove.yaml
-          extend:
-            path: /log/project/remove
-            method: POST
-        - id: log-project-visible
-          channel: network
-          protocol: http
-          contract: ./contracts/log-project-visible.yaml
-          extend:
-            path: /log/project/visible
-            method: POST
-        - id: static-query
-          channel: network
-          protocol: http
-          contract: ./contracts/static-query.yaml
-          extend:
-            path: /static/query
-            method: POST
-        - id: static-query-detail
-          channel: network
-          protocol: http
-          contract: ./contracts/static-query-detail.yaml
-          extend:
-            path: /static/query-detail
+            path: /log/session/messages
             method: POST
         - id: ai-new
           channel: network
@@ -102,59 +74,3 @@ atoms:
           extend:
             path: /blobs/{sha256}
             method: GET
-        - id: log-workspace-stream
-          channel: network
-          protocol: http
-          contract: ./contracts/log-workspace-stream.yaml
-          extend:
-            path: /log/workspace/stream
-            method: POST
-        - id: log-session-list
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-list.yaml
-          extend:
-            path: /log/session/list
-            method: POST
-        - id: log-session-on
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-on.yaml
-          extend:
-            path: /log/session/on
-            method: POST
-        - id: log-session-off
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-off.yaml
-          extend:
-            path: /log/session/off
-            method: POST
-        - id: log-session-current-get
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-current-get.yaml
-          extend:
-            path: /log/session/current/get
-            method: POST
-        - id: log-session-current-put
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-current-put.yaml
-          extend:
-            path: /log/session/current/put
-            method: POST
-        - id: log-session-detail
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-detail.yaml
-          extend:
-            path: /log/session/detail
-            method: POST
-        - id: log-session-messages
-          channel: network
-          protocol: http
-          contract: ./contracts/log-session-messages.yaml
-          extend:
-            path: /log/session/messages
-            method: POST

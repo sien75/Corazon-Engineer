@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import YAML from "yaml";
 import { Type } from "typebox";
 import {
@@ -21,7 +21,6 @@ import {
   projectText,
   type StoredRecord,
 } from "./recorder.ts";
-import { blueprintTitle, blueprintReadme } from "./blueprint.ts";
 import { makeModelTool } from "./model.ts";
 import { makeUsageTool } from "./usage.ts";
 import { makeCompactTool } from "./compact.ts";
@@ -50,25 +49,6 @@ import { ensureModelsConfig, readModelsConfig } from "./models-config.ts";
 const TURN_RETRY_DELAYS_MS = [10, 20, 30, 40, 50, 60, 70, 80, 90].map((s) => s * 1000);
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-// pageLine is the last thing a sub agent is told: which directory its page lives
-// in. The prompt carries the README; the path is what makes "change the page" an
-// action rather than a wish — and for a page the tool ships, saying where it does
-// *not* live is what keeps the agent from claiming an edit it cannot make.
-function pageLine(slug: string): string {
-  return `Your page: .agents/blueprints/${slug}/ — that directory is what /agent/<sessionId>/ serves, for every agent made from this blueprint. Edit its files (index.html and anything beside it) and ask the user to reload; the change lands in this project's working tree.`;
-}
-
-// blueprintTail is the last section of a blueprint agent's system prompt: the
-// blueprint's README, then where its page lives. Built in one place because both
-// a new session and a resumed one must get the same prompt.
-function blueprintTail(slug: string, readme: string | undefined): string {
-  return (
-    `\n\n---\n\n# Your blueprint\n\n` +
-    `Two things: this blueprint's README — your opening context — and where its page lives.\n\n` +
-    `## README\n\n${readme ?? ""}\n\n## Path\n\n${pageLine(slug)}\n`
-  );
-}
 
 // A user turn as received on /ai/ask: ordered text/image blocks. Images carry
 // base64 + mime and are persisted to the blob store; text is the prompt text
@@ -132,9 +112,11 @@ const askUserTool = defineTool({
 
 interface Sess {
   id: string;
-  // "main" is the one conversation the shell hosts; "sub" is everything else
-  // (a blueprint's page, or a project's plain chat). Same tools; different spec.
-  kind: "main" | "sub";
+  // The folder this conversation's agent works in, and the text its caller wanted
+  // appended to the system prompt. Both are carried on the session row, so a
+  // resumed conversation comes back to the same place with the same context.
+  cwd: string;
+  system: string;
   agent?: AgentSession; // undefined in stub mode (no API key)
   // The image-generation model this conversation uses (undefined = none). No
   // consumer yet: it is resolved at build and kept here for the image tool that
@@ -176,13 +158,9 @@ interface Sess {
 }
 
 export interface RegistryOptions {
-  // The engineer home: this service's own data (uploaded images). Not a project
-  // — a session's project folder comes from log, per session.
+  // The engineer home: this service's own data (uploaded images).
   home: string;
   storageBase: string;
-  // The two role specs, already carrying the runtime endpoints. sub gets its
-  // blueprint's README appended after this.
-  specs: { main: string; sub: string };
   forceStub?: boolean; // skip model resolution entirely (offline / tests)
 }
 
@@ -216,19 +194,16 @@ export class Registry {
     this.available = [...(await this.modelRuntime.getAvailable())];
   }
 
-  // makeLoader builds the resource loader for one session's role. `tail` is
-  // appended after everything else — a sub agent's blueprint README goes there,
-  // so it reads as the last word on what this particular agent's UI is. The
+  // makeLoader builds the resource loader for one session. `system` is whatever
+  // the caller wanted the agent to know — ai injects no spec of its own. The
   // session's settings manager goes in, so the trust decision the loader makes
   // (and everything else it reads from settings) is the one the session runs
   // under — pi's own wiring, one instance per session.
   private makeLoader(
-    kind: "main" | "sub",
     cwd: string,
     settings: SettingsManager,
-    tail?: string,
+    system?: string,
   ): DefaultResourceLoader {
-    const spec = this.opts.specs[kind];
     return new DefaultResourceLoader({
       cwd,
       agentDir: getAgentDir(),
@@ -237,13 +212,12 @@ export class Registry {
       // its "Available tools" list (which is where custom tools like ask_user
       // surface) when the system prompt is not fully replaced.
       // Every part is a section of its own, and each starts with a horizontal
-      // rule: the role spec, whatever else was appended to it, the blueprint (a
-      // sub agent's page), and the end marker — below which pi appends its own
-      // material (project context, skills), which Engineer does not own.
+      // rule: the caller's system text and the end marker — below which pi
+      // appends its own material (project context, skills), which Engineer does
+      // not own.
       appendSystemPromptOverride: (base) => [
-        base,
-        `\n\n---\n\n${spec}`,
-        ...(tail ? [tail] : []),
+        ...base,
+        ...(system ? [`\n\n---\n\n${system}`] : []),
         END_OF_SPEC,
       ],
     });
@@ -271,74 +245,46 @@ export class Registry {
     return this.opts.home;
   }
 
-  // projectDir resolves a project id to the folder that project lives in. The
-  // board is storage's; this service only asks. Throws when the id names nothing —
-  // a blueprint agent with no project has no page and no place to run.
-  private async projectDir(projectID: unknown): Promise<string> {
-    const id = String(projectID ?? "").trim();
-    if (!id) throw new Error("projectId missing: a blueprint agent belongs to a project");
-    const res = await fetch(`${this.opts.storageBase}/log/project/get`, {
-      method: "POST",
-      headers: { "Content-Type": "application/yaml" },
-      body: YAML.stringify({ projectId: id }),
-    });
-    if (!res.ok) throw new Error(`no project ${id} (log /log/project/get: HTTP ${res.status})`);
-    const data: any = YAML.parse(await res.text());
-    const dir = String(data?.path ?? "").trim();
-    if (!dir) throw new Error(`project ${id} has no folder on record`);
-    return dir;
-  }
-
-  // new opens a conversation. kind="main" is the shell's own chat (no blueprint,
-  // no page, no project); kind="sub" is made from a blueprint inside one project:
-  // the prototype's README and the path of its directory are appended to this
-  // session's system prompt — last, after the role spec — so the model knows what
-  // its UI is and where it lives. Nothing is copied: the web server serves the
-  // prototype itself, so the page this agent edits is the page every agent of the
-  // same blueprint sees.
-  async new(
-    blueprint?: string,
-    kind: "main" | "sub" = "sub",
-    projectID = "",
-    model = "",
-    image = "",
-  ): Promise<Sess> {
+  // new opens a conversation. The caller names the folder the agent works in, the
+  // text to append to its system prompt and an optional initial display name;
+  // everything else (a project, a page, a role) belongs to the caller, not here.
+  async new(opts: {
+    cwd: string;
+    system?: string;
+    title?: string;
+    chat?: string;
+    image?: string;
+  }): Promise<Sess> {
     const id = `s_${randomBytes(8).toString("hex")}`;
-    const project = kind === "sub" ? await this.projectDir(projectID) : "";
-    const readme = blueprint ? blueprintReadme(project, blueprint) : undefined;
-    // Each part of a system prompt is a section, and every section starts with a
-    // horizontal rule: pi's base prompt, the role spec, its appended reference
-    // sections, then this one — the blueprint's README and where its page lives.
-    const tail = blueprint ? blueprintTail(blueprint, readme) : undefined;
-    // The name the tab bar draws before a word has been said; the conversation
+    const cwd = String(opts.cwd ?? "").trim();
+    if (!cwd || !isAbsolute(cwd)) {
+      throw new Error(`cwd must be an absolute path, got ${JSON.stringify(opts.cwd)}`);
+    }
+    const system = String(opts.system ?? "");
+    // The name the shell draws before a word has been said; the conversation
     // itself replaces it on its first turn (see maybeTitle).
-    // A sub agent with no blueprint is the project's own chat (its home page):
-    // there is no page to name it after, so it starts as "chat" and the first
-    // turn's summary renames it like any other.
-    const title = blueprint ? blueprintTitle(project, blueprint) : kind === "main" ? "main" : "chat";
-    await this.writeSession(id, kind, projectID, blueprint ?? "", title, model, image);
-    return this.build(id, [], kind, project, tail, title, model, image);
+    const title = String(opts.title ?? "").trim() || "chat";
+    const model = String(opts.chat ?? "").trim();
+    const image = String(opts.image ?? "").trim();
+    await this.writeSession(id, cwd, system, title, model, image);
+    return this.build(id, [], cwd, system, title, model, image);
   }
 
-  // writeSession records what a conversation is — its role, the blueprint its page
-  // comes from, the name the tab bar shows and the models it runs. The name is the
-  // page's <title> (resolved here, not by the page at runtime), so the shell can
-  // draw a tab before it loads anything; log owns the row, and it is the only
-  // place the mapping lives.
+  // writeSession records what a conversation is — the folder its agent works in,
+  // the text carried on its system prompt, the name it is drawn under and the
+  // models it runs. log owns the row, and it is the only place the mapping lives.
   private async writeSession(
     id: string,
-    kind: "main" | "sub",
-    projectID: string,
-    blueprint: string,
+    cwd: string,
+    system: string,
     title: string,
     model: string,
     imageModel: string,
   ): Promise<void> {
     await this.upsertSession({
       sessionId: id,
-      kind,
-      projectId: projectID,
-      blueprint,
+      cwd,
+      system,
       title,
       model,
       imageModel,
@@ -346,8 +292,7 @@ export class Registry {
   }
 
   // upsertSession is the one writer of a session row. An empty field keeps the
-  // stored value (see the contract), so a patch only sends what it changes —
-  // plus kind, which the store does not treat as optional.
+  // stored value (see the contract), so a patch only sends what it changes.
   private async upsertSession(patch: Record<string, unknown>): Promise<void> {
     const res = await fetch(`${this.opts.storageBase}/log/session/upsert`, {
       method: "POST",
@@ -359,17 +304,13 @@ export class Registry {
     }
   }
 
-  // sessionMeta reads a conversation's role and the blueprint its page comes
-  // from. undefined means "log has no row": the id is not one this workspace
-  // knows. A row with kind "sub" (or no kind at all) is a blueprint agent —
-  // which, unlike a conversation with no messages, can still be rebuilt.
-  private async sessionMeta(
-    id: string,
-  ): Promise<
+  // sessionMeta reads what a conversation's row carries: the folder its agent
+  // works in, the text on its system prompt, its name and its models. undefined
+  // means "log has no row": the id is not one this workspace knows.
+  private async sessionMeta(id: string): Promise<
     | {
-        kind: "main" | "sub";
-        projectID: string;
-        blueprint: string;
+        cwd: string;
+        system: string;
         title: string;
         model: string;
         imageModel: string;
@@ -385,9 +326,8 @@ export class Registry {
       if (!res.ok) return undefined;
       const data: any = YAML.parse(await res.text());
       return {
-        kind: data?.kind === "main" ? "main" : "sub",
-        projectID: String(data?.projectId ?? ""),
-        blueprint: String(data?.blueprint ?? ""),
+        cwd: String(data?.cwd ?? ""),
+        system: String(data?.system ?? ""),
         title: String(data?.title ?? ""),
         model: String(data?.model ?? ""),
         imageModel: String(data?.imageModel ?? ""),
@@ -397,8 +337,7 @@ export class Registry {
     }
   }
 
-  // deleteSession is the hard delete: the live session and its records. The page
-  // is the blueprint's, shared with every other agent of it, so it stays.
+  // deleteSession is the hard delete: the live session and its records.
   async deleteSession(id: string): Promise<void> {
     this.delete(id);
     const res = await fetch(`${this.opts.storageBase}/log/session/delete`, {
@@ -435,31 +374,14 @@ export class Registry {
     // that is still a session worth resuming — otherwise a page that has never
     // been asked would 404 for the rest of the process's life.
     if (!meta && !history.length) return undefined;
-    const kind = meta?.kind ?? "sub";
-    // A sub session runs in the folder of the project it belongs to: that is its
-    // cwd, and where its page (the blueprint) is read from. A project taken off
-    // the board still has its row, so its conversations keep working; a row that
-    // is truly gone is the case where there is nothing to resume into.
-    let project = "";
-    if (kind === "sub") project = await this.projectDir(meta?.projectID);
-    // The page is the blueprint's, so its README is read from the prototype —
-    // current, not frozen.
-    let tail: string | undefined;
-    if (kind === "sub" && meta?.blueprint) {
-      let readme: string | undefined;
-      try {
-        readme = blueprintReadme(project, meta.blueprint);
-      } catch {
-        readme = undefined; // the prototype was deleted: the page is gone too
-      }
-      tail = blueprintTail(meta.blueprint, readme);
-    }
+    // Everything a rebuild needs is on the row: the folder, the system text, the
+    // name, the models. A row with no folder was written before this shape
+    // existed; the home is the only honest place to stand.
     return this.build(
       id,
       history,
-      kind,
-      project,
-      tail,
+      meta?.cwd || this.opts.home,
+      meta?.system ?? "",
       meta?.title ?? "",
       meta?.model ?? "",
       meta?.imageModel ?? "",
@@ -469,19 +391,19 @@ export class Registry {
   private async build(
     id: string,
     history: StoredRecord[] = [],
-    kind: "main" | "sub" = "sub",
-    project = "",
-    blueprintReadme?: string,
+    cwd = "",
+    system = "",
     title = "",
     modelChoice = "",
     imageChoice = "",
   ): Promise<Sess> {
-    // Where this conversation's agent works: the project folder it belongs to, or
-    // the home for main — main is the shell's own chat and belongs to no project.
-    const cwd = project || this.opts.home;
+    // Where this conversation's agent works: the folder its row names, or the
+    // home when the row carries none.
+    const workdir = cwd || this.opts.home;
     const sess: Sess = {
       id,
-      kind,
+      cwd: workdir,
+      system,
       events: [],
       listeners: new Set(),
       tail: Promise.resolve(),
@@ -503,16 +425,16 @@ export class Registry {
       // .pi/settings.json once the project is trusted. Nothing is held in memory
       // or duplicated here — an edit in pi applies to the next session built, and
       // the loader and the session share the one instance, as they do in pi's CLI.
-      const settings = SettingsManager.create(cwd, getAgentDir());
+      const settings = SettingsManager.create(workdir, getAgentDir());
       for (const err of settings.drainErrors()) {
         const where = err.path ? ` (${err.path})` : "";
         console.error(`warning: ${err.scope} settings${where}: ${err.error.message}`);
       }
-      // The role's spec, plus (for a sub agent) its blueprint's README as the
-      // tail, so it knows its own UI from the first turn.
-      const loader = this.makeLoader(kind, cwd, settings, blueprintReadme);
+      // Whatever the caller wanted the agent to know goes in as the appended
+      // section; ai contributes nothing of its own.
+      const loader = this.makeLoader(workdir, settings, system);
       await loader.reload();
-      const sessionManager = SessionManager.inMemory(cwd);
+      const sessionManager = SessionManager.inMemory(workdir);
       // Rebuild context compaction-aware: the latest compaction summary plus the
       // records after it. Summarized history is not re-sent to the provider.
       // Repair runs *after* the slice: the cut is an index, so it can land
@@ -529,12 +451,11 @@ export class Registry {
       // the row's `model` is the one place a conversation's choice lives — a
       // `model` tool switch and a creation-time choice both land there, and
       // nothing goes into the conversation's own records, so a rebuild cannot
-      // find a second, older answer to disagree with it. Then the role default in
-      // the engineer home's models.yaml. Then pi's own default: the model its
+      // find a second, older answer to disagree with it. Then the default in the
+      // engineer home's models.yaml. Then pi's own default: the model its
       // settings name if pi can serve it, else the first model pi can serve.
       const config = readModelsConfig(this.opts.home);
-      const roleDefault = config[kind].chat;
-      const candidates = [modelChoice, roleDefault]
+      const candidates = [modelChoice, config.chat]
         .map((ref) => String(ref ?? "").trim())
         .filter(Boolean);
       let model: Model | undefined;
@@ -568,7 +489,7 @@ export class Registry {
       // the creation-time image), then the role's `image` in models.yaml. No pi
       // fallback — there is no image runtime, so an unusable name is the future
       // image tool's problem, not this build's.
-      const imageModel = (imageChoice || config[kind].image).trim();
+      const imageModel = (imageChoice || config.image).trim();
       sess.imageModel = imageModel || undefined;
       const modelTool = makeModelTool({
         runtime: this.modelRuntime,
@@ -607,7 +528,7 @@ export class Registry {
         },
       });
       const { session } = await createAgentSession({
-        cwd,
+        cwd: workdir,
         modelRuntime: this.modelRuntime,
         resourceLoader: loader,
         sessionManager,
@@ -720,12 +641,10 @@ export class Registry {
     return true;
   }
 
-  // titleDue is the schedule: the first user turn of a blueprint
-  // agent. main is skipped — the shell draws its tab as "main" whatever the row
-  // says. Asked at settle, so the flag is already up when the stream decides
-  // whether agent_settled is the last thing it will send.
+  // titleDue is the schedule: the first user turn of a conversation. Asked at
+  // settle, so the flag is already up when the stream decides whether
+  // agent_settled is the last thing it will send.
   private titleDue(sess: Sess): boolean {
-    if (sess.kind !== "sub") return false;
     if (this.stub || !sess.agent) return false;
     return sess.turns === 1;
   }
@@ -837,7 +756,7 @@ export class Registry {
       if (attempt < TITLE_ATTEMPTS) await sleep(TITLE_RETRY_DELAY_MS);
     }
     if (!title || title === sess.title) return "";
-    await this.upsertSession({ sessionId: sess.id, kind: sess.kind, title });
+    await this.upsertSession({ sessionId: sess.id, title });
     sess.title = title;
     dbg(sess.id, "title", `${Date.now() - startedAt}ms`, title);
     return title;
@@ -854,7 +773,7 @@ export class Registry {
     if (choice.slot === "image") sess.imageModel = choice.model;
     const patch: Record<string, unknown> =
       choice.slot === "image" ? { imageModel: choice.model } : { model: choice.model };
-    void this.upsertSession({ sessionId: sess.id, kind: sess.kind, ...patch }).catch(
+    void this.upsertSession({ sessionId: sess.id, ...patch }).catch(
       (err) => {
         console.error(
           `engineer ai: session row ${choice.slot} model write failed sessionId=${sess.id}: ${String(err)}`,

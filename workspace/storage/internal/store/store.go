@@ -49,15 +49,12 @@ type Store struct {
 	db *sql.DB
 }
 
-// Tab is gone: a tab is one open session, so there is no per-tab state to keep.
-// What used to be a tab row (a pane tree, a name, a last-activity time) is now
-// either the session's own row (kind / blueprint / title) or the open list in
-// current (see workspace.go).
+// Two things live in this database: a conversation's messages (records) and the
+// conversation itself (sessions, see workspace.go).
 
 // Open opens the database under the engineer home directory. The home is the
-// program's own data directory (not a project): sessions of every project, the
-// project registry and the workspace row all live here, so which folder the
-// program was started from says nothing about what it serves.
+// program's own data directory: conversations live here, not in a project folder,
+// so which folder the program was started from says nothing about what it serves.
 func Open(home string) (*Store, error) {
 	dir := home
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -71,10 +68,8 @@ func Open(home string) (*Store, error) {
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return nil, err
 	}
-	// Three tables, one shape, one kind each: a conversation row is what the shell
-	// replays, a test row is one run, a telemetry row is one observation. Keeping
-	// them apart is what lets each be read, indexed and eventually pruned on its
-	// own; the columns are identical so one reader can still span them.
+	// One table for the only records there are: a conversation's messages, in
+	// arrival order, replayed by whoever asks for them.
 	for _, table := range recordTables {
 		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS ` + table + ` (
 		id TEXT PRIMARY KEY,
@@ -100,8 +95,8 @@ func Open(home string) (*Store, error) {
 		}
 	}
 	st := &Store{db: db}
-	// sessions + current are the workspace side of the same database (see
-	// workspace.go): what a conversation is, and what is open right now.
+	// sessions are the other side of the same database (see workspace.go): what a
+	// conversation is — its folder, system text, name and models.
 	if err := st.createWorkspaceTables(); err != nil {
 		return nil, err
 	}
@@ -110,45 +105,9 @@ func Open(home string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// recordTables is every table a record can live in.
-var recordTables = []string{"records", "tests", "telemetries"}
-
-// tableForKind is where a newly written record goes.
-func tableForKind(kind string) string {
-	switch kind {
-	case "test":
-		return "tests"
-	case "telemetry":
-		return "telemetries"
-	default:
-		return "records"
-	}
-}
-
-// tablesForKind is where a kind is read from: its own table. A read that names
-// no kind spans all three.
-func tablesForKind(kind string) []string {
-	switch kind {
-	case "conversation":
-		return []string{"records"}
-	case "test":
-		return []string{"tests"}
-	case "telemetry":
-		return []string{"telemetries"}
-	default:
-		return recordTables
-	}
-}
-
-// recordSource is the one FROM a reader can use whatever the kind: the tables
-// that may hold it, stacked.
-func recordSource(kind string) string {
-	parts := make([]string, 0, len(tablesForKind(kind)))
-	for _, table := range tablesForKind(kind) {
-		parts = append(parts, `SELECT id, created_at, kind, env, atom, session_id, summary, payload FROM `+table)
-	}
-	return "(" + strings.Join(parts, " UNION ALL ") + ")"
-}
+// recordTables is every table a record can live in — one, now that tests and
+// telemetries are gone.
+var recordTables = []string{"records"}
 
 // Insert stores a record and returns it with assigned id / createdAt / summary.
 func (s *Store) Insert(rec Record) (Record, error) {
@@ -173,7 +132,7 @@ func (s *Store) Insert(rec Record) (Record, error) {
 	if err != nil {
 		return rec, err
 	}
-	_, err = s.db.Exec(`INSERT INTO `+tableForKind(rec.Kind)+` (id, created_at, kind, env, atom, session_id, summary, payload)
+	_, err = s.db.Exec(`INSERT INTO records (id, created_at, kind, env, atom, session_id, summary, payload)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.ID, rec.CreatedAt, rec.Kind, nullable(rec.Env), nullable(rec.Atom), nullable(rec.SessionID), rec.Summary, string(payloadText))
 	return rec, err
@@ -181,16 +140,6 @@ func (s *Store) Insert(rec Record) (Record, error) {
 
 func deriveSummary(rec Record) string {
 	switch rec.Kind {
-	case "test":
-		if rec.Atom != "" {
-			return "test " + rec.Atom
-		}
-		return "test"
-	case "telemetry":
-		if rec.Atom != "" {
-			return "telemetry " + rec.Atom
-		}
-		return "telemetry"
 	case "conversation":
 		if rec.SessionID != "" {
 			return "conversation " + rec.SessionID
@@ -200,130 +149,22 @@ func deriveSummary(rec Record) string {
 	return rec.Kind
 }
 
-// Query returns one page (pageSize=100) of records, newest first, plus hasMore.
-func (s *Store) Query(kind, env, atom, sessionID, start, end string, pageNum int) ([]map[string]interface{}, bool, error) {
+// ListSessions lists conversation sessions, most recently active first, with a
+// message count and a preview of each session's first user message. There is no
+// project to narrow it by: a session is a conversation.
+func (s *Store) ListSessions(pageNum int) ([]map[string]interface{}, bool, error) {
 	if pageNum < 1 {
 		pageNum = 1
-	}
-	where := []string{"1=1"}
-	args := []interface{}{}
-	if kind != "" {
-		where = append(where, "kind = ?")
-		args = append(args, kind)
-	}
-	if env != "" {
-		where = append(where, "env = ?")
-		args = append(args, env)
-	}
-	if atom != "" {
-		where = append(where, "atom = ?")
-		args = append(args, atom)
-	}
-	if sessionID != "" {
-		where = append(where, "session_id = ?")
-		args = append(args, sessionID)
-	}
-	if start != "" {
-		where = append(where, "created_at >= ?")
-		args = append(args, start)
-	}
-	if end != "" {
-		where = append(where, "created_at <= ?")
-		args = append(args, end)
-	}
-	rows, err := s.db.Query(`SELECT id, created_at, kind, env, atom, summary FROM `+recordSource(kind)+`
-		WHERE `+joinWhere(where)+` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
-		append(args, PageSize+1, (pageNum-1)*PageSize)...)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	items := []map[string]interface{}{}
-	for rows.Next() {
-		var r struct {
-			id, createdAt, kind string
-			env, atom, summary  sql.NullString
-		}
-		if err := rows.Scan(&r.id, &r.createdAt, &r.kind, &r.env, &r.atom, &r.summary); err != nil {
-			return nil, false, err
-		}
-		item := map[string]interface{}{
-			"id":        r.id,
-			"createdAt": r.createdAt,
-			"kind":      r.kind,
-			"summary":   r.summary.String,
-		}
-		if r.env.Valid && r.env.String != "" {
-			item["env"] = r.env.String
-		}
-		if r.atom.Valid && r.atom.String != "" {
-			item["atom"] = r.atom.String
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, err
-	}
-	hasMore := len(items) > PageSize
-	if hasMore {
-		items = items[:PageSize]
-	}
-	return items, hasMore, nil
-}
-
-// Get returns a single record with full payload. kind narrows the search to one
-// bucket ("" means any): a detail endpoint that names a bucket must not answer
-// with a row from another one.
-func (s *Store) Get(id, kind string) (Record, error) {
-	var r Record
-	var env, atom, session sql.NullString
-	var payload string
-	query := `SELECT id, created_at, kind, env, atom, session_id, summary, payload
-		FROM ` + recordSource(kind) + ` WHERE id = ?`
-	args := []interface{}{id}
-	if kind != "" {
-		query += ` AND kind = ?`
-		args = append(args, kind)
-	}
-	err := s.db.QueryRow(query+" ORDER BY created_at DESC LIMIT 1", args...).
-		Scan(&r.ID, &r.CreatedAt, &r.Kind, &env, &atom, &session, &r.Summary, &payload)
-	if err != nil {
-		return Record{}, err
-	}
-	r.Env, r.Atom, r.SessionID = env.String, atom.String, session.String
-	if err := yaml.Unmarshal([]byte(payload), &r.Payload); err != nil {
-		return Record{}, err
-	}
-	return r, nil
-}
-
-// ListSessions returns one page (pageSize=100) of ai conversation sessions,
-// most recently active first, with message count and a preview of each
-// session's latest message.
-// ListSessions lists conversation sessions. projectID narrows it to one
-// project's sessions ("" means every project, main included) — that is what a
-// project launcher's recents are.
-func (s *Store) ListSessions(pageNum int, projectID string) ([]map[string]interface{}, bool, error) {
-	if pageNum < 1 {
-		pageNum = 1
-	}
-	where := "1=1"
-	args := []interface{}{}
-	if p := strings.TrimSpace(projectID); p != "" {
-		where = "s.project_id = ?"
-		args = append(args, p)
 	}
 	rows, err := s.db.Query(`SELECT
 		s.session_id,
 		COUNT(r.id) AS msg_count,
 		COALESCE(MIN(r.created_at), s.created_at) AS first_at,
 		COALESCE(MAX(r.created_at), s.created_at) AS last_at,
-		s.kind,
-		s.blueprint,
+		s.cwd,
 		s.title,
 		s.model,
 		s.image_model,
-		s.project_id,
 		COALESCE(
 			(SELECT r2.payload FROM records r2
 				WHERE r2.kind = 'conversation' AND r2.session_id = s.session_id
@@ -335,21 +176,20 @@ func (s *Store) ListSessions(pageNum int, projectID string) ([]map[string]interf
 		) AS preview_payload
 		FROM sessions s
 		LEFT JOIN records r ON r.kind = 'conversation' AND r.session_id = s.session_id
-		WHERE `+where+`
 		GROUP BY s.session_id
 		ORDER BY last_at DESC, s.session_id DESC
 		LIMIT ? OFFSET ?`,
-		append(args, PageSize+1, (pageNum-1)*PageSize)...)
+		PageSize+1, (pageNum-1)*PageSize)
 	if err != nil {
 		return nil, false, err
 	}
 	defer rows.Close()
 	sessions := []map[string]interface{}{}
 	for rows.Next() {
-		var sessionID, firstAt, lastAt, kind, blueprint, title, model, imageModel, projectID string
+		var sessionID, firstAt, lastAt, cwd, title, model, imageModel string
 		var count int
 		var previewPayload sql.NullString
-		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &kind, &blueprint, &title, &model, &imageModel, &projectID, &previewPayload); err != nil {
+		if err := rows.Scan(&sessionID, &count, &firstAt, &lastAt, &cwd, &title, &model, &imageModel, &previewPayload); err != nil {
 			return nil, false, err
 		}
 		preview := ""
@@ -363,9 +203,7 @@ func (s *Store) ListSessions(pageNum int, projectID string) ([]map[string]interf
 		}
 		sessions = append(sessions, map[string]interface{}{
 			"sessionId":  sessionID,
-			"kind":       kind,
-			"projectId":  projectID,
-			"blueprint":  blueprint,
+			"cwd":        cwd,
 			"title":      title,
 			"model":      model,
 			"imageModel": imageModel,
@@ -384,10 +222,6 @@ func (s *Store) ListSessions(pageNum int, projectID string) ([]map[string]interf
 	}
 	return sessions, hasMore, nil
 }
-
-// PutTab / NewTab / GetTab / ListTabs are gone with the tab table: a tab is one
-// open session, so "create a tab" is "create a session" (ai's session-new) and
-// "list tabs" is log/list over sessions.
 
 func snippet(s string, max int) string {
 	s = strings.TrimSpace(s)
@@ -438,10 +272,7 @@ func (s *Store) SessionMessages(sessionID string) ([]map[string]interface{}, err
 }
 
 // DeleteSession removes every conversation record belonging to a session and the
-// session row itself (which is what took it off the tab bar and out of main), and
-// returns the number of deleted records. Doing all of it
-// here is what keeps the workspace consistent whoever asks for the delete: an id
-// left in the open list would draw a tab with nothing behind it.
+// session row itself, and returns the number of deleted records.
 func (s *Store) DeleteSession(sessionID string) (int64, error) {
 	res, err := s.db.Exec(`DELETE FROM records
 		WHERE kind = 'conversation' AND session_id = ?`, sessionID)
@@ -451,68 +282,7 @@ func (s *Store) DeleteSession(sessionID string) (int64, error) {
 	if _, err := s.db.Exec(`DELETE FROM sessions WHERE session_id = ?`, sessionID); err != nil {
 		return 0, err
 	}
-	// The row carried the workspace: its place on the tab bar and whether it was main.
-	// Deleting it is what clears both, so there is no pointer left to repair.
 	return res.RowsAffected()
-}
-
-// Search does a full-text-ish LIKE search across id/kind/summary/payload.
-func (s *Store) Search(q string, pageNum int) ([]map[string]interface{}, bool, error) {
-	if pageNum < 1 {
-		pageNum = 1
-	}
-	like := "%" + q + "%"
-	rows, err := s.db.Query(`SELECT id, created_at, kind, env, atom, summary FROM `+recordSource("")+`
-		WHERE id LIKE ? OR kind LIKE ? OR env LIKE ? OR atom LIKE ? OR summary LIKE ? OR payload LIKE ?
-		ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
-		like, like, like, like, like, like, PageSize+1, (pageNum-1)*PageSize)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	items := []map[string]interface{}{}
-	for rows.Next() {
-		var r struct {
-			id, createdAt, kind string
-			env, atom, summary  sql.NullString
-		}
-		if err := rows.Scan(&r.id, &r.createdAt, &r.kind, &r.env, &r.atom, &r.summary); err != nil {
-			return nil, false, err
-		}
-		item := map[string]interface{}{
-			"id":        r.id,
-			"createdAt": r.createdAt,
-			"kind":      r.kind,
-			"summary":   r.summary.String,
-			"snippet":   r.summary.String,
-		}
-		if r.env.Valid && r.env.String != "" {
-			item["env"] = r.env.String
-		}
-		if r.atom.Valid && r.atom.String != "" {
-			item["atom"] = r.atom.String
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, err
-	}
-	hasMore := len(items) > PageSize
-	if hasMore {
-		items = items[:PageSize]
-	}
-	return items, hasMore, nil
-}
-
-func joinWhere(conds []string) string {
-	out := ""
-	for i, c := range conds {
-		if i > 0 {
-			out += " AND "
-		}
-		out += c
-	}
-	return out
 }
 
 // marshalYAML encodes with a 2-space indent. yaml.v3's default indent of 4
