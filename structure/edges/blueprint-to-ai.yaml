@@ -1,0 +1,49 @@
+edges:
+  - id: blueprint-to-ai
+    from: blueprint
+    from_interface: ai-new
+    to: ai
+    to_interface: ai-new
+    channel: network
+    protocol: http
+    description: the shell starts the conversation it draws, naming the folder the agent works in and the system text to append
+  - id: blueprint-to-ai-ask
+    from: blueprint
+    from_interface: ai-ask
+    to: ai
+    to_interface: ai-ask
+    channel: network
+    protocol: http
+    description: the shell sends a prompt to ai; ai orchestrates the operation (reply streams back)
+  - id: blueprint-to-ai-stream
+    from: blueprint
+    from_interface: ai-stream
+    to: ai
+    to_interface: ai-stream
+    channel: network
+    protocol: http
+    description: the shell consumes the session's SSE event stream; a run ends when ai closes it on agent_settled
+  - id: blueprint-to-ai-resume
+    from: blueprint
+    from_interface: ai-resume
+    to: ai
+    to_interface: ai-resume
+    channel: network
+    protocol: http
+    description: the shell resumes the session it draws; ai rebuilds its context from storage records and its cwd / system from the session row
+  - id: blueprint-to-ai-stop
+    from: blueprint
+    from_interface: ai-stop
+    to: ai
+    to_interface: ai-stop
+    channel: network
+    protocol: http
+    description: the shell aborts the run in flight; the session stays and can be asked again
+  - id: blueprint-to-ai-blobs
+    from: blueprint
+    from_interface: ai-blobs
+    to: ai
+    to_interface: ai-blobs
+    channel: network
+    protocol: http
+    description: the shell loads an image by its content address; ai serves the stored bytes

@@ -1,22 +1,22 @@
 edges:
-  - id: web-to-storage-session-list
-    from: web
+  - id: blueprint-to-storage-session-list
+    from: blueprint
     from_interface: log-session-list
     to: storage
     to_interface: log-session-list
     channel: network
     protocol: http
     description: the shell takes the most recently active session — page 1, first entry — as the conversation it draws
-  - id: web-to-storage-session-detail
-    from: web
+  - id: blueprint-to-storage-session-detail
+    from: blueprint
     from_interface: log-session-detail
     to: storage
     to_interface: log-session-detail
     channel: network
     protocol: http
     description: the shell checks that the session it is about to draw still exists, and reads its cwd and display name
-  - id: web-to-storage-session-messages
-    from: web
+  - id: blueprint-to-storage-session-messages
+    from: blueprint
     from_interface: log-session-messages
     to: storage
     to_interface: log-session-messages

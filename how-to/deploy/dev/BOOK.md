@@ -5,7 +5,7 @@ Local development environment: builds and runs the whole stack — the Go side a
 ## Prerequisites
 
 - Go 1.22+
-- Bun (ai service) — the only JS runtime in the stack: web is Go (`workspace/web/server`), so no Node.js is needed
+- Bun (ai service) — the only JS runtime in the stack: the shell and the blueprint runtime are Go (`workspace/blueprint`), so no Node.js is needed
 - An LLM provider key for the ai service — configured pi's own way: env vars or `~/.pi/agent/auth.json` (`--api-key` also works). Corazon Engineer keeps no credentials itself; external tools keep their own under their own `~/.xxx` locations.
 
 ## Start / stop
@@ -26,7 +26,7 @@ from the same checkout with its own pids, logs and binary path (ports are picked
 two instances coexist as long as their ports differ. They share the data home unless you give the
 second one its own `ENGINEER_DATA` — sharing means one board and one set of open sessions.
 
-`launch.sh` owns port selection: defaults are 8500 web / 8501 ai / 8502 storage, and a taken default advances to the next free port. It builds the Go side into `.engineer/dev${ENGINEER_INSTANCE:+-<name>}/bin/engineer` — one multi-call binary that also carries the two services, started as `engineer serve-storage` / `serve-web` (the same binary the prod launcher ships; `serve-web` serves the assets in `workspace/web/`) — starts all three, and hands each one everything it needs: every service gets `--bind` + `--port`; storage gets `--home` (the data home) and answers both prefixes — `/log/*` for records and sessions, `/static/*` for a folder's files, which each request names by absolute path; ai gets `--home` / `--storage`; web gets `--assets` (the frontend files) / `--cwd` (the folder the one conversation's agent works in) / `--storage` / `--ai`. It then prints the port table, the data home and the bind host. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file**.
+`launch.sh` owns port selection: defaults are 8500 blueprint / 8501 ai / 8502 storage, and a taken default advances to the next free port. It builds the Go side into `.engineer/dev${ENGINEER_INSTANCE:+-<name>}/bin/engineer` — one multi-call binary that also carries the two services, started as `engineer serve-storage` / `serve-blueprint` (the same binary the prod launcher ships; `serve-blueprint` serves the shell in `workspace/blueprint/shell/` and the blueprints in the project's `.agents/blueprints/`) — starts all three, and hands each one everything it needs: every service gets `--bind` + `--port`; storage gets `--home` (the data home) and answers both prefixes — `/log/*` for records and sessions, `/static/*` for a folder's files, which each request names by absolute path; ai gets `--home` / `--storage`; blueprint gets `--shell` (the shell files) / `--home` (where each blueprint's sqlite is filed) / `--blueprints` (the project's `.agents/blueprints`) / `--cwd` (the folder the shell conversation's agent works in, and the default for an `ai` step) / `--storage` / `--ai`. It then prints the port table, the data home and the bind host. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file**.
 
 The data home is the **only** database the stack reads, and that is the whole rule: there is no
 migration step left to run. A `<checkout>/.engineer/engineer.db` from before the home existed is not

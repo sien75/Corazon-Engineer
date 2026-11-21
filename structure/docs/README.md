@@ -1,6 +1,6 @@
 # Corazon Engineer interfaces
 
-Three services: **storage** (state and a folder's files), **ai** (conversations), **web** (the shell). Their addresses are not fixed — each run picks them, and they are given to you when the session starts. storage answers on two prefixes: `/log/*` for records and sessions, `/static/*` for a folder's files — one address, both kinds of call.
+Three services: **storage** (state and a folder's files), **ai** (conversations), **blueprint** (the shell, and each blueprint page). Their addresses are not fixed — each run picks them, and they are given to you when the session starts. storage answers on two prefixes: `/log/*` for records and sessions, `/static/*` for a folder's files — one address, both kinds of call.
 
 ## Calling
 
@@ -8,6 +8,7 @@ Three services: **storage** (state and a folder's files), **ai** (conversations)
 - A failure is a non-200 with `error: {code, message}`.
 - Ids: session `s_<hex>`.
 - `*-stream` interfaces are SSE for pages; do not call them.
+- A blueprint's own routes (`/b/<slug>`, `/b/<slug>/events`, `/b/<slug>/op`) are browser-facing and are not listed here: they exist so a blueprint page can talk to its runtime (`structure/contracts/blueprint-*.yaml`), and opening `/b/<slug>` in a browser is what loads one. A blueprint is a single `.html` file in `.agents/blueprints/`; the format is in `agents/blueprint.md`.
 
 ```bash
 curl -s -X POST <storage>/log/session/list -H 'Content-Type: application/yaml' --data-binary 'pageNum: 1'
@@ -27,6 +28,15 @@ Each step is one call; read the interface's file for its fields and rules.
 ## Interfaces
 
 Each file has the description, request, response and errors of one interface.
+Interfaces marked *(browser)* are loaded by a page, never called by an agent.
+
+### blueprint
+
+The shell and each blueprint page. The shell's conversation routes are ai's; these three belong to the page↔runtime protocol a blueprint uses:
+
+- `GET /b/{slug}` — Serve a blueprint page — [blueprint-page](blueprint-page.md)
+- `GET /b/{slug}/events` — The blueprint's bus, as one SSE stream per open page — [blueprint-events](blueprint-events.md)
+- `POST /b/{slug}/op` — One request from a blueprint page to its runtime — [blueprint-op](blueprint-op.md) *(browser)*
 
 ### ai
 

@@ -8,7 +8,7 @@ it deliberately.
 
 Sources of truth: `how-to/deploy/prod/launch.go` (owns the bind host and hands
 it down), `how-to/deploy/dev/launch.sh` (same, for dev), and each service's own
-required `--bind` (`workspace/storage`, `workspace/web/server` — both started as
+required `--bind` (`workspace/storage`, `workspace/blueprint` — both started as
 subcommands of the merged `engineer` binary — plus `workspace/ai/src/main.ts`). No service defaults its bind host: loopback is the
 launcher's choice, made once and passed down.
 
@@ -103,18 +103,19 @@ how-to/deploy/dev/stop.sh
 (cd how-to/deploy/prod && go build -o /tmp/engineer .)
 
 # no flags at all: must refuse, and bind nothing
-/tmp/engineer serve-web; echo "exit=$?"
+/tmp/engineer serve-blueprint; echo "exit=$?"
 lsof -nP -iTCP -sTCP:LISTEN | grep engineer || echo "(nothing listening)"
 
 # told the host explicitly, it listens exactly there
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8841 \
-  --assets "$(cd workspace/web && pwd)" \
+/tmp/engineer serve-blueprint --bind 127.0.0.1 --port 8841 \
+  --shell "$(cd workspace/blueprint/shell && pwd)" \
+  --home /tmp/engineer-home --blueprints /tmp/engineer-blueprints --cwd "$PWD" \
   --storage http://localhost:8502 --ai http://localhost:8501 &
 sleep 1; lsof -nP -iTCP:8841 -sTCP:LISTEN
 ```
 
 Expected: the bare run prints a usage line containing `--bind <host> --port <n>
---assets <dir>` and exits non-zero, with nothing listening; the second run gives
+--shell <dir> --home <dir> --blueprints <dir> --cwd <dir>` and exits non-zero, with nothing listening; the second run gives
 one `TCP 127.0.0.1:8841 (LISTEN)` line. (The process name in `lsof` is the
 binary's basename: with the merged binary both Go services report as
 `engineer`.)
@@ -122,8 +123,9 @@ binary's basename: with the merged binary both Go services report as
 ## 3b. --bind 0.0.0.0 opens a single service  (opt-in, ⚠️ triggers the alarm)
 
 ```bash
-/tmp/engineer serve-web --bind 0.0.0.0 --port 8842 \
-  --assets "$(cd workspace/web && pwd)" \
+/tmp/engineer serve-blueprint --bind 0.0.0.0 --port 8842 \
+  --shell "$(cd workspace/blueprint/shell && pwd)" \
+  --home /tmp/engineer-home --blueprints /tmp/engineer-blueprints --cwd "$PWD" \
   --storage http://localhost:8502 --ai http://localhost:8501 &
 sleep 1; lsof -nP -iTCP:8842 -sTCP:LISTEN
 ```
@@ -134,7 +136,7 @@ opened up without the launcher.
 ## 4. teardown
 
 ```bash
-pkill -f 'serve-web.*--port 8841'
-pkill -f 'serve-web.*--port 8842'
+pkill -f 'serve-blueprint.*--port 8841'
+pkill -f 'serve-blueprint.*--port 8842'
 how-to/deploy/dev/stop.sh
 ```

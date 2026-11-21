@@ -1,0 +1,3 @@
+id: core-blueprint-single-file
+description: a blueprint is one HTML file that carries its own tables, flows and scripts — opening it loads it, a `ui.*` emit runs a sh step then a js step then an insert, the page's watch gets the row, backend blocks never reach the browser, and a broken blueprint is an error page instead of a half-alive runtime
+atoms: [blueprint, ai, storage]

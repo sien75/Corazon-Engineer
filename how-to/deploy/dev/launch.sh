@@ -40,7 +40,7 @@ mkdir -p "$BIN"
 # (recorded pids, then strays started from our own bin dir) — matching just
 # "root $ROOT" would also kill a prod instance of the same project, which uses
 # its own ports (750x) and has every right to keep running.
-for s in web ai storage; do
+for s in blueprint ai storage; do
   if [ -f "$D/$s.pid" ]; then
     kill "$(cat "$D/$s.pid")" 2>/dev/null || true
     rm -f "$D/$s.pid"
@@ -92,7 +92,7 @@ BASE=http://$URLHOST
 # subcommand (see how-to/deploy/prod/launch.go), so the local stack has a single
 # executable path instead of one file per service.
 ( cd "$ROOT/how-to/deploy/prod" && go build -o "$BIN/engineer" . )
-rm -f "$BIN/engineer-storage" "$BIN/engineer-web"
+rm -f "$BIN/engineer-storage" "$BIN/engineer-blueprint"
 
 # --- proxy ----------------------------------------------------------------
 # Two calls leave this stack: its own, which are loopback (storage ↔ ai ↔ web),
@@ -131,10 +131,13 @@ echo $! >"$D/storage.pid"
     --bind "$BIND" --port "$PORT_AI" \
     --storage "$BASE:$PORT_STORAGE" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
-nohup "$BIN/engineer" serve-web --bind "$BIND" --port "$PORT_WEB" \
-    --assets "$ROOT/workspace/web" --cwd "$ROOT" \
-    --storage "$BASE:$PORT_STORAGE" --ai "$BASE:$PORT_AI" >"$D/web.log" 2>&1 </dev/null &
-echo $! >"$D/web.pid"
+nohup "$BIN/engineer" serve-blueprint --bind "$BIND" --port "$PORT_WEB" \
+    --shell "$ROOT/workspace/blueprint/shell" \
+    --home "$DATA" \
+    --blueprints "$ROOT/.agents/blueprints" \
+    --cwd "$ROOT" \
+    --storage "$BASE:$PORT_STORAGE" --ai "$BASE:$PORT_AI" >"$D/blueprint.log" 2>&1 </dev/null &
+echo $! >"$D/blueprint.pid"
 
 echo "engineer dev up — checkout: $ROOT"
 printf '  data    %s\n' "$DATA"

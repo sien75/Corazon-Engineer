@@ -27,7 +27,7 @@ Both halves matter, and skipping either produces the worst kind of failure — a
 - **Unique ports.** No two cases may share a port. When they do, a leftover process from case A keeps the port, case B's service fails to bind with `EADDRINUSE` (buried in a log nobody reads), and case B's frontend happily talks to **case A's service** — with case A's database. The checks then fail for a reason that has nothing to do with the code.
 - **Reclaim first.** Each `Setup` begins by killing whatever a previous run of *this* case left behind, keyed on its own root and ports, before starting anything. Without it the second run of a case talks to the first run's database, and "recent" fills up with records from runs you have already forgotten.
 
-  Reclaim is a `pkill -f` on a root path, so an **empty root is a loaded gun**: the pattern collapses to `serve-storage --root ` and matches every service on the machine, the agent's own included. Every reclaim block therefore opens with `: "${ROOT:?...}"` (see below). Reclaim only the services this case actually starts — a case that runs just `serve-web` must not be killing `serve-storage`.
+  Reclaim is a `pkill -f` on a root path, so an **empty root is a loaded gun**: the pattern collapses to `serve-storage --root ` and matches every service on the machine, the agent's own included. Every reclaim block therefore opens with `: "${ROOT:?...}"` (see below). Reclaim only the services this case actually starts — a case that runs just `serve-blueprint` must not be killing `serve-storage`.
 
 The reclaim block every Setup starts with (adjust the root and ports to this case):
 
@@ -42,7 +42,7 @@ The reclaim block every Setup starts with (adjust the root and ports to this cas
 # anything starts, not after.
 pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts --home $HOME_DIR" 2>/dev/null || true
-pkill -f "serve-web.*--port $PORT_WEB" 2>/dev/null || true
+pkill -f "serve-blueprint.*--port $PORT_BLUEPRINT" 2>/dev/null || true
 sleep 1
 ```
 

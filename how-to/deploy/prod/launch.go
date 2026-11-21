@@ -4,7 +4,7 @@
 // down.
 //
 // It is a **multi-call binary**: storage and web are not separate files but this
-// same executable re-run with a `serve-storage` / `serve-web` subcommand. Only ai
+// same executable re-run with a `serve-storage` / `serve-blueprint` subcommand. Only ai
 // is a second file (`engineer-ai`). One executable path per service would mean
 // one extra entry in every EDR/security-tool process whitelist (and one extra
 // "allow this program?" prompt for every new user), so the two Go services share
@@ -36,13 +36,13 @@ import (
 	"gopkg.in/yaml.v3"
 
 	storagesvc "engineer/storage"
-	websrv "engineer/web"
+	blueprintsvc "engineer/blueprint"
 )
 
 const usageText = "usage: engineer [start|status|version|uninstall [--purge]]"
 
 // default ports; the launcher advances to the next free one on conflict
-var defaultPorts = map[string]int{"web": 7500, "ai": 7501, "storage": 7502}
+var defaultPorts = map[string]int{"blueprint": 7500, "ai": 7501, "storage": 7502}
 
 func main() {
 	cmd := "start"
@@ -63,8 +63,8 @@ func main() {
 	// (see the multi-call note at the top). Each Serve never returns.
 	case "serve-storage":
 		storagesvc.Serve(os.Args[2:])
-	case "serve-web":
-		websrv.Serve(os.Args[2:])
+	case "serve-blueprint":
+		blueprintsvc.Serve(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usageText)
 		os.Exit(1)
@@ -108,7 +108,7 @@ func launch() {
 	bind := bindHost()
 	ports := map[string]int{}
 	used := map[int]bool{}
-	for _, name := range []string{"web", "ai", "storage"} {
+	for _, name := range []string{"blueprint", "ai", "storage"} {
 		p := pickPort(defaultPorts[name], used, bind)
 		used[p] = true
 		ports[name] = p
@@ -139,10 +139,12 @@ func launch() {
 			args: []string{"--home", data,
 				"--bind", bind, "--port", strconv.Itoa(ports["ai"]),
 				"--storage", svcURL("storage")}},
-		{name: "web", bin: self,
-			args: []string{"serve-web",
-				"--bind", bind, "--port", strconv.Itoa(ports["web"]),
-				"--assets", filepath.Join(pkg, "web"),
+		{name: "blueprint", bin: self,
+			args: []string{"serve-blueprint",
+				"--bind", bind, "--port", strconv.Itoa(ports["blueprint"]),
+				"--shell", filepath.Join(pkg, "shell"),
+				"--home", data,
+				"--blueprints", filepath.Join(root, ".agents", "blueprints"),
 				"--cwd", root,
 				"--storage", svcURL("storage"), "--ai", svcURL("ai")}},
 	}
@@ -160,7 +162,7 @@ func launch() {
 	}
 
 	fmt.Printf("engineer up — data: %s\n", data)
-	fmt.Printf("  web     %s\n", svcURL("web"))
+	fmt.Printf("  web     %s\n", svcURL("blueprint"))
 	fmt.Printf("  ai      %s\n", svcURL("ai"))
 	fmt.Printf("  storage %s\n", svcURL("storage"))
 	if isWildcard(bind) {
@@ -203,7 +205,7 @@ func launch() {
 // status prints the per-service state of the data home's instance.
 func status() {
 	runDir := filepath.Join(dataHome(), "run")
-	for _, name := range []string{"storage", "ai", "web"} {
+	for _, name := range []string{"storage", "ai", "blueprint"} {
 		pid, err := readPid(filepath.Join(runDir, name+".pid"))
 		if err == nil && alive(pid) {
 			fmt.Printf("%s: running (pid %d)\n", name, pid)
@@ -286,7 +288,7 @@ func killAll(svcs []*service) {
 }
 
 func removePids(runDir string) {
-	for _, name := range []string{"web", "ai", "storage"} {
+	for _, name := range []string{"blueprint", "ai", "storage"} {
 		_ = os.Remove(filepath.Join(runDir, name+".pid"))
 	}
 }
@@ -295,7 +297,7 @@ func removePids(runDir string) {
 // stray service started from this install's own binary) so we reuse its ports
 // instead of advancing past them. Another install's stack is never touched.
 func reclaim(runDir, self string) {
-	for _, name := range []string{"web", "ai", "storage"} {
+	for _, name := range []string{"blueprint", "ai", "storage"} {
 		pf := filepath.Join(runDir, name+".pid")
 		if pid, err := readPid(pf); err == nil {
 			_ = syscall.Kill(pid, syscall.SIGTERM)

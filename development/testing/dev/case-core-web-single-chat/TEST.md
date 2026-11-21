@@ -5,13 +5,13 @@
 
 - 顶栏只有一个 tab，恒显示在 logo 右侧，名字就叫 `Chat`（它是这条对话的名字，不是切换器）；
   主题按钮在右上角。
-- 页面第一次进来还没有会话：第一条消息让外壳调 `ai/new`（`cwd` 由 `serve-web --cwd` 经
+- 页面第一次进来还没有会话：第一条消息让外壳调 `ai/new`（`cwd` 由 `serve-blueprint --cwd` 经
   `/config.js` 交给页面），之后整页只有这一条会话；再发消息仍是它。
 - 刷新之后再回来，读的是 `log/session/list` 的第一条（最近活跃的那个），不是新建一个。
 - 主题按钮把 `data-theme` 写在 `<html>` 上，`light` / `dark` 来回切，存在浏览器里，刷新后还在。
 
-Source of truth: `workspace/web/app.js`（外壳）、`workspace/web/index.html`（结构）、
-`workspace/web/components/chat.js`（对话本体）、`workspace/web/server/serve.go`（文件服务与
+Source of truth: `workspace/blueprint/shell/app.js`（外壳）、`workspace/blueprint/shell/index.html`（结构）、
+`workspace/blueprint/shell/components/chat.js`（对话本体）、`workspace/blueprint/serve.go`（文件服务与
 `/config.js`）。
 
 ## Setup
@@ -26,6 +26,7 @@ rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
 
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-blueprint.*--home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 for p in 8940 8941 8942; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 sleep 1
@@ -46,16 +47,18 @@ for i in $(seq 1 60); do
 done
 
 # --cwd is the folder the shell's conversation works in; the page gets it from /config.js.
-/tmp/engineer serve-web --bind 127.0.0.1 --port 8942 --assets "$ROOTDIR/workspace/web" \
+/tmp/engineer serve-blueprint --bind 127.0.0.1 --port 8942 \
+  --shell "$ROOTDIR/workspace/blueprint/shell" \
+  --home "$HOME_DIR" --blueprints "$ROOT/.agents/blueprints" \
   --cwd "$ROOT" --storage http://localhost:8941 --ai http://localhost:8940 \
-  >/tmp/single-chat-web.log 2>&1 &
+  >/tmp/single-chat-blueprint.log 2>&1 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null -m 2 http://localhost:8942/ && break
   sleep 1
 done
 ```
 
-Expected: the ai log says `--stub: model calls disabled`；web 打出 `engineer web: http://localhost:8942`。
+Expected: the ai log says `--stub: model calls disabled`；blueprint 打出 `engineer blueprint: http://localhost:8942`。
 
 ## Run
 
@@ -164,6 +167,7 @@ Expected: `{"ok": true, ...}`，每一项 `pass` 都是 `true`。
 
 ```bash
 pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
+pkill -f "serve-blueprint.*--home $HOME_DIR" 2>/dev/null || true
 pkill -f "main.ts.*--home $HOME_DIR" 2>/dev/null || true
 for p in 8940 8942; do pkill -f "serve-.*--port $p" 2>/dev/null || true; done
 rm -rf "$ROOT"

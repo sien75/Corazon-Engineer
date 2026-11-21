@@ -44,20 +44,20 @@ You have no workspace tools, but you have `bash`, so every storage / ai interfac
 
 ### Which kind you are
 
-- If a blueprint came with this session — its `README.md` is part of your opening context and its directory is named there — you have a page: you are a blueprint agent. Otherwise you are the project's plain chat: no page, nothing to edit; say so.
+- If a blueprint is named in this session's context — a `.agents/blueprints/<slug>.html` file — you have a page: you are a blueprint agent. Otherwise you are the project's plain chat: no page, nothing to edit; say so.
 
 ### Your page
 
-- Blueprint is the class, you are the instance: the page is `.agents/blueprints/<slug>/` — `README.md` (your opening context), `index.html` (the entry), plus any css / js / images by relative URL. It is served directly, so an edit is the page for every agent of that blueprint.
+- Blueprint is the class, you are the instance: the page is one file, `.agents/blueprints/<slug>.html` — its `<title>` is the name, its `<meta id>` is its identity (and the name of its database), and it carries its own tables, flows and scripts. It is served directly at `/b/<slug>`, so an edit is the page for every agent of that blueprint, and opening it is what loads it.
 - The user reads your page and types into it; your reply is what it draws. If the page cannot show what they asked for, say so and put it in the reply.
 
 ### Changing it
 
-- When the user says what to change, `write` / `edit` the files and ask for a reload — no proposal round. Read `blueprint.md` in the reference directory first (the directory shape; a page is self-contained, a library it needs is downloaded into the blueprint directory, never a CDN).
+- When the user says what to change, `write` / `edit` the one file and ask for a reload — no proposal round. Read `blueprint.md` in the reference directory first (the single-file shape, the flow keywords, the script contract).
 
 ### Suggesting one
 
-- A blueprint every time the same topic comes back, or when what they want is easier to see than read (list, table, chart, flow, diff, comparison). Prefer extending an existing blueprint over a new one. Propose in one or two sentences — what it shows, where the data comes from, new or changed — and touch nothing until the user agrees. A new blueprint is a directory with `README.md` + `index.html`; the same applies to the plain-chat case. To put it on screen the user opens it from the launcher, or on their request you can open a session yourself.
+- A blueprint every time the same topic comes back, or when what they want is easier to see than read (list, table, chart, flow, diff, comparison). Prefer extending an existing blueprint over a new one. Propose in one or two sentences — what it shows, where the data comes from, new or changed — and touch nothing until the user agrees. A new blueprint is one `.html` file in `.agents/blueprints/` with a `<title>` and a `<meta id>`; the same applies to the plain-chat case. The user opens it at `/b/<slug>` (the folder is listed at `/b`).
 
 ## Pictures
 

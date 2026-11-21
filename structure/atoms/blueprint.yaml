@@ -1,0 +1,99 @@
+atoms:
+  - name: blueprint
+    description: "Corazon Engineer shell and blueprint runtime — one service, one process, two jobs. The shell is still one conversation and a theme switch: it draws <engineer-chat> and answers every page URL with that conversation, resuming the most recently active session and starting one with /ai/new when there is none (the shell names the folder the agent works in and the text appended to its system prompt). New here: a blueprint is one HTML file in the project's .agents/blueprints/ that carries its own tables (<script type=\"blueprint/sql\">), its own orchestration (<script type=\"blueprint/flow\">, a GitHub-Actions-shaped stack) and its own backend scripts (<script type=\"blueprint/sh|js|py\" id=\"…\">), plus whatever page it wants in its body. The browser skips every blueprint/* block; this service strips them before serving the page, so backend code and schema never reach the browser, and opening /b/<slug> is what loads, validates and runs it — there is no hot reload, a blueprint is reloaded by opening it again. Each blueprint gets one sqlite at <home>/blueprints/<id>.sqlite, filed under the id in its <meta id> and never under its path: deleting the file and putting it back keeps the data, and two blueprints cannot reach each other's tables because they do not share a database. Every write goes through this service (a flow's sql step, or the page's bp.sql), which is how it knows a table changed and can push the watch. A flow's steps run in order with each step's output as the next one's input; a script of any language is one JSON in on stdin (and BP_INPUT) and one JSON out on stdout, non-zero exit for failure, stderr lines pushed as log events while it runs; js blocks run through bun with a default export; the ai step opens a conversation on the ai service, asks it, and returns the reply text. The page gets one SSE stream (events, decoded by an embedded bp.js with bp.emit / bp.on / bp.watch / bp.sql) and one POST route for its ops. Blueprints are also listed at /b so the folder is discoverable without reading it."
+    path: ./workspace/blueprint
+    runtime_type: go
+    runtime_version: "1.25"
+    role: service
+
+    interfaces:
+      # Browser-facing routes, not agent-facing ones: a page loads them, an agent or
+      # another atom never calls them. They are listed because their shapes are
+      # contracts — blueprint-op is the page↔runtime protocol — not because anything
+      # should call them.
+      provides:
+        - id: blueprint-page
+          channel: network
+          protocol: http
+          contract: ./contracts/blueprint-page.yaml
+          extend:
+            path: /b/{slug}
+            method: GET
+        - id: blueprint-events
+          channel: network
+          protocol: http
+          contract: ./contracts/blueprint-events.yaml
+          extend:
+            path: /b/{slug}/events
+            method: GET
+        - id: blueprint-op
+          channel: network
+          protocol: http
+          contract: ./contracts/blueprint-op.yaml
+          extend:
+            path: /b/{slug}/op
+            method: POST
+      consumes:
+        - id: log-session-list
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-list.yaml
+          extend:
+            path: /log/session/list
+            method: POST
+        - id: log-session-detail
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-detail.yaml
+          extend:
+            path: /log/session/detail
+            method: POST
+        - id: log-session-messages
+          channel: network
+          protocol: http
+          contract: ./contracts/log-session-messages.yaml
+          extend:
+            path: /log/session/messages
+            method: POST
+        - id: ai-new
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-new.yaml
+          extend:
+            path: /ai/new
+            method: POST
+        - id: ai-ask
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-ask.yaml
+          extend:
+            path: /ai/ask
+            method: POST
+        - id: ai-stream
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-stream.yaml
+          extend:
+            path: /ai/stream
+            method: POST
+        - id: ai-stop
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-stop.yaml
+          extend:
+            path: /ai/stop
+            method: POST
+        - id: ai-resume
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-resume.yaml
+          extend:
+            path: /ai/resume
+            method: POST
+        - id: ai-blobs
+          channel: network
+          protocol: http
+          contract: ./contracts/ai-blobs.yaml
+          extend:
+            path: /blobs/{sha256}
+            method: GET

@@ -1,0 +1,30 @@
+id: blueprint-page
+description: Serve a blueprint page — the blueprint's own HTML with every blueprint/* block cut out and the channel script attached, after parsing it and running its schema; opening the page is what loads and runs a blueprint
+
+request:
+  body:
+    # nothing: the blueprint is named by the path, /b/<slug>, and it is a file in
+    # the project's .agents/blueprints/<slug>.html
+
+response:
+  status: 200
+  stream: html  # a whole document, not a body to parse
+  body:
+    # the blueprint's document in order: <!doctype> if it had one, then the
+    # channel script tag, then <title> / <meta id> / its own HTML. Every
+    # <script type="blueprint/…"> block is gone — backend code and schema never
+    # reach the browser — and the content of the others has had <\/script> and
+    # <\!-- restored to the characters they stand for.
+    #
+    # Loading it also reloads the blueprint: its sql runs (against the sqlite
+    # filed under its <meta id>, which is kept, never recreated), its flows are
+    # registered, and any page still attached to the previous load is told the
+    # connection is over.
+
+errors:
+  - status: 500
+    code: blueprint_load_failed
+    description: the page says why and nothing was started — no <meta id>, an id that is not a safe file name, a flow naming a script that does not exist, unparsable flow YAML, or a <script type="blueprint/sql"> block sqlite rejected
+  - status: 404
+    code: not_found
+    description: the slug is not a file name, or there is no such file
