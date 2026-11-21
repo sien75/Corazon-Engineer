@@ -144,7 +144,6 @@ func launch() {
 				"--bind", bind, "--port", strconv.Itoa(ports["blueprint"]),
 				"--shell", filepath.Join(pkg, "shell"),
 				"--home", data,
-				"--blueprints", filepath.Join(root, ".agents", "blueprints"),
 				"--cwd", root,
 				"--storage", svcURL("storage"), "--ai", svcURL("ai")}},
 	}

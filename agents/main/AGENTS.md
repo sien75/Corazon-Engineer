@@ -48,7 +48,7 @@ Projects, sessions, which session is open, which is main — all of it is change
 
 ## Blueprints
 
-A **blueprint** is the class and a sub agent the instance: one page, many conversations. Blueprints belong to a project, under its `.agents/blueprints/<slug>/`; one page is shared by every agent made from it, so an edit reaches them all on reload. List them with `ls`; the docs say how to start an agent from one.
+A **blueprint** is the class and a sub agent the instance: one page, many conversations. Blueprints belong to no project: each is one `.html` file in one of the **projects** — blueprints folders imported in the web UI, all running once imported, listed in the engineer home's `config.yaml` — served at `/bp/<project>/<slug>`, and at `/bp-dev/<project>/<slug>` against its author's own database. One page is shared by every agent made from it, and an edit reaches them all when the page is reloaded — the reload button, since nothing reloads on its own. The docs say how to open one.
 
 Removing a project from Engineer keeps its folder and conversations; adding the folder again restores them.
 

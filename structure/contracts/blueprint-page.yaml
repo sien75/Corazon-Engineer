@@ -1,10 +1,13 @@
 id: blueprint-page
-description: Serve a blueprint page — the blueprint's own HTML with every blueprint/* block cut out and the channel script attached, after parsing it and running its schema; opening the page is what loads and runs a blueprint
+description: Serve a blueprint page — the blueprint's own HTML with every blueprint/* block cut out and the channel script attached, after parsing it and running its schema. A blueprint is a file in one of the imported blueprints folders; it is loaded when the service starts (prod) or when its page is first opened (dev), and re-loaded only by an explicit reload
 
 request:
   body:
-    # nothing: the blueprint is named by the path, /b/<slug>, and it is a file in
-    # the project's .agents/blueprints/<slug>.html
+    # nothing: the blueprint is named by the path, /bp/<project>/<slug> (prod) or
+    # /bp-dev/<project>/<slug> (dev). <project> is an imported blueprints folder
+    # (blueprint-projects); the slug is only unique inside it, which is why the
+    # project is in the address — a page that is open keeps pointing at its own
+    # project when the foreground changes.
 
 response:
   status: 200
@@ -16,15 +19,15 @@ response:
     # reach the browser — and the content of the others has had <\/script> and
     # <\!-- restored to the characters they stand for.
     #
-    # Loading it also reloads the blueprint: its sql runs (against the sqlite
-    # filed under its <meta id>, which is kept, never recreated), its flows are
-    # registered, and any page still attached to the previous load is told the
-    # connection is over.
+    # The runtime this page talks to already exists: prod blueprints are loaded
+    # (and their init script started) when the service starts, dev ones when
+    # their page is first opened. Opening the page does not reload the file —
+    # the page's reload button does (blueprint-op).
 
 errors:
   - status: 500
     code: blueprint_load_failed
-    description: the page says why and nothing was started — no <meta id>, an id that is not a safe file name, a flow naming a script that does not exist, unparsable flow YAML, or a <script type="blueprint/sql"> block sqlite rejected
+    description: the page says why and nothing was started — no <meta id>, an id that is not a safe file name, a flow naming a script that does not exist, more than one init script, unparsable flow YAML, or a <script type="blueprint/sql"> block sqlite rejected
   - status: 404
     code: not_found
-    description: the slug is not a file name, or there is no such file
+    description: the project is not imported, the slug is not a file name, or there is no such file

@@ -1,0 +1,3 @@
+id: core-blueprint-init
+description: a blueprint's init script is the one script that can put events on the bus — it starts with the runtime (no page open), its stdout lines become events that drive a flow, a non-JSON line becomes a log, a crash is logged and not restarted, and a reload kills the old process before starting a new one
+atoms: [blueprint, ai, storage]

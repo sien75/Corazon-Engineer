@@ -1,12 +1,13 @@
-# GET /b/{slug}/events
+# GET /bp/{project}/{slug}/events
 
-The blueprint's bus, as one SSE stream per open page — every event the blueprint produces, plus the changes to the tables the page watches
+The blueprint's bus, as one SSE stream per open page — every event the blueprint produces, plus the changes to the tables the page watches. The bus exists whether or not a page is attached — prod blueprints run from service start, so a flow or an init script keeps working with no browser open
 
 ## Request
 
 ```yaml
 body:
   # nothing: the stream is per page, and a page is identified by the path
+  # (/bp/<project>/<slug>/events, or the /bp-dev prefix)
 ```
 
 ## Response
@@ -17,9 +18,9 @@ stream: sse  # each frame's data: line is one JSON object
 body:
   op: event | change  # what kind of message this frame is
   # op=event — something happened on the blueprint's bus
-  type: string  # ui.<name> for an emit from the page, log for a script's stderr line, ai.delta for a streamed reply fragment, flow.error when a rule failed, or any type a flow emitted
-  source: string  # "ui" (the page), "flow" (an emit step), "script:<id>", "ai"
-  data: object  # the emit's data, or {message, script} for a log, {message, rule, step} for flow.error, {text} for ai.delta
+  type: string  # ui.<name> for an emit from the page, log for a script's stderr line, flow.error when a rule failed, or any type a flow or an init script emitted
+  source: string  # "ui" (the page), "flow" (an emit step), "script:<id>", "init" (the init script's stdout)
+  data: object  # the emit's data, or {message, script} for a log, {message, rule, step} for flow.error
   time: string  # RFC3339
   # op=change — a watched table was written
   table: string  # which table
@@ -34,5 +35,5 @@ body:
   description: the blueprint could not be loaded (see blueprint-page); an already-attached page keeps its own stream and is not affected
 - status: 410
   code: reloaded
-  description: the blueprint was reloaded by another open of its page; the stream ends and the page reloads to attach to the new one
+  description: the blueprint was reloaded — by the page's reload button, or by another open of a dev page; the stream ends and the page reloads to attach to the new one
 ```

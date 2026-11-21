@@ -36,6 +36,16 @@
     <nav id="tabs">
       <span class="tab tab-static active">Chat</span>
     </nav>
+    <div id="right-controls">
+    <!-- Projects: which blueprints folder is in front. A switcher, not a setting
+         dialog — the folders that are imported keep running either way. -->
+    <div id="projects-wrap">
+      <button id="projects-toggle" type="button" title="projects" aria-label="projects" aria-haspopup="true" aria-expanded="false">
+        <span id="projects-name">projects</span>
+        <span class="projects-caret" aria-hidden="true">▾</span>
+      </button>
+      <div id="projects-menu" hidden></div>
+    </div>
     <div id="theme-wrap">
       <button id="theme-toggle" type="button" title="theme" aria-label="theme">
         <!-- light / warm / cold are suns, dark / slate are moons: which one shows is
@@ -58,6 +68,7 @@
         <button type="button" data-theme="dark" aria-pressed="false"><span class="theme-swatch" data-theme="dark" aria-hidden="true"></span><span>dark</span><span class="theme-check" aria-hidden="true">✓</span></button>
         <button type="button" data-theme="slate" aria-pressed="false"><span class="theme-swatch" data-theme="slate" aria-hidden="true"></span><span>slate</span><span class="theme-check" aria-hidden="true">✓</span></button>
       </div>
+    </div>
     </div>
   </header>
   <main id="main">

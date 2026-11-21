@@ -3,6 +3,7 @@ package blueprint
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -14,22 +15,21 @@ import (
 var tableShape = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // FlowRule is one entry of a flow block: an event, and what that event sets in
-// motion. The syntax is a stack of GitHub Actions shapes with three steps of our
-// own — `sql`, `ai` and `emit` — because those are the three things a blueprint
-// does that are not a script.
+// motion. The syntax is a stack of GitHub Actions shapes with two steps of our
+// own — `sql` and `emit` — because those are the two things a blueprint does that
+// are not a script.
 type FlowRule struct {
 	On    string `yaml:"on"`
 	Steps []Step `yaml:"steps"`
 }
 
-// Step is one action. Exactly one of Run / SQL / AI / Emit is set; With carries
-// its input, resolved against the event and the steps before it.
+// Step is one action. Exactly one of Run / SQL / Emit is set; With carries its
+// input, resolved against the event and the steps before it.
 type Step struct {
 	ID   string `yaml:"id"`
 	Run  string `yaml:"run"`
 	SQL  string `yaml:"sql"`
 	Emit string `yaml:"emit"`
-	AI   any    `yaml:"ai"`
 	With any    `yaml:"with"`
 }
 
@@ -63,11 +63,8 @@ func ParseFlow(src string) ([]FlowRule, error) {
 			if step.Emit != "" {
 				set++
 			}
-			if step.AI != nil {
-				set++
-			}
 			if set != 1 {
-				return nil, fmt.Errorf("flow: rule %q, step %d: exactly one of `run`, `sql`, `emit`, `ai` is required", rule.On, j+1)
+				return nil, fmt.Errorf("flow: rule %q, step %d: exactly one of `run`, `sql`, `emit` is required", rule.On, j+1)
 			}
 		}
 	}
@@ -82,6 +79,12 @@ type Event struct {
 	Source string `json:"source"`
 	Data   any    `json:"data"`
 	Time   string `json:"time"`
+}
+
+// fields is the event as a map, for the expression lookup: the same four names
+// the envelope carries on the wire.
+func (e Event) fields() map[string]any {
+	return map[string]any{"type": e.Type, "source": e.Source, "data": e.Data, "time": e.Time}
 }
 
 // resolve turns a step's `with` value into an input: a whole-string `${{ … }}` is
@@ -134,7 +137,10 @@ func lookup(expr string, event Event, steps map[string]any) any {
 	path := strings.Split(expr, ".")
 	switch {
 	case len(path) >= 1 && path[0] == "event":
-		var cur any = event
+		// The event is a struct, and dig knows maps and lists: hand it the
+		// envelope's four fields as one, so `event.data`, `event.data.q` and
+		// `event.type` all read the same way.
+		var cur any = event.fields()
 		for _, key := range path[1:] {
 			cur = dig(cur, key)
 		}
@@ -164,6 +170,11 @@ func dig(v any, key string) any {
 			if fmt.Sprint(i) == key {
 				return node[i]
 			}
+		}
+	case []map[string]any:
+		// What a sql read answers with: rows, indexed the same way.
+		if i, err := strconv.Atoi(key); err == nil && i >= 0 && i < len(node) {
+			return node[i]
 		}
 	}
 	return nil

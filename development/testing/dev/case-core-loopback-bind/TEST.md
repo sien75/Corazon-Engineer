@@ -109,13 +109,13 @@ lsof -nP -iTCP -sTCP:LISTEN | grep engineer || echo "(nothing listening)"
 # told the host explicitly, it listens exactly there
 /tmp/engineer serve-blueprint --bind 127.0.0.1 --port 8841 \
   --shell "$(cd workspace/blueprint/shell && pwd)" \
-  --home /tmp/engineer-home --blueprints /tmp/engineer-blueprints --cwd "$PWD" \
+  --home /tmp/engineer-home --cwd "$PWD" \
   --storage http://localhost:8502 --ai http://localhost:8501 &
 sleep 1; lsof -nP -iTCP:8841 -sTCP:LISTEN
 ```
 
 Expected: the bare run prints a usage line containing `--bind <host> --port <n>
---shell <dir> --home <dir> --blueprints <dir> --cwd <dir>` and exits non-zero, with nothing listening; the second run gives
+--shell <dir> --home <dir> --cwd <dir>` and exits non-zero, with nothing listening; the second run gives
 one `TCP 127.0.0.1:8841 (LISTEN)` line. (The process name in `lsof` is the
 binary's basename: with the merged binary both Go services report as
 `engineer`.)
@@ -125,7 +125,7 @@ binary's basename: with the merged binary both Go services report as
 ```bash
 /tmp/engineer serve-blueprint --bind 0.0.0.0 --port 8842 \
   --shell "$(cd workspace/blueprint/shell && pwd)" \
-  --home /tmp/engineer-home --blueprints /tmp/engineer-blueprints --cwd "$PWD" \
+  --home /tmp/engineer-home --cwd "$PWD" \
   --storage http://localhost:8502 --ai http://localhost:8501 &
 sleep 1; lsof -nP -iTCP:8842 -sTCP:LISTEN
 ```

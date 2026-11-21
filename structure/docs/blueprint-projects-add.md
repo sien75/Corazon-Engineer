@@ -1,0 +1,31 @@
+# POST /config/projects
+
+Import a blueprints folder — the one setting the shell asks for before it does anything else, and after that "add folder…" in the corner. Importing starts the project, it does not just remember it
+
+## Request
+
+```yaml
+body:
+  path: string  # absolute path of the folder, or "~/…" which is expanded. Created when it does not exist, and refused when it exists and is not a folder. A folder already imported answers with what is there — importing twice is the same as once
+```
+
+## Response
+
+```yaml
+status: 200
+body:
+  id: string  # the project's identity: its folder's name, made safe and made distinct from the projects already imported
+  path: string  # the folder in force after the call
+  warning?: string  # set when the project was imported and is running but one of its blueprints failed to load; that blueprint has its own error page
+```
+
+## Errors
+
+```yaml
+- status: 400
+  code: bad_request
+  description: path missing or not absolute, the folder cannot be created, or it exists and is not a folder
+- status: 500
+  code: internal
+  description: config.yaml could not be written
+```

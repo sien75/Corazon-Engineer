@@ -1,33 +1,42 @@
 package blueprint
 
 import (
-	"bufio"
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Options is what a runtime needs from the process around it. None of it has a
 // default: a service that invented a data home would write a database nobody
 // chose.
 type Options struct {
-	Home       string // data home; every blueprint's sqlite is under <Home>/blueprints
-	Blueprints string // the folder of <slug>.html files
-	Cwd        string // folder an `ai` step's agent works in, unless the step says otherwise
-	AI         string // ai service base url
+	// Data is where one project keeps everything it writes: its blueprints'
+	// sqlite files, and the scratch space for the script files they run.
+	Data string
+	// Blueprints is that project's folder of <slug>.html files.
+	Blueprints string
+	AI         string // ai service base url, handed to every script as BP_AI
 }
 
+// Modes: the same file, two runtimes, two databases. Prod is what the user uses
+// and is loaded when the service starts; dev is what its author works on and is
+// loaded when its page is opened. Neither reloads on a file change — the page's
+// own button is the reload.
+const (
+	ModeProd = "prod"
+	ModeDev  = "dev"
+)
+
 func now() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// optsData is the directory a runtime writes into: its project's own, so two
+// projects can hold blueprints with the same <meta id> without sharing a row.
+func optsData(opts Options) string { return opts.Data }
 
 // Runtime is one loaded blueprint: its page, its database, and the bus its page
 // is attached to. Loading is the only place a blueprint's code takes effect —
@@ -37,12 +46,17 @@ type Runtime struct {
 	opts    Options
 	page    *Page
 	store   *Store
-	workDir string
+	mode    string // ModeProd or ModeDev: which database this runtime is filed under
+	slug    string // the file it came from, for the reload op
+	project string // the project it belongs to: its folder, its data, its address
+	workDir string // scratch space for script files; scripts themselves run in opts.Blueprints
+	reg     *Registry
 
 	mu      sync.Mutex
 	clients map[*Client]bool
 	watched map[string]bool
 	closed  bool
+	init    *initProcess
 }
 
 // Client is one open event stream: the browser's page, and nothing else. Its
@@ -62,8 +76,8 @@ func (rt *Runtime) Title() string { return rt.page.Title }
 // block cut out. The page runs only what it was written to run.
 func (rt *Runtime) HTML() []byte { return rt.page.HTML }
 
-func newRuntime(opts Options, page *Page) (*Runtime, error) {
-	store, err := openStore(opts.Home, page.ID)
+func newRuntime(opts Options, page *Page, mode, slug, project string, reg *Registry) (*Runtime, error) {
+	store, err := openStore(optsData(opts), page.ID, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +85,8 @@ func newRuntime(opts Options, page *Page) (*Runtime, error) {
 		store.Close()
 		return nil, err
 	}
-	work := filepath.Join(opts.Home, "blueprints", ".work", page.ID)
+	// Slugs and identities both end up in a path; neither is trusted as written.
+	work := filepath.Join(opts.Data, ".work", page.ID+"."+mode)
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		store.Close()
 		return nil, err
@@ -80,13 +95,23 @@ func newRuntime(opts Options, page *Page) (*Runtime, error) {
 		opts:    opts,
 		page:    page,
 		store:   store,
+		mode:    mode,
+		slug:    slug,
+		project: project,
 		workDir: work,
+		reg:     reg,
 		clients: map[*Client]bool{},
 		watched: map[string]bool{},
 	}
 	store.afterWrite(rt.pushChanges)
 	return rt, nil
 }
+
+// Start brings the blueprint's code up: the init script, if it has one. The
+// flows need no start — they are the bus, and the bus exists as soon as the
+// runtime does. Prod runtimes are started when the service starts, dev ones when
+// their page is first opened; either way, what runs does not wait for a page.
+func (rt *Runtime) Start() error { return rt.startInit() }
 
 // Subscribe attaches one page to the bus. The buffer is bounded: a page that
 // cannot keep up loses pushes rather than stalling the flow that produced them.
@@ -112,8 +137,9 @@ func (rt *Runtime) Unsubscribe(c *Client) {
 	}
 }
 
-// Close ends the runtime: its store is released and every attached page is told
-// the connection is over.
+// Close ends the runtime: its init script is killed, its store is released and
+// every attached page is told the connection is over. A runtime that is closed
+// cannot be restarted — a reload makes a new one.
 func (rt *Runtime) Close() {
 	rt.mu.Lock()
 	if rt.closed {
@@ -126,10 +152,15 @@ func (rt *Runtime) Close() {
 		clients = append(clients, c)
 	}
 	rt.clients = map[*Client]bool{}
+	init := rt.init
+	rt.init = nil
 	rt.mu.Unlock()
 
 	for _, c := range clients {
 		close(c.ch)
+	}
+	if init != nil {
+		init.kill()
 	}
 	rt.store.Close()
 }
@@ -201,6 +232,12 @@ func (rt *Runtime) Emit(ev Event) { rt.emit(ev, 0) }
 const maxHops = 16
 
 func (rt *Runtime) emit(ev Event, hops int) {
+	rt.mu.Lock()
+	closed := rt.closed
+	rt.mu.Unlock()
+	if closed {
+		return
+	}
 	rt.pushEvent(ev)
 	if hops > maxHops {
 		rt.pushEvent(Event{Type: "flow.error", Source: "flow", Data: map[string]any{
@@ -267,9 +304,6 @@ func (rt *Runtime) runStep(step Step, input any, ev Event, hops int) (any, error
 		rt.emit(Event{Type: step.Emit, Source: "flow", Data: input}, hops+1)
 		return input, nil
 
-	case step.AI != nil:
-		return rt.runAI(input)
-
 	}
 	return nil, fmt.Errorf("step does nothing")
 }
@@ -284,15 +318,22 @@ func stepLabel(step Step) string {
 		return "sql"
 	case step.Emit != "":
 		return "emit " + step.Emit
-	case step.AI != nil:
-		return "ai"
 	}
 	return "step"
 }
 
 // ---------- the page's own channel ----------
 
-// Op is one request from a page: emit an event, watch a table, or run a query.
+// reloadFailed marks a reload that could not parse or start the file, so the
+// route can answer "the file is broken" instead of "your request is bad": the
+// request was fine, the blueprint is not.
+type reloadFailed struct{ err error }
+
+func (e reloadFailed) Error() string { return e.err.Error() }
+func (e reloadFailed) Unwrap() error { return e.err }
+
+// Op is one request from a page: emit an event, watch a table, run a query, or
+// reload the blueprint.
 // It answers synchronously; anything a flow produces arrives on the event stream
 // instead.
 type opRequest struct {
@@ -336,6 +377,18 @@ func (rt *Runtime) Op(raw []byte) (any, error) {
 		rt.mu.Unlock()
 		return map[string]any{"ok": true}, nil
 
+	case "reload", "restart":
+		// The only way a blueprint's code takes a change: kill the init script,
+		// read the file, apply its schema, start it again. The page reloads itself
+		// after this, because its stream belonged to the runtime that just ended.
+		if rt.reg == nil {
+			return nil, fmt.Errorf("this runtime cannot be reloaded")
+		}
+		if _, err := rt.reg.Load(rt.slug); err != nil {
+			return nil, reloadFailed{err}
+		}
+		return map[string]any{"ok": true, "reloaded": true, "mode": rt.mode}, nil
+
 	case "sql":
 		if strings.TrimSpace(req.SQL) == "" {
 			return nil, fmt.Errorf("sql needs a statement")
@@ -355,183 +408,59 @@ func (rt *Runtime) Op(raw []byte) (any, error) {
 	return nil, fmt.Errorf("unknown op %q", req.Op)
 }
 
-// ---------- the ai step ----------
-
-// runAI runs one `ai` step: a new conversation, one question, the answer to the
-// end. The step's output is the reply text, which is the only part a page or a
-// later script can act on; the deltas are pushed as `ai.delta` events while it
-// streams, so a page can show progress.
-func (rt *Runtime) runAI(input any) (any, error) {
-	prompt, system, title, cwd := aiArgs(input)
-	if strings.TrimSpace(prompt) == "" {
-		return nil, fmt.Errorf("an `ai` step needs a prompt")
-	}
-	if rt.opts.AI == "" {
-		return nil, fmt.Errorf("no ai service is configured for this blueprint")
-	}
-	if strings.TrimSpace(cwd) == "" {
-		cwd = rt.opts.Cwd
-	}
-	base := strings.TrimSuffix(rt.opts.AI, "/")
-
-	var created struct {
-		SessionID string `json:"sessionId"`
-	}
-	if err := postYAML(base+"/ai/new", map[string]any{
-		"cwd": cwd, "system": system, "title": title,
-	}, &created); err != nil {
-		return nil, fmt.Errorf("ai/new: %w", err)
-	}
-	if created.SessionID == "" {
-		return nil, fmt.Errorf("ai/new answered no sessionId")
-	}
-
-	if err := postYAML(base+"/ai/ask", map[string]any{
-		"id": created.SessionID,
-		"blocks": []any{
-			map[string]any{"type": "text", "text": prompt},
-		},
-	}, nil); err != nil {
-		return nil, fmt.Errorf("ai/ask: %w", err)
-	}
-
-	text, err := rt.followAI(base, created.SessionID)
-	if err != nil {
-		return nil, err
-	}
-	return text, nil
-}
-
-// followAI reads the answer's event stream until the run settles, collecting the
-// text as it goes.
-func (rt *Runtime) followAI(base, sessionID string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), scriptTimeout)
-	defer cancel()
-
-	body, _ := yaml.Marshal(map[string]any{"id": sessionID, "since": 0})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/ai/stream", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/yaml")
-	res, err := (&http.Client{}).Do(req)
-	if err != nil {
-		return "", fmt.Errorf("ai/stream: %w", err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("ai/stream: %s", res.Status)
-	}
-
-	var text strings.Builder
-	var failure error
-	scanner := bufio.NewScanner(res.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	scanner.Split(splitFrames)
-	for scanner.Scan() {
-		ev := parseFrame(scanner.Text())
-		switch ev["type"] {
-		case "message_update":
-			ae, _ := ev["assistantMessageEvent"].(map[string]any)
-			if ae != nil && ae["type"] == "text_delta" {
-				delta, _ := ae["delta"].(string)
-				if delta != "" {
-					text.WriteString(delta)
-					rt.pushEvent(Event{Type: "ai.delta", Source: "ai", Data: map[string]any{"text": delta}})
-				}
-			}
-		case "error":
-			failure = fmt.Errorf("ai: %v", ev["error"])
-		case "agent_settled":
-			// The turn is over; the conversation is left behind on purpose.
-			return text.String(), failure
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return text.String(), fmt.Errorf("ai/stream: %w", err)
-	}
-	return text.String(), failure
-}
-
-func aiArgs(with any) (prompt, system, title, cwd string) {
-	switch v := with.(type) {
-	case string:
-		prompt = v
-	case map[string]any:
-		prompt, _ = v["prompt"].(string)
-		system, _ = v["system"].(string)
-		title, _ = v["title"].(string)
-		cwd, _ = v["cwd"].(string)
-	}
-	return
-}
-
-func postYAML(url string, body any, out any) error {
-	payload, err := yaml.Marshal(body)
-	if err != nil {
-		return err
-	}
-	res, err := (&http.Client{Timeout: scriptTimeout}).Post(url, "application/yaml", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		var buf bytes.Buffer
-		buf.ReadFrom(res.Body)
-		return fmt.Errorf("%s: %s", res.Status, strings.TrimSpace(buf.String()))
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(res.Body).Decode(out)
-}
-
-// splitFrames cuts an SSE body into frames, which arrive separated by a blank
-// line.
-func splitFrames(data []byte, atEOF bool) (int, []byte, error) {
-	if i := bytes.Index(data, []byte("\n\n")); i >= 0 {
-		return i + 2, data[:i], nil
-	}
-	if atEOF && len(data) > 0 {
-		return len(data), data, nil
-	}
-	return 0, nil, nil
-}
-
-// parseFrame joins a frame's data: lines and reads them as one YAML document —
-// the shape the ai stream contract promises.
-func parseFrame(frame string) map[string]any {
-	var lines []string
-	for _, line := range strings.Split(frame, "\n") {
-		if strings.HasPrefix(line, "data:") {
-			lines = append(lines, strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
-		}
-	}
-	if len(lines) == 0 {
-		return map[string]any{}
-	}
-	var ev map[string]any
-	if err := yaml.Unmarshal([]byte(strings.Join(lines, "\n")), &ev); err != nil {
-		return map[string]any{}
-	}
-	return ev
-}
-
 // ---------- the loaded set ----------
 
-// Registry holds what is loaded. A blueprint is addressed by its file's slug, but
-// filed by its own id: opening the page again reloads it, and the runtime that was
-// there is shut down first.
+// Registry holds the loaded runtimes of one mode. A blueprint is addressed by its
+// file's slug, but filed by its own id: loading it again replaces the runtime that
+// was there, and the old one is shut down first.
+//
+// Prod and dev are two registries, and that is all that separates them: the same
+// files, the same folder, different databases, separate buses.
 type Registry struct {
-	opts   Options
-	mu     sync.Mutex
+	mode    string
+	project string
+	mu      sync.Mutex
+	opts    Options
+	// bySlug and byID both point at the same runtimes: one identity is one
+	// runtime, whichever slug it was loaded by.
 	bySlug map[string]*Runtime
 	byID   map[string]*Runtime
 }
 
-func NewRegistry(opts Options) *Registry {
-	return &Registry{opts: opts, bySlug: map[string]*Runtime{}, byID: map[string]*Runtime{}}
+func NewRegistry(opts Options, mode, project string) *Registry {
+	return &Registry{
+		mode:    mode,
+		project: project,
+		opts:    opts,
+		bySlug:  map[string]*Runtime{},
+		byID:    map[string]*Runtime{},
+	}
+}
+
+// Folder is this project's blueprints folder, or "" when the project could not be
+// opened.
+func (r *Registry) Folder() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.opts.Blueprints
+}
+
+// LoadAll loads every blueprint in the folder, starting each one's code. Prod uses
+// it at start-up: the user's blueprints run whether or not a page is open. One
+// blueprint failing to load does not stop the others — a broken file is its own
+// error page, not a dead service.
+func (r *Registry) LoadAll() error {
+	files, err := r.Files()
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, f := range files {
+		if _, err := r.Load(f.Slug); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // File is one blueprint a reader can open.
@@ -542,7 +471,11 @@ type File struct {
 
 // Files lists the folder's blueprints, by slug, in name order.
 func (r *Registry) Files() ([]File, error) {
-	entries, err := os.ReadDir(r.opts.Blueprints)
+	folder := r.Folder()
+	if folder == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(folder)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -557,7 +490,7 @@ func (r *Registry) Files() ([]File, error) {
 		}
 		slug := strings.TrimSuffix(name, ".html")
 		title := slug
-		if src, err := os.ReadFile(filepath.Join(r.opts.Blueprints, name)); err == nil {
+		if src, err := os.ReadFile(filepath.Join(folder, name)); err == nil {
 			if t := titleOf(string(src)); t != "" {
 				title = t
 			}
@@ -568,11 +501,21 @@ func (r *Registry) Files() ([]File, error) {
 	return out, nil
 }
 
-// Load reads a blueprint and makes it the live one for its id. Every open of the
-// page goes through here: a blueprint is reloaded when it is opened, not while it
-// is being watched.
+// Load reads a blueprint and makes it the live one for its id, starting its code.
+// It is the whole of "apply a change": a reload is this call again, and nothing
+// else reloads — not opening a page, not a file change.
 func (r *Registry) Load(slug string) (*Runtime, error) {
-	path := filepath.Join(r.opts.Blueprints, slug+".html")
+	if !slugShape.MatchString(slug) {
+		return nil, fmt.Errorf("not a blueprint name: %q", slug)
+	}
+	r.mu.Lock()
+	folder := r.opts.Blueprints
+	r.mu.Unlock()
+	if folder == "" {
+		return nil, fmt.Errorf("this project's folder is not available")
+	}
+
+	path := filepath.Join(folder, slug+".html")
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint %q: %w", slug, err)
@@ -581,7 +524,7 @@ func (r *Registry) Load(slug string) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	rt, err := newRuntime(r.opts, page)
+	rt, err := newRuntime(r.opts, page, r.mode, slug, r.project, r)
 	if err != nil {
 		return nil, err
 	}
@@ -590,8 +533,6 @@ func (r *Registry) Load(slug string) (*Runtime, error) {
 	old := r.byID[page.ID]
 	r.byID[page.ID] = rt
 	r.bySlug[slug] = rt
-	// A previous file for the same id stops being reachable: one identity is one
-	// runtime, whichever slug it was opened by.
 	for s, other := range r.bySlug {
 		if other == old {
 			delete(r.bySlug, s)
@@ -602,12 +543,15 @@ func (r *Registry) Load(slug string) (*Runtime, error) {
 	if old != nil {
 		old.Close()
 	}
+	if err := rt.Start(); err != nil {
+		return nil, err
+	}
 	return rt, nil
 }
 
-// Get answers with what is loaded for this slug, loading it if the page has not
-// been opened yet. Calls that only act on a blueprint (its event stream, its ops)
-// go through here: they must not reload it under a page that is already attached.
+// Get answers with what is loaded for this slug, loading it if nothing is yet.
+// Calls that only act on a blueprint (its event stream, its ops) go through here:
+// they must not reload it under a page that is already attached.
 func (r *Registry) Get(slug string) (*Runtime, error) {
 	r.mu.Lock()
 	rt, ok := r.bySlug[slug]
@@ -616,4 +560,16 @@ func (r *Registry) Get(slug string) (*Runtime, error) {
 		return rt, nil
 	}
 	return r.Load(slug)
+}
+
+// Shutdown stops every runtime: the service is going away.
+func (r *Registry) Shutdown() {
+	r.mu.Lock()
+	runtimes := r.bySlug
+	r.bySlug = map[string]*Runtime{}
+	r.byID = map[string]*Runtime{}
+	r.mu.Unlock()
+	for _, rt := range runtimes {
+		rt.Close()
+	}
 }

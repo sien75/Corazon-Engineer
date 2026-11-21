@@ -20,17 +20,22 @@ package blueprint
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed client.js
@@ -47,24 +52,25 @@ var types = map[string]string{
 	".svg":  "image/svg+xml",
 }
 
-// runtimeConfig is what the shell page needs to run one conversation. storage
-// carries both prefixes — /log/* for records and sessions, /static/* for a
-// folder's files — so there is one address, not two.
+// runtimeConfig is what the shell page needs to run one conversation and to draw
+// its project switcher. storage carries both prefixes — /log/* for records and
+// /static/* for a folder's files — so there is one address, not two.
 type runtimeConfig struct {
-	Storage string `json:"storage"`
-	AI      string `json:"ai"`
-	Cwd     string `json:"cwd"`
+	Storage    string    `json:"storage"`
+	AI         string    `json:"ai"`
+	Cwd        string    `json:"cwd"`
+	Projects   []Project `json:"projects"`
+	Foreground string    `json:"foreground"`
 }
 
 type config struct {
-	shell      string
-	home       string
-	blueprints string
-	rt         runtimeConfig
+	shell string
+	home  string
+	rt    runtimeConfig
 }
 
 const usage = "usage: engineer serve-blueprint --bind <host> --port <n> --shell <dir> " +
-	"--home <dir> --blueprints <dir> --cwd <dir> --storage <url> --ai <url>"
+	"--home <dir> --cwd <dir> --storage <url> --ai <url>"
 
 // Serve runs the shell and the blueprint runtime until it is killed. argv is the
 // argument list following the subcommand; on failure it prints to stderr and
@@ -88,9 +94,6 @@ func Serve(argv []string) {
 		case argv[i] == "--home" && i+1 < len(argv):
 			i++
 			cfg.home = argv[i]
-		case argv[i] == "--blueprints" && i+1 < len(argv):
-			i++
-			cfg.blueprints = argv[i]
 		case argv[i] == "--cwd" && i+1 < len(argv):
 			i++
 			cfg.rt.Cwd = argv[i]
@@ -103,7 +106,7 @@ func Serve(argv []string) {
 		}
 	}
 
-	if bind == "" || port == 0 || cfg.shell == "" || cfg.home == "" || cfg.blueprints == "" ||
+	if bind == "" || port == 0 || cfg.shell == "" || cfg.home == "" ||
 		cfg.rt.Cwd == "" || cfg.rt.Storage == "" || cfg.rt.AI == "" {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -120,11 +123,6 @@ func Serve(argv []string) {
 	if info, err := os.Stat(cfg.home); err != nil || !info.IsDir() {
 		log.Fatalf("engineer blueprint: --home is not a folder: %s", cfg.home)
 	}
-	// The blueprints folder may legitimately be empty or missing (a project with
-	// none yet): it is created, so the listing page is an empty list, not an error.
-	if err := os.MkdirAll(cfg.blueprints, 0o755); err != nil {
-		log.Fatalf("engineer blueprint: --blueprints %q: %v", cfg.blueprints, err)
-	}
 	cwd, err := filepath.Abs(cfg.rt.Cwd)
 	if err != nil {
 		log.Fatalf("engineer blueprint: bad --cwd %q: %v", cfg.rt.Cwd, err)
@@ -134,12 +132,15 @@ func Serve(argv []string) {
 	}
 	cfg.rt.Cwd = cwd
 
-	reg := NewRegistry(Options{
-		Home:       cfg.home,
-		Blueprints: cfg.blueprints,
-		Cwd:        cfg.rt.Cwd,
-		AI:         cfg.rt.AI,
-	})
+	// Which folders are imported is the user's choice, made in the web UI and kept
+	// in the data home. There is no flag for it: a folder chosen by a launcher would
+	// be a folder the user never agreed to.
+	projects, err := OpenProjects(cfg.home, cfg.rt.AI)
+	if err != nil {
+		log.Fatalf("engineer blueprint: %v", err)
+	}
+	list, front := projects.Snapshot()
+	cfg.rt.Projects, cfg.rt.Foreground = list, front
 
 	addr := net.JoinHostPort(bind, strconv.Itoa(port))
 	// Bind first, then announce: the banner must never claim a port we did not
@@ -149,7 +150,22 @@ func Serve(argv []string) {
 		log.Fatalf("engineer blueprint: %v", err)
 	}
 	log.Printf("engineer blueprint: http://%s:%d", displayHost(bind), port)
-	if err := http.Serve(ln, handler(cfg, reg)); err != nil {
+	if len(list) == 0 {
+		log.Printf("engineer blueprint: no project yet — pick a folder in the web UI")
+	}
+	// A stopped service must take its blueprint scripts with it: an init script
+	// runs in its own process group, so killing this process does not reach it,
+	// and a leaked listener is exactly what the next start would double up.
+	go func() {
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+		sig := <-signals
+		log.Printf("engineer blueprint: %v — stopping blueprints", sig)
+		projects.Shutdown()
+		os.Exit(0)
+	}()
+
+	if err := http.Serve(ln, handler(cfg, projects)); err != nil {
 		log.Fatalf("engineer blueprint: %v", err)
 	}
 }
@@ -163,7 +179,7 @@ func displayHost(bind string) string {
 	return bind
 }
 
-func handler(cfg config, reg *Registry) http.Handler {
+func handler(cfg config, projects *Projects) http.Handler {
 	index := filepath.Join(cfg.shell, "index.html")
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +196,16 @@ func handler(cfg config, reg *Registry) http.Handler {
 			return
 
 		case urlPath == "/config.js":
-			body, err := json.Marshal(cfg.rt)
+			// The projects are read fresh: they are what the shell must know before
+			// it can do anything, and they change when the user imports or removes one.
+			list, front := projects.Snapshot()
+			body, err := json.Marshal(runtimeConfig{
+				Storage:    cfg.rt.Storage,
+				AI:         cfg.rt.AI,
+				Cwd:        cfg.rt.Cwd,
+				Projects:   list,
+				Foreground: front,
+			})
 			if err != nil {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
@@ -191,18 +216,34 @@ func handler(cfg config, reg *Registry) http.Handler {
 			fmt.Fprintf(w, "export const ENGINEER = %s;\nexport default ENGINEER;\n", body)
 			return
 
+		// The projects: the web UI's one setting, and the only place they change.
+		case urlPath == "/config/projects":
+			serveProjects(w, r, projects)
+			return
+		case urlPath == "/config/projects/foreground":
+			serveForeground(w, r, projects)
+			return
+
 		// The ai service's image store, read through this origin: a page can use
 		// `${ai}/blobs/…`, but a markdown image written by an agent cannot.
 		case strings.HasPrefix(urlPath, blobsPrefix):
 			handleBlob(w, r, cfg.rt.AI)
 			return
 
-		case urlPath == "/b" || urlPath == "/b/":
-			blueprintIndex(w, reg)
+		case urlPath == "/bp" || urlPath == "/bp/":
+			blueprintIndex(w, projects, ModeProd)
 			return
 
-		case strings.HasPrefix(urlPath, "/b/"):
-			blueprintRoute(w, r, reg, strings.TrimPrefix(urlPath, "/b/"))
+		case strings.HasPrefix(urlPath, "/bp/"):
+			blueprintRoute(w, r, projects, urlPath, "/bp/", ModeProd)
+			return
+
+		case urlPath == "/bp-dev" || urlPath == "/bp-dev/":
+			blueprintIndex(w, projects, ModeDev)
+			return
+
+		case strings.HasPrefix(urlPath, "/bp-dev/"):
+			blueprintRoute(w, r, projects, urlPath, "/bp-dev/", ModeDev)
 			return
 		}
 
@@ -231,28 +272,145 @@ func handler(cfg config, reg *Registry) http.Handler {
 	})
 }
 
+// ---------- projects ----------
+
+// serveProjects answers the project list, imports a folder, and removes one.
+//
+//	GET    /config/projects                  → {projects, foreground}
+//	POST   /config/projects   {path}         → {id, path}  (importing starts it)
+//	DELETE /config/projects?id=<id>          → {projects, foreground} (stops it)
+func serveProjects(w http.ResponseWriter, r *http.Request, projects *Projects) {
+	w.Header().Set("Content-Type", types[".json"])
+	switch r.Method {
+	case http.MethodGet:
+		writeProjects(w, projects, "")
+
+	case http.MethodPost:
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		// JSON or YAML: the pages send JSON, a person at a terminal may send either.
+		var req struct {
+			Path string `json:"path" yaml:"path"`
+		}
+		if err := yaml.Unmarshal(body, &req); err != nil {
+			badRequest(w, "bad request: "+err.Error())
+			return
+		}
+		added, err := projects.Add(req.Path)
+		if err != nil {
+			// A project that was imported and is now running is fine even if one of
+			// its blueprints failed: that blueprint has its own error page.
+			if added.ID != "" {
+				json.NewEncoder(w).Encode(map[string]any{"id": added.ID, "path": added.Path, "warning": err.Error()})
+				return
+			}
+			badRequest(w, err.Error())
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"id": added.ID, "path": added.Path})
+
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			badRequest(w, "id is required")
+			return
+		}
+		if err := projects.Remove(id); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeProjects(w, projects, "")
+
+	default:
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost+", "+http.MethodDelete)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// serveForeground switches which project is in front. Nothing else changes: every
+// project keeps running.
+func serveForeground(w http.ResponseWriter, r *http.Request, projects *Projects) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", types[".json"])
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	if err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	var req struct {
+		ID string `json:"id" yaml:"id"`
+	}
+	if err := yaml.Unmarshal(body, &req); err != nil {
+		badRequest(w, "bad request: "+err.Error())
+		return
+	}
+	if err := projects.SetForeground(req.ID); err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	writeProjects(w, projects, "")
+}
+
+func writeProjects(w http.ResponseWriter, projects *Projects, warning string) {
+	list, front := projects.Snapshot()
+	out := map[string]any{"projects": list, "foreground": front}
+	if warning != "" {
+		out["warning"] = warning
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
+func badRequest(w http.ResponseWriter, message string) {
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(map[string]any{"error": message})
+}
+
 // ---------- blueprints ----------
 
 // slugShape is what a blueprint file may be named. It comes from a URL and
 // becomes a path, so it is checked rather than sanitized.
 var slugShape = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
-// blueprintRoute splits /b/<slug>[/<verb>] and answers it.
-func blueprintRoute(w http.ResponseWriter, r *http.Request, reg *Registry, rest string) {
-	var slug, verb string
-	if i := strings.Index(rest, "/"); i >= 0 {
-		slug, verb = rest[:i], rest[i+1:]
-	} else {
-		slug = rest
+// blueprintRoute splits /bp/<project>/<slug>[/<verb>] (or the /bp-dev prefix) and
+// answers it. The project is in the address because a blueprint's slug is only
+// unique inside its folder, and because a page that is already open must keep
+// pointing at its own project when the foreground changes.
+func blueprintRoute(w http.ResponseWriter, r *http.Request, projects *Projects, urlPath, prefix, mode string) {
+	rest := strings.TrimPrefix(urlPath, prefix)
+	projectID, rest, ok := strings.Cut(rest, "/")
+	if !ok || !slugShape.MatchString(projectID) {
+		w.WriteHeader(http.StatusNotFound)
+		return
 	}
+	slug, verb, _ := strings.Cut(rest, "/")
 	if !slugShape.MatchString(slug) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	entry, ok := projects.Get(projectID)
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	reg := entry.prod
+	if mode == ModeDev {
+		reg = entry.dev
+	}
+	if reg == nil {
+		errorPage(w, fmt.Errorf("project %q is not running", projectID))
+		return
+	}
 
 	switch verb {
-	case "", "/":
-		servePage(w, reg, slug)
+	case "":
+		servePage(w, reg, projectID, slug)
 	case "bp.js":
 		w.Header().Set("Content-Type", types[".js"])
 		w.Write(clientJS)
@@ -265,16 +423,26 @@ func blueprintRoute(w http.ResponseWriter, r *http.Request, reg *Registry, rest 
 	}
 }
 
-// servePage reloads the blueprint and serves it. Opening the page is the moment a
-// blueprint's code takes effect — reloading is opening it again.
-func servePage(w http.ResponseWriter, reg *Registry, slug string) {
-	rt, err := reg.Load(slug)
+// servePage answers with the blueprint's page. It does not reload the file: the
+// runtime was loaded at import (prod) or on a previous open (dev), and a change to
+// the file arrives through the page's reload button, not through a page view.
+func servePage(w http.ResponseWriter, reg *Registry, projectID, slug string) {
+	rt, err := reg.Get(slug)
 	if err != nil {
 		errorPage(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", types[".html"])
-	w.Write(withClient(rt.HTML(), slug))
+	w.Write(withClient(rt.HTML(), baseOf(reg.mode, projectID, slug)))
+}
+
+// baseOf is where this blueprint's own routes live: the page script finds its
+// address from the tag it was loaded by, so the prefix has to be the real one.
+func baseOf(mode, projectID, slug string) string {
+	if mode == ModeDev {
+		return "/bp-dev/" + projectID + "/" + slug
+	}
+	return "/bp/" + projectID + "/" + slug
 }
 
 // serveEvents is the page's side of the bus: one SSE stream, open for as long as
@@ -323,7 +491,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, reg *Registry, slug str
 	}
 }
 
-// serveOp answers one request from the page: emit, watch, unwatch, or sql.
+// serveOp answers one request from the page: emit, watch, unwatch, sql, or reload.
 func serveOp(w http.ResponseWriter, r *http.Request, reg *Registry, slug string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -343,6 +511,14 @@ func serveOp(w http.ResponseWriter, r *http.Request, reg *Registry, slug string)
 	answer, err := rt.Op(body)
 	w.Header().Set("Content-Type", types[".json"])
 	if err != nil {
+		// A reload that could not parse the file is not a bad request: the file is
+		// broken, and the old runtime is still the one serving this page.
+		var bad reloadFailed
+		if errors.As(err, &bad) {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]any{"error": bad.Error()})
+			return
+		}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
 		return
@@ -357,8 +533,8 @@ func serveOp(w http.ResponseWriter, r *http.Request, reg *Registry, slug string)
 //
 // Everything backend was cut out when the page was parsed, so a blueprint's sql
 // and scripts are not in the source the page downloads.
-func withClient(html []byte, slug string) []byte {
-	tag := []byte("<script src=\"/b/" + slug + "/bp.js\"></script>\n")
+func withClient(html []byte, base string) []byte {
+	tag := []byte("<script src=\"" + base + "/bp.js\"></script>\n")
 	at := 0
 	if low := strings.ToLower(string(html)); strings.HasPrefix(low, "<!doctype") {
 		if i := strings.IndexByte(low, '>'); i >= 0 {
@@ -371,30 +547,69 @@ func withClient(html []byte, slug string) []byte {
 	return append(out, html[at:]...)
 }
 
-// blueprintIndex lists what can be opened. It is the one place the URL to a
-// blueprint is discoverable without reading the folder.
-func blueprintIndex(w http.ResponseWriter, reg *Registry) {
-	files, err := reg.Files()
+// blueprintIndex lists what can be opened, in the foreground project. The list is
+// per project on purpose: the switcher in the corner decides which one this is.
+func blueprintIndex(w http.ResponseWriter, projects *Projects, mode string) {
 	w.Header().Set("Content-Type", types[".html"])
-	if err != nil {
-		errorPage(w, err)
-		return
+
+	list, front := projects.Snapshot()
+	var entry *project
+	if front != "" {
+		entry, _ = projects.Get(front)
 	}
+
 	var b strings.Builder
 	b.WriteString("<!doctype html><title>blueprints</title>")
 	b.WriteString(`<style>
 body{font:14px/1.6 -apple-system,system-ui,sans-serif;margin:48px auto;max-width:640px;color:#222}
-h1{font-size:18px;font-weight:600;margin:0 0 20px}
+h1{font-size:18px;font-weight:600;margin:0 0 6px}
+p.sub{color:#777;margin:0 0 20px}
 a{color:#0b6bcb;text-decoration:none}a:hover{text-decoration:underline}
 li{margin:6px 0}code{color:#777;font-size:12px}
 </style>`)
-	b.WriteString("<h1>blueprints</h1>")
+	if mode == ModeDev {
+		b.WriteString("<h1>blueprints · dev</h1>")
+	} else {
+		b.WriteString("<h1>blueprints</h1>")
+	}
+
+	if entry == nil {
+		b.WriteString("<p class=sub>no project imported yet — pick a folder on the engineer page</p>")
+		w.Write([]byte(b.String()))
+		return
+	}
+	fmt.Fprintf(&b, "<p class=sub><b>%s</b> <code>%s</code>", htmlEscape(entry.ID), htmlEscape(entry.Path))
+	if len(list) > 1 {
+		fmt.Fprintf(&b, " — %d projects imported, the switcher in the corner changes which one this lists", len(list))
+	}
+	b.WriteString("</p>")
+
+	reg := entry.prod
+	if mode == ModeDev {
+		reg = entry.dev
+	}
+	if reg == nil {
+		b.WriteString("<p><code>this project could not be opened</code></p>")
+		w.Write([]byte(b.String()))
+		return
+	}
+
+	files, err := reg.Files()
+	if err != nil {
+		errorPage(w, err)
+		return
+	}
+	if mode == ModeDev {
+		b.WriteString("<p class=sub>dev runs against its own database and starts only when opened</p>")
+	}
 	if len(files) == 0 {
-		b.WriteString("<p><code>no .html files in the blueprints folder yet</code></p>")
+		b.WriteString("<p><code>no .html files in this folder yet</code></p>")
 	} else {
 		b.WriteString("<ul>")
+		prefix := baseOf(mode, entry.ID, "")
+		prefix = strings.TrimSuffix(prefix, "/") + "/"
 		for _, f := range files {
-			fmt.Fprintf(&b, "<li><a href=\"/b/%s\">%s</a> <code>%s</code></li>", f.Slug, htmlEscape(f.Title), f.Slug)
+			fmt.Fprintf(&b, "<li><a href=\"%s%s\">%s</a> <code>%s</code></li>", prefix, f.Slug, htmlEscape(f.Title), f.Slug)
 		}
 		b.WriteString("</ul>")
 	}

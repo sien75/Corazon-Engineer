@@ -48,7 +48,7 @@
 
 ## Blueprint
 
-**Blueprint** 是类, sub agent 是实例: 一份页面, 多段对话. Blueprint 属于项目, 在该项目的 `.agents/blueprints/<slug>/` 下; 同一 blueprint 的 agent 共用一份页面, 改一处刷新后都变. 用 `ls` 看有哪些; 怎么用它启动 agent 见 docs.
+**Blueprint** 是类, sub agent 是实例: 一份页面, 多段对话. Blueprint 不属于任何项目: 每个是**项目** — web UI 里导入的蓝图目录, 导入即运行, 记在 engineer home 的 `config.yaml` — 里的一个 `.html` 文件, 伺服在 `/bp/<project>/<slug>` — 以及用作者自己那份库的 `/bp-dev/<project>/<slug>`. 同一 blueprint 的 agent 共用一份页面, 改一处刷新后都变 — 而刷新来自页面上的按钮, 自己什么都不重载. 怎么打开它见 docs.
 
 从 Engineer 移除项目, 文件夹和对话都保留; 重新加回同一文件夹就恢复.
 

@@ -134,7 +134,6 @@ echo $! >"$D/ai.pid"
 nohup "$BIN/engineer" serve-blueprint --bind "$BIND" --port "$PORT_WEB" \
     --shell "$ROOT/workspace/blueprint/shell" \
     --home "$DATA" \
-    --blueprints "$ROOT/.agents/blueprints" \
     --cwd "$ROOT" \
     --storage "$BASE:$PORT_STORAGE" --ai "$BASE:$PORT_AI" >"$D/blueprint.log" 2>&1 </dev/null &
 echo $! >"$D/blueprint.pid"

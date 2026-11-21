@@ -22,7 +22,11 @@ Source of truth: `workspace/blueprint/shell/app.js`（外壳）、`workspace/blu
 ROOTDIR="$PWD"
 ROOT="$ROOTDIR/.engineer/.single-chat-test"
 HOME_DIR="$ROOT/home"
-rm -rf "$ROOT" && mkdir -p "$HOME_DIR"
+BPS="$ROOT/blueprints"
+rm -rf "$ROOT" && mkdir -p "$HOME_DIR" "$BPS"
+
+# 外壳打开时如果没有蓝图目录会拦住一切先问；这条用例只关心对话，所以先替它选好
+printf 'blueprints: %s\n' "$BPS" >"$HOME_DIR/config.yaml"
 
 : "${HOME_DIR:?this case must set HOME_DIR before reclaiming}"
 pkill -f "serve-storage --home $HOME_DIR" 2>/dev/null || true
@@ -49,7 +53,7 @@ done
 # --cwd is the folder the shell's conversation works in; the page gets it from /config.js.
 /tmp/engineer serve-blueprint --bind 127.0.0.1 --port 8942 \
   --shell "$ROOTDIR/workspace/blueprint/shell" \
-  --home "$HOME_DIR" --blueprints "$ROOT/.agents/blueprints" \
+  --home "$HOME_DIR" \
   --cwd "$ROOT" --storage http://localhost:8941 --ai http://localhost:8940 \
   >/tmp/single-chat-blueprint.log 2>&1 &
 for i in $(seq 1 30); do
@@ -107,6 +111,9 @@ const shape = await page.evaluate(() => {
     tabText: tab ? tab.textContent.trim() : "",
     tabRightOfBrand: !!(tab && brand) && tab.getBoundingClientRect().left >= brand.getBoundingClientRect().right,
     theme: document.documentElement.dataset.theme || "",
+    folderDialog: !!document.querySelector("input[name='path']"),
+    projectsButton: !!document.getElementById("projects-toggle"),
+    projectsName: document.getElementById("projects-name")?.textContent || "",
   };
 });
 check("one <engineer-chat> on the page", shape.chats === 1, { chats: shape.chats });
@@ -114,6 +121,9 @@ check("a theme toggle exists", shape.toggles >= 1, { toggles: shape.toggles });
 check("one tab, named Chat, right of the logo", shape.tabCount === 1 && shape.tabText === "Chat" && shape.tabRightOfBrand,
   { count: shape.tabCount, text: shape.tabText, rightOfBrand: shape.tabRightOfBrand });
 check("data-theme is drawn", !!shape.theme, { theme: shape.theme });
+check("no folder dialog when the folder is already chosen", !shape.folderDialog, shape);
+check("the projects switcher is there, named after the front project",
+  shape.projectsButton && shape.projectsName === "demo", shape);
 
 // 2. any path is the same page
 await page.goto(`${WEB}/whatever/deep/path`);

@@ -28,16 +28,20 @@ type Store struct {
 	hook func() // called after a write commits; the runtime turns it into change pushes
 }
 
-// openStore opens (or creates) the sqlite file for one blueprint identity and
-// runs the blueprint's own CREATE statements. A blueprint keeps its data: the
-// statements it writes must therefore be idempotent (`CREATE TABLE IF NOT
+// openStore opens (or creates) the sqlite file for one blueprint identity in one
+// mode and runs the blueprint's own CREATE statements. A blueprint keeps its data:
+// the statements it writes must therefore be idempotent (`CREATE TABLE IF NOT
 // EXISTS`), and nothing here drops or recreates a table.
-func openStore(home, id string) (*Store, error) {
+//
+// The mode is part of the file name, and that is the whole of the dev / prod
+// split: working on a blueprint never writes the rows the user is using, and they
+// are the same file read twice, so nothing else has to know which mode it is in.
+func openStore(home, id, mode string) (*Store, error) {
 	dir := filepath.Join(home, "blueprints")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, id+".sqlite")
+	path := filepath.Join(dir, id+"."+mode+".sqlite")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err

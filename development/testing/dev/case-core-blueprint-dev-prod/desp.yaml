@@ -1,0 +1,3 @@
+id: core-blueprint-dev-prod
+description: blueprints live in projects — each imported blueprints folder keeps running (prod loaded, init running) whether it is in front or not; /bp/<project>/<slug> is prod and /bp-dev/<project>/<slug> is dev with their own databases; switching the front starts and stops nothing, importing starts, removing stops and leaves the folder and the data alone, and only the reload button makes a file change take effect
+atoms: [blueprint, ai, storage]

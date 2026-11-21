@@ -1,0 +1,20 @@
+id: blueprint-projects-foreground
+description: Bring an imported project to the front — which project /bp lists and which one the launcher points at. Nothing is started or stopped — a project behind the front is still running its flows and its init scripts
+
+request:
+  body:
+    id: string  # the project to bring to the front
+
+response:
+  status: 200
+  body:
+    projects: []  # [{id, path}], unchanged
+    foreground: string  # the project now in front
+
+errors:
+  - status: 400
+    code: bad_request
+    description: id missing, or naming no imported project
+  - status: 500
+    code: internal
+    description: config.yaml could not be written

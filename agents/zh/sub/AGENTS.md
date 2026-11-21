@@ -44,20 +44,20 @@
 
 ### 你是哪一种
 
-- 这次会话的上下文里点了一个 blueprint — 一个 `.agents/blueprints/<slug>.html` 文件 — 你就有页面, 是 blueprint agent. 否则你是项目的普通聊天: 没有页面, 没有可改的东西, 如实说明.
+- 这次会话的上下文里点了一个 blueprint — 蓝图目录里 (engineer home 的 `config.yaml` 指的那个目录) 的一个 `<slug>.html` 文件 — 你就有页面, 是 blueprint agent. 否则你是项目的普通聊天: 没有页面, 没有可改的东西, 如实说明.
 
 ### 你的页面
 
-- Blueprint 是类, 你是实例: 页面就是一个文件 `.agents/blueprints/<slug>.html` — `<title>` 是名字, `<meta id>` 是身份 (也是它库的名字), 里面自带表, flow 和脚本. 该文件直接伺服在 `/b/<slug>`, 所以改一处就是改这个 blueprint 所有实例的页面, 打开它就是加载它.
+- Blueprint 是类, 你是实例: 页面就是一个文件, 蓝图目录里的 `<slug>.html` — `<title>` 是名字, `<meta id>` 是身份 (也是它库的名字), 里面自带表, flow, 脚本, 以及至多一个 init 脚本. 它伺服在 `/bp/<project>/<slug>` (prod) 和 `/bp-dev/<project>/<slug>` (dev, 自己的库), 所以改一处就是改这个 blueprint 所有实例的页面. 蓝图不属于任何项目: 它们住在项目里 — 一个项目一个蓝图目录, 由用户导入 — 导入的项目都在跑, 不管在不在前台.
 - 用户看你的页面, 在页面里输入; 你的回复就是页面画出来的东西. 页面显示不了用户要的, 如实说明, 并写进回复.
 
 ### 改它
 
-- 用户说改什么就用 `write` / `edit` 改这一个文件, 然后请用户刷新 — 不用先提方案. 动手前先读参考目录里的 `blueprint.md` (单文件的形状, flow 关键字, 脚本约定).
+- 用户说改什么就用 `write` / `edit` 改这一个文件, 然后请用户刷新 — 不用先提方案. 动手前先读参考目录里的 `blueprint.md` (单文件的形状, flow 关键字, 脚本约定, init 脚本, 用 `BP_AI` 问 ai). 文件改动的生效只有一个途径: 页面右下角的刷新按钮 — 打开页面不会重载.
 
 ### 建议新建
 
-- 同一个话题反复出现时, 或用户要的东西看比读更清楚时 (列表, 表格, 图表, 流程, diff, 对比). 优先改现有 blueprint, 不够再新建. 建议只一两句 — 画什么, 数据从哪来, 新建还是改哪个 — 用户同意前什么都不动. 新建 blueprint 就是在 `.agents/blueprints/` 里建一个带 `<title>` 和 `<meta id>` 的 `.html` 文件; 纯聊天时同理. 用户在 `/b/<slug>` 打开它 (这个目录列在 `/b`).
+- 同一个话题反复出现时, 或用户要的东西看比读更清楚时 (列表, 表格, 图表, 流程, diff, 对比). 优先改现有 blueprint, 不够再新建. 建议只一两句 — 画什么, 数据从哪来, 新建还是改哪个 — 用户同意前什么都不动. 新建 blueprint 就是在蓝图目录里建一个带 `<title>` 和 `<meta id>` 的 `.html` 文件; 纯聊天时同理. 用户在 `/bp/<project>/<slug>` 打开它 (`/bp` 列的是前台项目的蓝图).
 
 ## 图片
 
@@ -93,7 +93,7 @@ Corazon-like 项目通过 schema 文件描述 atoms, edges, contracts, 代码放
 - `how-to/` — 怎么构建, 启动, 操作; `how-to/README.md` 是概述.
 - `development/` — 设计 / 迭代记录与 E2E 测试; `development/README.md` 是概述.
 - `agents/` — Agent 说明: `main/`, `sub/` (本文件), 加 schema / contract / enum 参考.
-- `.agents/` — `skills/<slug>/SKILL.md` 与 `blueprints/<slug>/`.
+- `.agents/` — `skills/<slug>/SKILL.md`. 蓝图**不在**这里: 它们在 engineer home 的 `config.yaml` 指的那个目录里, 一台机器一个.
 - `humanwrite/` — 人工手写内容: `<迭代编号>/` (讨论, 原始笔记) 与 `notes/` (自由笔记).
 - `.engineer/` — 本地私有数据. Git 忽略, 永不提交.
 

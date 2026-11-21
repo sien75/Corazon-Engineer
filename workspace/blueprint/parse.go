@@ -12,6 +12,7 @@
 //	<script type="blueprint/sql">…</script>
 //	<script type="blueprint/flow">…</script>
 //	<script type="blueprint/sh|js|py|…" id="step-name">…</script>
+//	<script type="blueprint/init.js">…at most one, no id, long-lived…</script>
 //	<body>…the page, which the browser runs as usual…</body>
 //
 // Everything with a `blueprint/*` type is backend: the browser skips it and the
@@ -40,6 +41,10 @@ type Page struct {
 	Title string // <title>: display name only
 	SQL   []string
 	Rules []FlowRule
+	// Init is the blueprint's one long-lived script (`blueprint/init.js`), or nil.
+	// It has no id because no flow runs it: it starts with the runtime, and it is
+	// the only script whose stdout the service reads back as events.
+	Init *Script
 	// Scripts are addressed by id: `run: <id>` in a flow is a lookup here.
 	Scripts map[string]Script
 	// HTML is the document with every `blueprint/*` script block removed: what a
@@ -78,13 +83,23 @@ func Parse(src []byte, source string) (*Page, error) {
 		body.WriteString(doc[cursor:t.start])
 		cursor = t.end
 		code := unescape(doc[t.bodyStart:t.bodyEnd])
-		switch kind := strings.TrimPrefix(typ, "blueprint/"); kind {
-		case "sql":
+		kind := strings.TrimPrefix(typ, "blueprint/")
+		switch {
+		case kind == "sql":
 			if strings.TrimSpace(code) != "" {
 				page.SQL = append(page.SQL, code)
 			}
-		case "flow":
+		case kind == "flow":
 			flowBlocks = append(flowBlocks, code)
+		case kind == "init" || strings.HasPrefix(kind, "init."):
+			if page.Init != nil {
+				return nil, fmt.Errorf("%s: two init scripts — a blueprint has at most one (<script type=\"blueprint/init.js\">)", source)
+			}
+			lang := strings.TrimPrefix(strings.TrimPrefix(kind, "init"), ".")
+			if lang == "" {
+				return nil, fmt.Errorf("%s: an init script needs a language in its type, e.g. <script type=\"blueprint/init.js\">", source)
+			}
+			page.Init = &Script{ID: "init", Kind: lang, Code: code}
 		default:
 			id := t.attr["id"]
 			if id == "" {
@@ -302,4 +317,3 @@ func titleOf(doc string) string {
 	}
 	return ""
 }
-

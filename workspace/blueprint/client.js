@@ -1,13 +1,18 @@
 // The page's channel back to its blueprint: the only API a blueprint's own HTML
-// needs. It is served at /b/<slug>/bp.js, injected into every blueprint page, and
+// needs. It is served at /bp/<slug>/bp.js (/bp-dev/<slug>/bp.js for a dev page), injected into every blueprint page, and
 // finds its own address from the script tag it was loaded by.
 //
-// Four calls, because that is the whole of what a page does: it says something
-// happened (emit), it draws a table (watch), it listens (on), and it asks the
-// database for something a table cannot answer (sql).
+// Five calls, because that is the whole of what a page does: it says something
+// happened (emit), it draws a table (watch), it listens (on), it asks the database
+// for something a table cannot answer (sql), and it reloads the blueprint
+// (reload) — the only way a change to the file takes effect.
+//
+// It also puts a reload button in the page's corner: a blueprint is reloaded by
+// asking for it, and the button is where a person asks.
 (function () {
   var here = document.currentScript && document.currentScript.src;
   var BASE = here ? here.replace(/\/bp\.js.*$/, "") : "";
+  var DEV = /\/bp-dev\//.test(BASE);
 
   var handlers = Object.create(null); // event type -> [callback]
   var watchers = Object.create(null); // table -> [callback]
@@ -103,5 +108,55 @@
         return body.rows || [];
       });
     },
+
+    // Reload the blueprint from its file: the init script is killed, the file is
+    // parsed, its schema applied, and it starts over. The page then reloads itself,
+    // because the runtime it was talking to is gone.
+    reload: function () {
+      return op({ op: DEV ? "restart" : "reload" }).then(function (body) {
+        location.reload();
+        return body;
+      });
+    },
+
+    // "prod" or "dev", from the address this page was served at.
+    mode: DEV ? "dev" : "prod",
   };
+
+  // The reload button. Low-key on purpose: it lives in the corner of every
+  // blueprint page because no page would think to add it itself.
+  function button() {
+    if (!document.body) return;
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = DEV ? "restart" : "reload";
+    b.title = DEV
+      ? "restart this blueprint on the dev database"
+      : "reload this blueprint from its file";
+    b.style.cssText = [
+      "position:fixed", "right:14px", "bottom:14px", "z-index:2147483647",
+      "font:12px/1 -apple-system,system-ui,sans-serif", "padding:7px 11px",
+      "border-radius:14px", "border:1px solid rgba(0,0,0,.18)",
+      "background:rgba(255,255,255,.92)", "color:#444", "cursor:pointer",
+      "box-shadow:0 1px 4px rgba(0,0,0,.12)", "opacity:.75",
+    ].join(";");
+    b.onmouseenter = function () { b.style.opacity = "1"; };
+    b.onmouseleave = function () { b.style.opacity = ".75"; };
+    b.onclick = function () {
+      b.disabled = true;
+      b.textContent = DEV ? "restarting…" : "reloading…";
+      window.bp.reload().catch(function (err) {
+        b.disabled = false;
+        b.textContent = String(err.message || err);
+        b.style.color = "#b00";
+      });
+    };
+    document.body.appendChild(b);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", button);
+  } else {
+    button();
+  }
 })();

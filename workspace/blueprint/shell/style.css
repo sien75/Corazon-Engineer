@@ -292,15 +292,122 @@ html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
   color: var(--accent);
 }
 
-#theme-wrap {
-  /* The theme lives in the top-right corner: it is a setting, not part of the
-     name, so it is pushed away from the brand to the far end of the bar. */
+#right-controls {
+  /* Projects and theme share the top-right corner: projects first, theme last. */
   margin-left: auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#theme-wrap {
   position: relative;
   align-self: stretch;
   display: flex;
   align-items: center;
 }
+
+#projects-wrap {
+  position: relative;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+
+#projects-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 190px;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--titlebar-idle, var(--fg-muted));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#projects-toggle:hover { color: var(--fg); }
+#projects-toggle.active { color: var(--accent); }
+
+#projects-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-caret { font-size: 10px; opacity: .8; }
+
+#projects-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  min-width: 230px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  z-index: 20;
+}
+
+#projects-menu[hidden] { display: none; }
+
+#projects-menu .project-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+#projects-menu .project-row:hover { background: var(--accent-bg); color: var(--fg); }
+#projects-menu .project-row.active { color: var(--accent); }
+#projects-menu .project-row span.project-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#projects-menu .project-row .project-check {
+  margin-left: auto;
+  visibility: hidden;
+  font-size: 12px;
+}
+#projects-menu .project-row.active .project-check { visibility: visible; }
+#projects-menu .project-remove {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  border-radius: 4px;
+}
+#projects-menu .project-remove:hover { color: #c0392b; }
+#projects-menu .project-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+#projects-menu .project-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+#projects-menu .project-add:hover { background: var(--accent-bg); color: var(--fg); }
 
 #theme-menu {
   position: absolute;

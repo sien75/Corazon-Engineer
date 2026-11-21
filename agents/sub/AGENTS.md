@@ -44,20 +44,20 @@ You have no workspace tools, but you have `bash`, so every storage / ai interfac
 
 ### Which kind you are
 
-- If a blueprint is named in this session's context — a `.agents/blueprints/<slug>.html` file — you have a page: you are a blueprint agent. Otherwise you are the project's plain chat: no page, nothing to edit; say so.
+- If a blueprint is named in this session's context — a `<slug>.html` file in one of the projects, the blueprints folders the engineer home's `config.yaml` lists — you have a page: you are a blueprint agent. Otherwise you are the project's plain chat: no page, nothing to edit; say so.
 
 ### Your page
 
-- Blueprint is the class, you are the instance: the page is one file, `.agents/blueprints/<slug>.html` — its `<title>` is the name, its `<meta id>` is its identity (and the name of its database), and it carries its own tables, flows and scripts. It is served directly at `/b/<slug>`, so an edit is the page for every agent of that blueprint, and opening it is what loads it.
+- Blueprint is the class, you are the instance: the page is one file, `<slug>.html` in the blueprints folder — its `<title>` is the name, its `<meta id>` is its identity (and the name of its database), and it carries its own tables, flows, scripts and at most one init script. It is served at `/bp/<project>/<slug>` (prod) and `/bp-dev/<project>/<slug>` (dev, its own database), so an edit is the page for every agent of that blueprint. Blueprints belong to no project: they live in projects — one blueprints folder each, imported by the user — and every imported project runs whether or not it is in front.
 - The user reads your page and types into it; your reply is what it draws. If the page cannot show what they asked for, say so and put it in the reply.
 
 ### Changing it
 
-- When the user says what to change, `write` / `edit` the one file and ask for a reload — no proposal round. Read `blueprint.md` in the reference directory first (the single-file shape, the flow keywords, the script contract).
+- When the user says what to change, `write` / `edit` the one file and ask for a reload — no proposal round. Read `blueprint.md` in the reference directory first (the single-file shape, the flow keywords, the script contract, the init script, calling ai with `BP_AI`). A change to the file takes effect only when the page's reload button is used: opening the page does not reload it.
 
 ### Suggesting one
 
-- A blueprint every time the same topic comes back, or when what they want is easier to see than read (list, table, chart, flow, diff, comparison). Prefer extending an existing blueprint over a new one. Propose in one or two sentences — what it shows, where the data comes from, new or changed — and touch nothing until the user agrees. A new blueprint is one `.html` file in `.agents/blueprints/` with a `<title>` and a `<meta id>`; the same applies to the plain-chat case. The user opens it at `/b/<slug>` (the folder is listed at `/b`).
+- A blueprint every time the same topic comes back, or when what they want is easier to see than read (list, table, chart, flow, diff, comparison). Prefer extending an existing blueprint over a new one. Propose in one or two sentences — what it shows, where the data comes from, new or changed — and touch nothing until the user agrees. A new blueprint is one `.html` file in the blueprints folder with a `<title>` and a `<meta id>`; the same applies to the plain-chat case. The user opens it at `/bp/<project>/<slug>` (`/bp` lists the front project's blueprints).
 
 ## Pictures
 
@@ -93,7 +93,7 @@ A Corazon-like project describes atoms, edges and contracts through schema files
 - `how-to/` — how to build, launch and operate; `how-to/README.md` is its overview.
 - `development/` — design / iteration records and E2E tests; `development/README.md` is its overview.
 - `agents/` — Agent instructions: `main/`, `sub/` (this file), plus the schema / contract / enum reference.
-- `.agents/` — `skills/<slug>/SKILL.md` and `blueprints/<slug>/`.
+- `.agents/` — `skills/<slug>/SKILL.md`. Blueprints are **not** here: they live in the folder the engineer home's `config.yaml` names, one for the whole machine.
 - `humanwrite/` — hand-written content: `<iteration number>/` (discussion, raw notes) and `notes/` (free-form).
 - `.engineer/` — local private data. Git-ignored. Never commit it.
 

@@ -8,7 +8,7 @@ Three services: **storage** (state and a folder's files), **ai** (conversations)
 - A failure is a non-200 with `error: {code, message}`.
 - Ids: session `s_<hex>`.
 - `*-stream` interfaces are SSE for pages; do not call them.
-- A blueprint's own routes (`/b/<slug>`, `/b/<slug>/events`, `/b/<slug>/op`) are browser-facing and are not listed here: they exist so a blueprint page can talk to its runtime (`structure/contracts/blueprint-*.yaml`), and opening `/b/<slug>` in a browser is what loads one. A blueprint is a single `.html` file in `.agents/blueprints/`; the format is in `agents/blueprint.md`.
+- A blueprint's own routes (`/bp/<project>/<slug>`, `/bp-dev/<project>/<slug>`, their `/events` and `/op`) are browser-facing and are not listed here: they exist so a blueprint page can talk to its runtime (`structure/contracts/blueprint-*.yaml`). Blueprints live in **projects** — one blueprints folder each, imported in the web UI, all of them running once imported — and a blueprint is a single `.html` file inside one of them; the format is in `agents/blueprint.md`. `prod` (`/bp/<project>/<slug>`) is loaded when the project is imported, `dev` (`/bp-dev/<project>/<slug>`) when its page is first opened, each against its own database, and neither reloads except by the page's reload button.
 
 ```bash
 curl -s -X POST <storage>/log/session/list -H 'Content-Type: application/yaml' --data-binary 'pageNum: 1'
@@ -34,9 +34,13 @@ Interfaces marked *(browser)* are loaded by a page, never called by an agent.
 
 The shell and each blueprint page. The shell's conversation routes are ai's; these three belong to the page↔runtime protocol a blueprint uses:
 
-- `GET /b/{slug}` — Serve a blueprint page — [blueprint-page](blueprint-page.md)
-- `GET /b/{slug}/events` — The blueprint's bus, as one SSE stream per open page — [blueprint-events](blueprint-events.md)
-- `POST /b/{slug}/op` — One request from a blueprint page to its runtime — [blueprint-op](blueprint-op.md) *(browser)*
+- `GET /bp/{project}/{slug}` — Serve a blueprint page — [blueprint-page](blueprint-page.md)
+- `GET /bp/{project}/{slug}/events` — The blueprint's bus, as one SSE stream per open page — [blueprint-events](blueprint-events.md)
+- `POST /bp/{project}/{slug}/op` — One request from a blueprint page to its runtime — [blueprint-op](blueprint-op.md) *(browser)*
+- `GET /config/projects` — The imported blueprints folders and the one in front — [blueprint-projects](blueprint-projects.md) *(browser)*
+- `POST /config/projects` — Import a blueprints folder — [blueprint-projects-add](blueprint-projects-add.md) *(browser)*
+- `POST /config/projects/foreground` — Bring an imported project to the front — [blueprint-projects-foreground](blueprint-projects-foreground.md) *(browser)*
+- `DELETE /config/projects` — Remove an imported project — it stops running — [blueprint-projects-remove](blueprint-projects-remove.md) *(browser)*
 
 ### ai
 
