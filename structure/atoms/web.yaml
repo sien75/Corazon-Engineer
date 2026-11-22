@@ -1,6 +1,6 @@
 atoms:
   - name: web
-    description: "Corazon Engineer web service — the shell the user opens, and nothing else. It serves the shell's own files (index.html, app.js, the <engineer-chat> element, the theme) and it answers /config.js, the one module a page imports: the ai and storage addresses the browser calls, the folder a conversation's agent works in, and the projects it switches between — read from blueprint on every page load, because the page must not have to know that service exists. Everything that belongs to a blueprint or to the projects is forwarded to blueprint unchanged: /config/projects*, /bp/** and /bp-dev/** (page, events, op, bp.js), the ai image store mirrored at /blobs/**, and /chat/session, the one call that raises a conversation. That forwarding is the whole dependency rule — web knows blueprint and nothing else: it makes no call to ai or to storage itself, and the browser talks to those two directly with the addresses /config.js hands it. Splitting the old single service in two is what removes the loop a conversation needs in order to run a blueprint: web → blueprint → ai → storage, one direction. The shell itself draws no conversation: the strip along the top lists the front project's blueprints (/config/blueprints) and the body is one iframe on the chosen blueprint's page, because a blueprint is its own document with its own scripts, styles and bp channel. Pure Chat — the plain conversation — is a blueprint like any other, kept in the user's blueprints folder rather than shipped here. A fresh install with no project imported draws only the corner (projects, theme) and an empty body: nothing prompts, and the README says a blueprint is what makes the program do anything."
+    description: "Corazon Engineer web service — the shell the user opens, and nothing else. It serves the shell's own files (index.html, app.js, the <engineer-chat> element, the theme) and it answers /config.js, the one module a page imports: the ai and storage addresses the browser calls, the folder a conversation's agent works in, and the projects it switches between — read from blueprint on every page load, because the page must not have to know that service exists. Everything that belongs to a blueprint or to the projects is forwarded to blueprint unchanged: /config/projects*, /bp/** and /bp-dev/** (page, events, op, bp.js), and /blobs/<sha256>, which it answers itself by reading the image store (`uploads/` in the data home) — a picture is a file by a content address, so neither ai nor blueprint is asked. That forwarding is the whole dependency rule — web knows blueprint and nothing else: it makes no call to ai or to storage itself, and the browser talks to those two directly with the addresses /config.js hands it. Splitting the old single service in two is what removes the loop a conversation needs in order to run a blueprint: web → blueprint → ai → storage, one direction. The shell itself draws no conversation: the strip along the top lists the front project's blueprints (/config/blueprints) and the body is one iframe on the chosen blueprint's page, because a blueprint is its own document with its own scripts, styles and bp channel. Pure Chat — the plain conversation — is a blueprint like any other, kept in the user's blueprints folder rather than shipped here. A fresh install with no project imported draws only the corner (projects, theme) and an empty body: nothing prompts, and the README says a blueprint is what makes the program do anything."
     path: ./workspace/web
     runtime_type: go
     runtime_version: "1.25"
@@ -9,6 +9,13 @@ atoms:
     interfaces:
       provides:
         # Browser-facing: a page imports it, nothing else calls it.
+        - id: web-blobs
+          channel: network
+          protocol: http
+          contract: ./contracts/web-blobs.yaml
+          extend:
+            path: /blobs/{sha256}
+            method: GET
         - id: web-config
           channel: network
           protocol: http
@@ -24,12 +31,12 @@ atoms:
           extend:
             path: /config/blueprints
             method: GET
-        - id: blueprint-chat-session
+        - id: blueprint-folder
           channel: network
           protocol: http
-          contract: ./contracts/blueprint-chat-session.yaml
+          contract: ./contracts/blueprint-folder.yaml
           extend:
-            path: /chat/session
+            path: /config/blueprints/folder
             method: POST
         - id: blueprint-page
           channel: network

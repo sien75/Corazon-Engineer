@@ -1,12 +1,4 @@
 edges:
-  - id: web-to-blueprint-chat-session
-    from: web
-    from_interface: blueprint-chat-session
-    to: blueprint
-    to_interface: blueprint-chat-session
-    channel: network
-    protocol: http
-    description: the shell raises its conversation — blueprint composes the agent's system text and hands cwd + system to ai
   - id: web-to-blueprint-projects
     from: web
     from_interface: blueprint-projects
@@ -47,6 +39,14 @@ edges:
     channel: network
     protocol: http
     description: the strip lists the front project's blueprints, read fresh on every page load
+  - id: web-to-blueprint-folder
+    from: web
+    from_interface: blueprint-folder
+    to: blueprint
+    to_interface: blueprint-folder
+    channel: network
+    protocol: http
+    description: the folder a blueprint with an ai node works in is forwarded unchanged; blueprint validates and keeps it
   - id: web-to-blueprint-page
     from: web
     from_interface: blueprint-page

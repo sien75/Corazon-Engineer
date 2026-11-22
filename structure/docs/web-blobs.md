@@ -1,0 +1,31 @@
+# GET /blobs/{sha256}
+
+A picture of the image store, read by its content address. web reads `<data home>/uploads/<sha256>.<ext>` itself — the file is the whole answer, so neither ai nor blueprint is asked. Read only — a picture is stored by ai and never written here
+
+## Request
+
+```yaml
+body:
+  # GET /blobs/<sha256>: exactly 64 hex characters, no extension, no second segment
+```
+
+## Response
+
+```yaml
+status: 200
+stream: bytes  # the picture's bytes
+body:
+  # Content-Type from the file's extension (png, jpg, webp, gif); Cache-Control is
+  # public, max-age=31536000, immutable — an address is its content, so it never changes
+```
+
+## Errors
+
+```yaml
+- status: 404
+  code: not_found
+  description: not a content address, or no such picture in the store
+- status: 405
+  code: bad_request
+  description: not a GET or HEAD
+```

@@ -76,20 +76,7 @@
     };
   }
 
-  // The addresses this page may call, written by the server as window.BP_ADDR
-  // before this file. A page cannot reach ai or storage without them.
-  var ADDR = window.BP_ADDR || {};
-
   window.bp = {
-    // Where ai and storage are: bp.addr.ai, bp.addr.storage. The same two
-    // addresses a backend script gets as BP_AI; storage is here because a
-    // blueprint that keeps a conversation stores its session id in its own table
-    // and reads the history back itself.
-    addr: {
-      ai: ADDR.ai || "",
-      storage: ADDR.storage || "",
-    },
-
     // An event on the blueprint's bus: flows that listen for `type` start now.
     emit: function (type, data) {
       return op({ op: "emit", type: type, data: data });

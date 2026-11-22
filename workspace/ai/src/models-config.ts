@@ -90,12 +90,9 @@ export function readModelsConfig(home: string): ModelsConfig {
     console.error(`warning: ${file} is not a mapping; using defaults`);
     return out;
   }
-  // A file from before the roles were dropped carries `main` / `sub`; its `main`
-  // slot is the one that spoke for the tool, so it is read as the default rather
-  // than thrown away and silently replaced.
-  const legacy = raw.main && typeof raw.main === "object" ? raw.main : {};
+  // Two top-level keys, nothing else is read: any other key in the file is ignored.
   for (const slot of ["chat", "image"] as const) {
-    const value = String(raw[slot] ?? legacy[slot] ?? "").trim();
+    const value = String(raw[slot] ?? "").trim();
     // "" is a valid image slot (no image model chosen yet); chat always needs one.
     if (!value) {
       if (slot === "chat") {

@@ -19,6 +19,10 @@ response:
     # reach the browser — and the content of the others has had <\/script> and
     # <\!-- restored to the characters they stand for.
     #
+    # The channel script is `window.bp` and nothing else: emit / on / watch / sql /
+    # reload / mode. A page is told no address and no path — what it needs from ai
+    # or storage the runtime does for it, with an ai node (blueprint-ai).
+    #
     # The runtime this page talks to already exists: prod blueprints are loaded
     # (and their init script started) when the service starts, dev ones when
     # their page is first opened. Opening the page does not reload the file —

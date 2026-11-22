@@ -6,13 +6,15 @@
 // That is the whole dependency rule of the split: web → blueprint, storage → its
 // own database, ai → storage, blueprint → ai and storage. The shell page itself
 // talks to ai and storage from the browser (the addresses come from /config.js);
-// this process makes no such call.
+// this process makes no such call. The one thing it reads on its own is the image
+// store in the data home (/blobs/<sha256>): a picture is a file by a content
+// address, and nobody has to be asked for it.
 //
 // It is not a program of its own: the engineer binary is a multi-call binary, and
 // Serve is the entry point behind the `serve-web` subcommand:
 //
-//	engineer serve-web --bind <host> --port <n> --shell <dir> --blueprint <url>
-//	                   --storage <url> --ai <url> --cwd <dir>
+//	engineer serve-web --bind <host> --port <n> --home <dir> --shell <dir>
+//	                   --blueprint <url> --storage <url> --ai <url> --cwd <dir>
 //
 // Every flag is required and there is no fallback: a web server that invented an
 // address would quietly point the page at a port nobody chose.
@@ -29,6 +31,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -44,10 +47,11 @@ var types = map[string]string{
 	".svg":  "image/svg+xml",
 }
 
-const usage = "usage: engineer serve-web --bind <host> --port <n> --shell <dir> " +
+const usage = "usage: engineer serve-web --bind <host> --port <n> --home <dir> --shell <dir> " +
 	"--blueprint <url> --storage <url> --ai <url> --cwd <dir>"
 
 type config struct {
+	home      string // the data home: its uploads/ folder is the image store
 	shell     string
 	cwd       string
 	storage   string
@@ -75,6 +79,8 @@ func Serve(argv []string) {
 			bind = next()
 		case "--port":
 			port, _ = strconv.Atoi(next())
+		case "--home":
+			cfg.home = next()
 		case "--shell":
 			cfg.shell = next()
 		case "--blueprint":
@@ -88,7 +94,7 @@ func Serve(argv []string) {
 		}
 	}
 
-	if bind == "" || port == 0 || cfg.shell == "" || cfg.cwd == "" ||
+	if bind == "" || port == 0 || cfg.home == "" || cfg.shell == "" || cfg.cwd == "" ||
 		cfg.storage == "" || cfg.ai == "" || cfg.blueprint == "" {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -144,8 +150,7 @@ func handler(cfg config, target *url.URL) http.Handler {
 
 	// blueprint handles these paths: the projects (one blueprints folder each) and
 	// the blueprints of the front one, a blueprint's own page / events / op, its
-	// client script, the ai image store mirrored on this origin, and the one call
-	// that raises a conversation.
+	// client script, and the folder a blueprint with an ai node works in.
 	blueprints := func(p string) bool {
 		switch {
 		case p == "/bp", p == "/bp-dev":
@@ -154,9 +159,7 @@ func handler(cfg config, target *url.URL) http.Handler {
 			return true
 		case p == "/config/projects", p == "/config/projects/foreground", p == "/config/blueprints":
 			return true
-		case strings.HasPrefix(p, "/blobs/"):
-			return true
-		case p == "/chat/session":
+		case p == "/config/blueprints/folder":
 			return true
 		}
 		return false
@@ -173,6 +176,11 @@ func handler(cfg config, target *url.URL) http.Handler {
 
 		case urlPath == "/config.js":
 			serveRuntimeConfig(w, cfg, target)
+			return
+		}
+
+		if strings.HasPrefix(urlPath, blobsPrefix) {
+			serveBlob(w, r, cfg.home)
 			return
 		}
 
@@ -209,6 +217,48 @@ func handler(cfg config, target *url.URL) http.Handler {
 		w.Header().Set("Content-Type", types[".html"])
 		w.Write(html)
 	})
+}
+
+// blobsPrefix is the image store on this origin.
+const blobsPrefix = "/blobs/"
+
+// blobName is the only shape a blob request may have: one content address, 64 hex,
+// no extension, no second segment.
+var blobName = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+var blobTypes = map[string]string{
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+	".webp": "image/webp", ".gif": "image/gif",
+}
+
+// serveBlob reads one picture out of <home>/uploads. The file is named
+// <sha256>.<ext>, so the extension is looked up; a read only, there is no write
+// route here.
+func serveBlob(w http.ResponseWriter, r *http.Request, home string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, blobsPrefix)
+	if !blobName.MatchString(name) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	matches, _ := filepath.Glob(filepath.Join(home, "uploads", name+".*"))
+	if len(matches) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	file := matches[0]
+	ctype := blobTypes[strings.ToLower(filepath.Ext(file))]
+	if ctype == "" {
+		ctype = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ctype)
+	// A blob never changes: its address is its content.
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	http.ServeFile(w, r, file)
 }
 
 // runtimeConfig is what the shell page needs: the addresses it calls, the folder

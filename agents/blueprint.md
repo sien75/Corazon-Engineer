@@ -76,6 +76,7 @@ All of them are `<script type="blueprint/…">`: the browser skips them, and the
 - **`blueprint/sql`** — plain sqlite against this blueprint's own database. It runs on every open, so write `CREATE TABLE IF NOT EXISTS`; never drop or recreate a table that holds data.
 - **`blueprint/flow`** — YAML, a list of rules. See below.
 - **`blueprint/<kind> id="…"`** — one script, addressed by id from a flow. Kinds: `js` (bun, default export), `sh`, `bash`, `py`; anything else is taken as the command name.
+- **`blueprint/ai`** — at most one, and it has no `id`. Its text is the system prompt of an agent this runtime keeps for the page. See "The ai node" below.
 - **`blueprint/init.<kind>`** — at most one, and it has no `id`: no flow runs it. It starts when the blueprint starts and runs until the blueprint is reloaded or it dies, so it is where a blueprint **listens** — to a file, a socket, a timer, anything. Its stdout is not its output: each line is one event, `{"emit":"<type>","data":{…}}`, put on the bus as `source: init`; a line that is not one becomes a `log` event. Its stderr is `log` events like any other script's. It does not write the database — it emits, and a flow writes. It has no timeout, and nothing restarts it when it exits (a reload does).
 
 Inner content may contain `</script>` only written as `<\/script>` (and `<!--` as `<\!--`); the service restores them when it loads the file.
@@ -118,14 +119,44 @@ Attached at the top of the document, so the page's own scripts can use it immedi
 
 `bp.mode` is `"prod"` or `"dev"`, from the address the page came from.
 
-`bp.addr` holds the two addresses a page may call: `bp.addr.ai` and `bp.addr.storage`. A page has no
-other way to learn them (a backend script gets `BP_AI` instead). A blueprint that keeps a conversation
-stores the session id in its own table and calls ai with `bp.addr.ai` from the page; a blueprint that
-wants the shell's help raising one calls `POST /chat/session` on its own origin.
+A page is told no address and no path: the channel is all it has, plus `/blobs/<sha256>` for a picture.
 
-## Asking the ai service
+## The ai node
 
-There is no `ai` step: a script calls the ai service itself. Its address is in the environment as `BP_AI`, and the conversation's id lives in the blueprint's own table, so the flow decides when a conversation is kept and when it is replaced.
+A blueprint with an agent writes one node and no backend at all:
+
+```html
+<script type="blueprint/ai">You are … (the system prompt)</script>
+```
+
+Two event names, and both are a request with an answer — the answer carries your own `id`, so you can have
+several in flight:
+
+| page → runtime | answer |
+|---|---|
+| `bp.emit("ai.info", {id, select?})` | `ai.info {id, sessionId, sessions, lastSeq, active, messages, select?}` — `sessions` is every conversation this blueprint has (`{id, title, at, current}`), and with `select` that one becomes current and its records come back in `messages` |
+| `bp.emit("ai.request", {id, path, body})` | `ai.response {id, status, body}` for one call; for `path: "/ai/stream"`, one `ai.response {id, event}` per event of the run, then `ai.response {id, done: true}`. On failure: `ai.response {id, error}` |
+
+`path` is the ai service's own: `/ai/new`, `/ai/ask`, `/ai/stream`, `/ai/stop`, `/ai/resume`, `/ai/delete`. The
+runtime fills in what a page cannot know — `cwd` (the folder the user gave) and `system` (the node's text, then
+where things are) on `/ai/new`; the current conversation's `id` on every other path — and forwards the rest as
+you wrote it.
+
+Nothing is raised when a page opens: a blueprint has no conversation until it asks for one with `/ai/new`, which
+also adds it to `sessions`. Asking again makes another; the old ones and their records stay, and `ai.info
+{select}` comes back to them.
+
+A `block` for an image is the bytes that go to the model; draw a picture that came back by its
+`/blobs/<sha256>` address (in a tool result's `details.images`, in a record's `sha256`).
+
+**The working folder.** An ai node's agent works in a folder of the user's choosing, and it is a fact about the
+machine, not about the blueprint: the shell asks for it the first time such a blueprint is opened and keeps it in
+the data home (`config.yaml`, `folders`), so the same file works on anybody's computer. That is why the node has
+no folder of its own.
+
+## Asking the ai service from a script
+
+A node is the easy path; a script that wants its own protocol calls the ai service itself. Its address is in the environment as `BP_AI`, and the conversation's id lives in the blueprint's own table, so the flow decides when a conversation is kept and when it is replaced.
 
 ```yaml
 - on: ui.ask

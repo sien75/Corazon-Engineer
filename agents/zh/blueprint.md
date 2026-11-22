@@ -79,6 +79,7 @@ schema 永远不进浏览器.
 - **`blueprint/flow`** — YAML, 一组规则. 见下.
 - **`blueprint/<kind> id="…"`** — 一个脚本, flow 按 id 引用它. kind: `js` (bun, default export), `sh`,
   `bash`, `py`; 其他 kind 就当成命令名.
+- **`blueprint/ai`** — 至多一个, 没有 `id`. 它的内容就是运行时代管的那段对话的系统提示词. 见下面「ai 节点」.
 - **`blueprint/init.<kind>`** — 至多一个, 而且没有 `id`: 没有 flow 跑它. 蓝图起它就起, 一直跑到蓝图被重启或它自己
   退出, 所以蓝图**监听**什么就写在这里 — 文件、socket、定时器, 都行. 它的 stdout 不是它的输出: 每行一个事件
   `{"emit":"<type>","data":{…}}`, 以 `source: init` 放上总线; 不是事件的行走 `log` 事件. stderr 和其他脚本一样是
@@ -129,13 +130,40 @@ JSON, 非 0 退出码算失败. `sh` 打印一行也行 — 不是 JSON 的 stdo
 
 `bp.mode` 是 `"prod"` 或 `"dev"`, 取自页面被伺服的那个地址.
 
-`bp.addr` 里是页面可以调的两个地址: `bp.addr.ai` 和 `bp.addr.storage`. 页面没有别的途径知道它们
-(后端脚本拿的是 `BP_AI`). 蓝图要保持一段对话, 就把 session id 存在自己的表里, 在页面里用 `bp.addr.ai`
-调 ai; 想让外壳帮忙开一段对话, 就调自己 origin 上的 `POST /chat/session`.
+页面拿不到任何地址和路径: 它只有这个通道, 外加按 `/blobs/<sha256>` 取图.
 
-## 问 ai 服务
+## ai 节点
 
-没有 `ai` 步骤: 脚本自己调 ai 服务. 它的地址在环境变量 `BP_AI` 里, 会话 id 存在蓝图自己的表里, 所以
+要有 agent 的蓝图只写一个节点, 后端一行都不用写:
+
+```html
+<script type="blueprint/ai">你是 …(系统提示词)</script>
+```
+
+只有两个事件名, 都是一问一答 — 答复里带你自己的 `id`, 所以可以同时有好几个在飞:
+
+| 页面 → 运行时 | 答复 |
+|---|---|
+| `bp.emit("ai.info", {id, select?})` | `ai.info {id, sessionId, sessions, lastSeq, active, messages, select?}` — `sessions` 是这张蓝图的全部会话 (`{id, title, at, current}`); 带 `select` 就把那段切为当前, 记录回在 `messages` 里 |
+| `bp.emit("ai.request", {id, path, body})` | 一次调用回 `ai.response {id, status, body}`; `path` 是 `/ai/stream` 时, 运行中每个事件回一条 `ai.response {id, event}`, 最后一条 `ai.response {id, done: true}`. 失败回 `ai.response {id, error}` |
+
+`path` 就是 ai 服务自己的路径: `/ai/new`、`/ai/ask`、`/ai/stream`、`/ai/stop`、`/ai/resume`、`/ai/delete`.
+页面不知道的两样由运行时补: `/ai/new` 的 `cwd` (用户给的目录) 和 `system` (节点内容 + 它在哪); 其他路径补
+当前会话的 `id`. 其余原样转发.
+
+打开页面不会建会话: 蓝图在你用 `/ai/new` 要一段之前没有会话, 要了之后它进 `sessions`. 再要一段就是另一段,
+旧的连同记录都还在, `ai.info {select}` 切回去.
+
+图片的 `block` 进模型的是字节; 画回来的图用它的 `/blobs/<sha256>` 地址 (在工具结果的 `details.images` 里,
+在记录的 `sha256` 里).
+
+**工作目录.** ai 节点的 agent 在用户指定的目录里干活, 这是机器上的事实, 不是蓝图的一部分: 壳第一次打开这种
+蓝图时问一次, 存在数据家 (`config.yaml` 的 `folders`) 里, 所以同一个文件换台电脑也能用. 节点自己不带目录,
+原因就是这个.
+
+## 从脚本里问 ai 服务
+
+节点是省事的路; 想自己定协议的脚本就直接调 ai 服务. 它的地址在环境变量 `BP_AI` 里, 会话 id 存在蓝图自己的表里, 所以
 什么时候沿用会话、什么时候换新, 由 flow 决定.
 
 ```yaml

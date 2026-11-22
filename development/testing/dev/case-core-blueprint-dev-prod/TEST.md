@@ -79,7 +79,6 @@ done
 
 start_blueprint() {
   /tmp/engineer serve-blueprint --bind 127.0.0.1 --port 8982 \
-    --agents "$ROOTDIR/agents" \
     --engineer-home "$ROOTDIR" \
     --home "$HOME_DIR" \
     --cwd "$ROOTDIR" \

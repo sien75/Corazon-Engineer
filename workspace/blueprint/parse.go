@@ -13,6 +13,7 @@
 //	<script type="blueprint/flow">…</script>
 //	<script type="blueprint/sh|js|py|…" id="step-name">…</script>
 //	<script type="blueprint/init.js">…at most one, no id, long-lived…</script>
+//	<script type="blueprint/ai">…the agent's system prompt; at most one…</script>
 //	<body>…the page, which the browser runs as usual…</body>
 //
 // Everything with a `blueprint/*` type is backend: the browser skips it and the
@@ -47,6 +48,10 @@ type Page struct {
 	Init *Script
 	// Scripts are addressed by id: `run: <id>` in a flow is a lookup here.
 	Scripts map[string]Script
+	// AI is the blueprint's conversation, or nil: the node's text is the system
+	// prompt of an agent the runtime keeps for the page. The page talks to it with
+	// events (ai.ask, ai.stop, ai.sync) and hears it the same way; see ai.go.
+	AI *AINode
 	// HTML is the document with every `blueprint/*` script block removed: what a
 	// browser gets. The runtime's own sources never reach the page.
 	HTML []byte
@@ -91,6 +96,11 @@ func Parse(src []byte, source string) (*Page, error) {
 			}
 		case kind == "flow":
 			flowBlocks = append(flowBlocks, code)
+		case kind == "ai":
+			if page.AI != nil {
+				return nil, fmt.Errorf("%s: two ai nodes — a blueprint has at most one (<script type=\"blueprint/ai\">)", source)
+			}
+			page.AI = &AINode{Prompt: strings.TrimSpace(code)}
 		case kind == "init" || strings.HasPrefix(kind, "init."):
 			if page.Init != nil {
 				return nil, fmt.Errorf("%s: two init scripts — a blueprint has at most one (<script type=\"blueprint/init.js\">)", source)

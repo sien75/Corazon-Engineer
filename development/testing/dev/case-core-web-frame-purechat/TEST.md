@@ -9,16 +9,19 @@
 - **单例**：同一个蓝图再点一次不会再开一个 tab，回到已有的那个。`×` 关掉 tab 和它的 frame，回到前一个 tab
   （最左那个没了就回 Overview）。
 - tab 和"哪个在前"都记在浏览器里（按目录分开），刷新后回来还是那几个 tab。
-- Pure Chat 是一个普通蓝图（在用户的蓝图目录里）：它把 session id 存在自己的表 `chat_state` 里，
-  第一次打开时 `POST /chat/session` 开一段对话（web 转给 blueprint，由 blueprint 拼 spec），之后一直用同一个。
-- 页面里的 `bp.addr` 给出 `ai` / `storage` 两个地址；`bp.mode` 是 `prod`。
+- Pure Chat 是一个普通蓝图（在用户的蓝图目录里）：页面里写一个 `<script type="blueprint/ai">` 节点（内容是提示词），会话由运行时代管：
+  会话记在蓝图自己的 sqlite（`bp_ai` 表，一次会话一行），页面只有两个事件：`ai.info`（问现状/切会话）和
+  `ai.request`（按 ai 自己的路径调一次，答复是 `ai.response`）。
+- 打开页面**不建**会话：第一次发消息时页面才 `POST /ai/new`，那一段才进 `sessions`。
+- 带 ai 节点的蓝图第一次打开要先填工作目录（壳弹框，填完存进 `config.yaml` 的 `folders`），不填不打开。
+- 页面拿不到任何地址和路径：`window.bp` 里没有 `addr`；`bp.mode` 是 `prod`。
 - 主题由**外壳**交给 frame：同一 origin，外壳在 frame 载入后往它自己的 document 上写 `data-theme`，
   并插入一个 `/theme.css` 的 `link`（带 `data-engineer-theme` 标记）；切换主题时对所有已开的 frame 再写一遍。
   蓝图页因此不需要知道主题的存在。
 
 Source of truth: `workspace/web/shell/app.js`（外壳：条 + frame）、`workspace/web/shell/index.html`（结构）、
 `workspace/web/serve.go`（文件服务、`/config.js`、转发）、`workspace/blueprint/serve.go`（`/config/blueprints`、
-`bp.js` 的地址前导）、`<蓝图目录>/purechat.html`（Pure Chat 本身）。
+`/config/blueprints/folder`、`/blobs`）、`workspace/blueprint/ai.go`（ai 节点）、`<蓝图目录>/purechat.html`（Pure Chat 本身）。
 
 ## Setup
 
@@ -37,33 +40,61 @@ cat >"$BPS/purechat.html" <<'HTML'
 <!doctype html>
 <title>Pure Chat</title>
 <meta id="test.purechat">
-<script type="blueprint/sql">
-  CREATE TABLE IF NOT EXISTS chat_state (k TEXT PRIMARY KEY, v TEXT NOT NULL);
-</script>
-<style>html,body{height:100%;margin:0}body{display:flex;flex-direction:column;overflow:hidden}
-#stage{flex:1 1 0;min-height:0;display:flex}#stage>engineer-chat{flex:1 1 0;min-width:0;min-height:0}</style>
-<div id="stage"></div>
-<script type="module">
-const stage = document.getElementById("stage");
-try {
-  await import("/components/chat.js");
-  const rows = await bp.sql("SELECT v FROM chat_state WHERE k = 'session'");
-  let id = rows.length ? String(rows[0].v) : "";
-  if (!id) {
-    const res = await fetch("/chat/session", { method: "POST" });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body?.error?.message || body?.error || res.status);
-    id = String(body.sessionId || "");
-    await bp.sql("INSERT INTO chat_state(k, v) VALUES('session', ?)", [id]);
+<script type="blueprint/ai">You are a test agent.</script>
+<body>
+<textarea id="in"></textarea><pre id="log"></pre>
+<script>
+// Just enough of a page: ai.info for the state, ai.request for the calls, the run's
+// events drawn as plain text.
+const log = document.getElementById("log");
+const textOf = (m) => (m.raw?.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+let corr = 0, sid = "";
+const pending = new Map();
+
+bp.on("ai.info", (d) => {
+  if (pending.has(d.id)) { pending.get(d.id)(d); pending.delete(d.id); }
+  if (!d.sessionId) return;
+  sid = d.sessionId;
+  document.body.dataset.session = sid;
+  log.textContent = (d.messages || []).filter((m) => m.raw?.role === "assistant").map(textOf).join("\n");
+});
+
+bp.on("ai.response", (r) => {
+  const box = pending.get(r.id);
+  if (r.event) {
+    const e = r.event.assistantMessageEvent;
+    if (r.event.type === "message_update" && e?.type === "text_delta") log.textContent += e.delta;
+    return;
   }
-  const chat = document.createElement("engineer-chat");
-  chat.setAttribute("session", id);
-  chat.setAttribute("autofocus", "");
-  stage.append(chat);
-} catch (err) {
-  stage.textContent = "Pure Chat: " + (err?.message || err);
+  if (r.done) return;
+  if (box) { box(r); pending.delete(r.id); }
+});
+
+function ask(path, body) {
+  const id = `c${++corr}`;
+  return new Promise((resolve) => {
+    pending.set(id, resolve);
+    bp.emit(path === "ai.info" ? "ai.info" : "ai.request", path === "ai.info" ? { id } : { id, path, body });
+  });
 }
+
+document.getElementById("in").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter") return;
+  const text = e.target.value;
+  e.target.value = "";
+  if (!sid) {
+    const made = await ask("/ai/new", {});
+    sid = made.body?.sessionId || "";
+    document.body.dataset.session = sid;
+  }
+  await ask("/ai/ask", { id: sid, blocks: [{ type: "text", text }] });
+  await ask("/ai/stream", { id: sid, since: 0 });
+});
+
+// Nothing is raised by opening the page: the check below proves it.
+ask("ai.info");
 </script>
+</body>
 HTML
 
 printf 'projects:\n  - id: demo\n    path: %s\nforeground: demo\n' "$BPS" >"$HOME_DIR/config.yaml"
@@ -95,7 +126,6 @@ done
 
 /tmp/engineer serve-blueprint --bind 127.0.0.1 --port 8992 \
   --home "$HOME_DIR" \
-  --agents "$ROOTDIR/agents" \
   --engineer-home "$ROOT" \
   --cwd "$ROOT" --storage http://localhost:8991 --ai http://localhost:8990 \
   >/tmp/frame-blueprint.log 2>&1 &
@@ -105,6 +135,7 @@ for i in $(seq 1 30); do
 done
 
 /tmp/engineer serve-web --bind 127.0.0.1 --port 8993 \
+  --home "$HOME_DIR" \
   --shell "$ROOTDIR/workspace/web/shell" \
   --blueprint http://localhost:8992 \
   --storage http://localhost:8991 --ai http://localhost:8990 \
@@ -124,18 +155,20 @@ Expected: ai 日志里有 `--stub: model calls disabled`；三个 `engineer …:
 ```bash
 # 前台项目的蓝图，文件顺序
 curl -s http://localhost:8993/config/blueprints
-# → {"project":"demo","blueprints":[{"slug":"purechat","title":"Pure Chat","url":"/bp/demo/purechat"}]}
+# → {"project":"demo","blueprints":[{"folder":"","needsFolder":true,"slug":"purechat","title":"Pure Chat","url":"/bp/demo/purechat"}]}
+#   带 ai 节点的蓝图要工作目录；还没关联时 folder 是空串
 
-# bp.js 带着地址前导，页面靠它拿 bp.addr
-curl -s http://localhost:8993/bp/demo/purechat/bp.js | head -1
-# → window.BP_ADDR = {"ai":"http://localhost:8990","storage":"http://localhost:8991"};
+# bp.js 就是 window.bp，不带任何地址前导
+curl -s http://localhost:8993/bp/demo/purechat/bp.js | head -c 120 | grep -c BP_ADDR   # → 0
 ```
 
 ### 2. 浏览器里那条链（ego-browser）
 
 ```bash
-WEB_URL=http://localhost:8993 ego-browser nodejs <<'EOF'
+WEB_URL=http://localhost:8993 STORAGE_URL=http://localhost:8991 FOLDER="$ROOT" ego-browser nodejs <<'EOF'
 const WEB = process.env.WEB_URL || "http://localhost:8993";
+const STORAGE = process.env.STORAGE_URL || "http://localhost:8991";
+const FOLDER = process.env.FOLDER;
 const space = await taskSpace("core-web-frame-purechat");
 const page = space.page("p1");
 const checks = [];
@@ -170,14 +203,32 @@ check("nothing is framed before a blueprint is opened", first.frames.length === 
 check("no folder dialog when a folder is already imported", !shell.dialog, shell);
 check("data-theme is drawn", !!shell.theme, { theme: shell.theme });
 
-// 2. opening it from Overview adds one tab, which frames the blueprint
+// 2. a blueprint with an ai node asks for its working folder before it opens
 await page.evaluate(() => document.querySelectorAll("#overview-pane .launcher-item")[0].click());
+await page.waitForSelector("input[name='path']", undefined, { timeout: 10_000 });
+const askedFirst = await page.evaluate(() => ({
+  framed: document.querySelectorAll("iframe.blueprint-frame").length,
+  tab: !!document.querySelector("#tabs .tab[data-tab-id='purechat']"),
+}));
+check("the folder is asked for before anything is framed", askedFirst.framed === 0, askedFirst);
+await page.fill("input[name='path']", "/no/such/folder");
+await page.press("input[name='path']", "Enter");
+await page.waitForFunction(() => /not a folder|must be an absolute/.test(document.querySelector("form")?.innerText || ""), undefined, { timeout: 10_000 });
+check("a folder that does not exist is refused, and the dialog stays", true);
+await page.fill("input[name='path']", FOLDER);
+await page.press("input[name='path']", "Enter");
+// then it opens: one tab, which frames the blueprint
 await page.waitForSelector("#tabs .tab[data-tab-id='purechat']");
 await page.waitForFunction(() => {
   const f = document.querySelector("iframe.blueprint-frame");
   const d = f && f.contentDocument;
-  return !!(d && d.querySelector("engineer-chat"));
-}, undefined, { timeout: 20_000 });
+  return !!(d && d.body && d.getElementById("in"));
+}, undefined, { timeout: 30_000 });
+const fresh = await page.evaluate(() => {
+  const d = document.querySelector("iframe.blueprint-frame").contentDocument;
+  return { session: d.body.dataset.session || "" };
+});
+check("opening the page raises no conversation", fresh.session === "", fresh);
 const opened = await snapshot();
 check("the blueprint tab is closable and in front", opened.closes === 1 && opened.active === "purechat", opened);
 check("the frame is the one page, not hidden", opened.frames.length === 1 && !opened.frames[0].hidden, opened);
@@ -185,20 +236,19 @@ check("the frame is the one page, not hidden", opened.frames.length === 1 && !op
 const frame = await page.evaluate(() => {
   const f = document.querySelector("iframe.blueprint-frame");
   const d = f.contentDocument;
-  const chat = d.querySelector("engineer-chat");
   return {
     src: f.getAttribute("src"),
-    session: chat.getAttribute("session"),
+    session: d.body.dataset.session || "",
     bpMode: d.defaultView.bp?.mode || "",
-    addr: d.defaultView.bp?.addr || null,
+    addr: d.defaultView.bp?.addr ?? null,
     theme: d.documentElement.getAttribute("data-theme"),
     themeCss: !!d.querySelector("link[data-engineer-theme]"),
   };
 });
 check("the frame points at this blueprint's page", frame.src === "/bp/demo/purechat", { src: frame.src });
 check("the page was served as prod", frame.bpMode === "prod", { mode: frame.bpMode });
-check("bp.addr carries ai and storage", !!(frame.addr && frame.addr.ai && frame.addr.storage), frame.addr);
-check("the blueprint raised one session", /^s_[0-9a-f]+$/.test(frame.session), { session: frame.session });
+check("the page is told no address and no path", frame.addr === null, frame.addr);
+// 这一段还没建会话：检查在发第一条消息之后（第 4 步）
 check("the frame carries the shell's theme", frame.theme === "light" && frame.themeCss, frame);
 
 // 3. it is one tab per blueprint: opening the same one again comes back to it
@@ -212,36 +262,37 @@ check("it is in front again", again2.active === "purechat", again2);
 
 // 4. it is one conversation: a message goes to that session, and a reload reuses it
 await page.evaluate(() => {
-  const chat = document.querySelector("iframe.blueprint-frame").contentDocument.querySelector("engineer-chat");
-  chat.shadowRoot.querySelector(".ai-input-field").focus();
+  document.querySelector("iframe.blueprint-frame").contentDocument.getElementById("in").focus();
 });
 await page.keyboard.type("hello through the frame");
 await page.keyboard.press("Enter");
 await page.waitForFunction(() => {
-  const chat = document.querySelector("iframe.blueprint-frame")?.contentDocument?.querySelector("engineer-chat");
-  return (chat?.shadowRoot?.querySelector(".ai-messages")?.textContent || "").includes("dev stub");
+  const d = document.querySelector("iframe.blueprint-frame")?.contentDocument;
+  return (d?.getElementById("log")?.textContent || "").includes("dev stub");
 }, undefined, { timeout: 60_000 });
+const raised = await page.evaluate(() => document.querySelector("iframe.blueprint-frame").contentDocument
+  .body.dataset.session);
+check("the first message raised one conversation", /^s_[0-9a-f]+$/.test(raised), { session: raised });
 
 await page.reload();
 await page.waitForSelector("#tabs .tab[data-tab-id='purechat']");
 await page.waitForFunction(() => {
-  const chat = document.querySelector("iframe.blueprint-frame")?.contentDocument?.querySelector("engineer-chat");
-  return (chat?.shadowRoot?.querySelector(".ai-messages")?.textContent || "").includes("dev stub");
+  const d = document.querySelector("iframe.blueprint-frame")?.contentDocument;
+  return (d?.getElementById("log")?.textContent || "").includes("dev stub");
 }, undefined, { timeout: 30_000 });
 const again = await page.evaluate(() => document.querySelector("iframe.blueprint-frame").contentDocument
-  .querySelector("engineer-chat").getAttribute("session"));
-check("a reload reuses the one session the blueprint stored", again === frame.session,
-  { before: frame.session, after: again });
+  .body.dataset.session);
+check("a reload reuses the one session the blueprint stored", again === raised,
+  { before: raised, after: again });
 const restored = await snapshot();
 check("a reload brings the open tab back", restored.tabs.length === 2 && restored.active === "purechat", restored);
 
-const count = await page.evaluate(async () => {
-  const storage = document.querySelector("iframe.blueprint-frame").contentDocument.defaultView.bp.addr.storage;
+const count = await page.evaluate(async (storage) => {
   const res = await fetch(`${storage}/log/session/list`, {
     method: "POST", headers: { "Content-Type": "application/yaml" }, body: "pageNum: 1",
   });
   return (String(await res.text()).match(/sessionId:\s*\S+/g) || []).length;
-});
+}, STORAGE);
 check("one session on the board, not one per page load", count === 1, { count });
 
 // 5. closing the tab takes its page away; Overview is still there

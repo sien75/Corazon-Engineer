@@ -39,10 +39,22 @@ type Projects struct {
 	mu         sync.Mutex
 	home       string
 	configPath string
-	ai         string
+	env        Env
 	entries    map[string]*project
 	order      []string
 	foreground string
+	// folders is the folder the user associated with a blueprint that has an ai
+	// node, by "<project>/<slug>": the working folder of its agent. It is a fact
+	// about this machine, so it lives here and never in the blueprint file.
+	folders map[string]string
+}
+
+// Env is what the process around the projects tells every runtime: where the
+// other services are, and Engineer's own folder.
+type Env struct {
+	AI           string
+	Storage      string
+	EngineerHome string
 }
 
 // projectConfig is <home>/config.yaml. `Blueprints` is the single folder the
@@ -51,17 +63,21 @@ type Projects struct {
 type projectConfig struct {
 	Projects   []Project `yaml:"projects"`
 	Foreground string    `yaml:"foreground"`
-	Blueprints string    `yaml:"blueprints,omitempty"` // only ever read: see OpenProjects
+	// Folders is the working folder of each blueprint that has an ai node, keyed
+	// "<project>/<slug>".
+	Folders    map[string]string `yaml:"folders,omitempty"`
+	Blueprints string            `yaml:"blueprints,omitempty"` // only ever read: see OpenProjects
 }
 
 // OpenProjects reads the data home's config and starts every project in it. Prod
 // runtimes come up now, without a page — that is what "imported" means.
-func OpenProjects(home, ai string) (*Projects, error) {
+func OpenProjects(home string, env Env) (*Projects, error) {
 	p := &Projects{
 		home:       home,
 		configPath: filepath.Join(home, "config.yaml"),
-		ai:         ai,
+		env:        env,
 		entries:    map[string]*project{},
+		folders:    map[string]string{},
 	}
 
 	var cfg projectConfig
@@ -73,6 +89,10 @@ func OpenProjects(home, ai string) (*Projects, error) {
 		}
 	case !os.IsNotExist(err):
 		return nil, fmt.Errorf("config %s: %w", p.configPath, err)
+	}
+
+	for k, v := range cfg.Folders {
+		p.folders[k] = v
 	}
 
 	// The old single-folder config, read as one project.
@@ -135,7 +155,11 @@ func (p *Projects) open(id, path string) (*project, error) {
 	if err := os.MkdirAll(e.data, 0o755); err != nil {
 		return nil, err
 	}
-	opts := Options{Data: e.data, Blueprints: path, AI: p.ai}
+	opts := Options{
+		Data: e.data, Blueprints: path,
+		AI: p.env.AI, Storage: p.env.Storage, Home: p.env.EngineerHome,
+		Folder: func(slug string) string { return p.Folder(id, slug) },
+	}
 	e.prod = NewRegistry(opts, ModeProd, id)
 	e.dev = NewRegistry(opts, ModeDev, id)
 	return e, nil
@@ -254,6 +278,36 @@ func (p *Projects) Remove(id string) error {
 	return err
 }
 
+// Folder is the folder associated with a blueprint, or "" when there is none.
+func (p *Projects) Folder(projectID, slug string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.folders[projectID+"/"+slug]
+}
+
+// SetFolder associates a folder with a blueprint. It has to exist: an agent that
+// starts in a folder that is not there would fail on its first command.
+func (p *Projects) SetFolder(projectID, slug, raw string) (string, error) {
+	path := expandPath(raw)
+	if path == "" {
+		return "", fmt.Errorf("a folder path is required")
+	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("the folder must be an absolute path, got %q", raw)
+	}
+	path = filepath.Clean(path)
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s is not a folder", path)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, ok := p.entries[projectID]; !ok {
+		return "", fmt.Errorf("no project %q", projectID)
+	}
+	p.folders[projectID+"/"+slug] = path
+	return path, p.writeLocked()
+}
+
 // SetForeground brings a project to the front. Nothing is started or stopped: a
 // project behind the front is still running.
 func (p *Projects) SetForeground(id string) error {
@@ -292,7 +346,7 @@ func (p *Projects) write() error {
 
 // writeLocked writes the config: the projects in order, and the one in front.
 func (p *Projects) writeLocked() error {
-	cfg := projectConfig{Foreground: p.foreground}
+	cfg := projectConfig{Foreground: p.foreground, Folders: p.folders}
 	for _, id := range p.order {
 		if e := p.entries[id]; e != nil {
 			cfg.Projects = append(cfg.Projects, e.Project)

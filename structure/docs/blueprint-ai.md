@@ -1,0 +1,46 @@
+# GET /bp/{project}/{slug}/events
+
+A blueprint's conversations, kept by the runtime, and one passthrough to the ai service. A blueprint writes one `<script type="blueprint/ai">` node — its text is the agent's system prompt; at most one — and gets both without any backend of its own. The page has two event names, and both are a request with an answer — `ai.info` asks where things stand, and `ai.request` makes one call to the ai service by its own path. The runtime fills in the values a page cannot know — the folder the user associated with this blueprint, as the `cwd` of `/ai/new`; the node's text plus where things are, as `system`; and the current conversation, as `id` on every other path — and keeps the blueprint's list of conversations in its own sqlite (table bp_ai, one row each, `cur` on the current one). Everything else travels as the page wrote it, and the records stay storage's, by session id
+
+## Request
+
+```yaml
+body:
+  # Sent by the page with bp.emit (blueprint-op), as events on the bus:
+  #   ai.info {id?, select?}                what this blueprint has, and the state of the
+  #                                         current conversation. With `select`, that conversation
+  #                                         becomes the current one first, and its answer carries
+  #                                         `select` so the page knows to redraw
+  #   ai.request {id, path, body}           one call to the ai service: /ai/new, /ai/ask,
+  #                                         /ai/stream, /ai/stop, /ai/resume, /ai/delete
+  # `id` is the page's own correlation id; it comes back on the answer, so a page can
+  # tell which answer belongs to which question
+```
+
+## Response
+
+```yaml
+status: 200
+stream: sse  # the page's events (blueprint-events); these types are the node's
+body:
+  # ai.info     {id, sessionId, sessions, lastSeq?, active?, messages?, select?, error?}
+  sessionId: string   # the current conversation, "" when none exists yet: opening a page
+                      # raises nothing, so a blueprint's first message is what makes one
+  sessions: []        # every conversation of this blueprint, oldest first:
+                      # [{id, title, at, current}]
+  lastSeq: number     # the last event that conversation has produced
+  active: boolean     # a run is in flight, which a page takes over by calling /ai/stream from lastSeq
+  messages: []        # its records, as storage keeps them (log-session-messages)
+  select: string      # the conversation the page asked for, when it asked for one
+  # ai.response {id, status?, body?, error?}       an answer to ai.request
+  # ai.response {id, event}                        one event of a /ai/stream call
+  # ai.response {id, done: true}                   that stream ended
+```
+
+## Errors
+
+```yaml
+- status: 500
+  code: blueprint_load_failed
+  description: a second ai node in one file — a blueprint has at most one
+```

@@ -1,6 +1,6 @@
 // Package blueprint runs blueprints: it serves, parses and runs single-file
 // blueprints, it keeps the projects (the blueprints folders) the user imported,
-// and it is the one service that starts a conversation for the shell.
+// and it keeps the conversation of a page that has an ai node.
 //
 //	A blueprint is one HTML file that carries its own tables (<script type="blueprint/sql">),
 //	its own orchestration (<script type="blueprint/flow">) and its own backend
@@ -10,7 +10,7 @@
 // It is not a program of its own: the engineer binary is a multi-call binary, and
 // Serve is the entry point behind the `serve-blueprint` subcommand:
 //
-//	engineer serve-blueprint --bind <host> --port <n> --home <dir> --agents <dir>
+//	engineer serve-blueprint --bind <host> --port <n> --home <dir>
 //	                         --engineer-home <dir> --cwd <dir> --storage <url> --ai <url>
 //
 // Every flag is required and there is no fallback: an invented default silently
@@ -54,11 +54,9 @@ var types = map[string]string{
 
 type config struct {
 	home string // the data home: <engineer home>/data
-	// engineerHome is <home> in the spec — Engineer's own folder, whose data is
-	// this service's home. It is only ever quoted back to the agent, which finds
-	// models.yaml and config.yaml through it.
+	// engineerHome is Engineer's own folder, whose data is this service's home.
+	// It is only told to an ai node's agent.
 	engineerHome string
-	agents       string // the checkout's agents/ folder: the spec an agent is given
 	rt           runtimeConfig
 }
 
@@ -70,7 +68,7 @@ type runtimeConfig struct {
 }
 
 const usage = "usage: engineer serve-blueprint --bind <host> --port <n> " +
-	"--home <dir> --agents <dir> --engineer-home <dir> --cwd <dir> " +
+	"--home <dir> --engineer-home <dir> --cwd <dir> " +
 	"--storage <url> --ai <url>"
 
 // Serve runs the shell and the blueprint runtime until it is killed. argv is the
@@ -89,9 +87,6 @@ func Serve(argv []string) {
 		case argv[i] == "--port" && i+1 < len(argv):
 			i++
 			port, _ = strconv.Atoi(argv[i])
-		case argv[i] == "--agents" && i+1 < len(argv):
-			i++
-			cfg.agents = argv[i]
 		case argv[i] == "--engineer-home" && i+1 < len(argv):
 			i++
 			cfg.engineerHome = argv[i]
@@ -110,7 +105,7 @@ func Serve(argv []string) {
 		}
 	}
 
-	if bind == "" || port == 0 || cfg.home == "" || cfg.agents == "" ||
+	if bind == "" || port == 0 || cfg.home == "" ||
 		cfg.engineerHome == "" || cfg.rt.Cwd == "" || cfg.rt.Storage == "" || cfg.rt.AI == "" {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -119,14 +114,6 @@ func Serve(argv []string) {
 	if info, err := os.Stat(cfg.home); err != nil || !info.IsDir() {
 		log.Fatalf("engineer blueprint: --home is not a folder: %s", cfg.home)
 	}
-	agents, err := filepath.Abs(cfg.agents)
-	if err != nil {
-		log.Fatalf("engineer blueprint: bad --agents %q: %v", cfg.agents, err)
-	}
-	if info, err := os.Stat(filepath.Join(agents, "AGENTS.md")); err != nil || info.IsDir() {
-		log.Fatalf("engineer blueprint: --agents has no AGENTS.md: %s", agents)
-	}
-	cfg.agents = agents
 	engineerHome, err := filepath.Abs(cfg.engineerHome)
 	if err != nil {
 		log.Fatalf("engineer blueprint: bad --engineer-home %q: %v", cfg.engineerHome, err)
@@ -144,7 +131,7 @@ func Serve(argv []string) {
 	// Which folders are imported is the user's choice, made in the web UI and kept
 	// in the data home. There is no flag for it: a folder chosen by a launcher would
 	// be a folder the user never agreed to.
-	projects, err := OpenProjects(cfg.home, cfg.rt.AI)
+	projects, err := OpenProjects(cfg.home, Env{AI: cfg.rt.AI, Storage: cfg.rt.Storage, EngineerHome: cfg.engineerHome})
 	if err != nil {
 		log.Fatalf("engineer blueprint: %v", err)
 	}
@@ -201,13 +188,6 @@ func handler(cfg config, projects *Projects) http.Handler {
 			w.WriteHeader(http.StatusNotFound)
 			return
 
-		// The one call that raises a conversation: the system text an agent is
-		// given is composed here, because this service is the one that knows where
-		// the spec and Engineer's own folder are.
-		case urlPath == "/chat/session":
-			serveChatSession(w, r, cfg)
-			return
-
 		// The projects: the web UI's one setting, and the only place they change.
 		case urlPath == "/config/projects":
 			serveProjects(w, r, projects)
@@ -216,16 +196,16 @@ func handler(cfg config, projects *Projects) http.Handler {
 			serveForeground(w, r, projects)
 			return
 
-		// The ai service's image store, read through this origin: a page can use
-		// `${ai}/blobs/…`, but a markdown image written by an agent cannot.
-		case strings.HasPrefix(urlPath, blobsPrefix):
-			handleBlob(w, r, cfg.rt.AI)
-			return
-
 		// The blueprints of the front project, as JSON: the shell draws its tabs from
 		// this, and opens one at a time in a frame.
 		case urlPath == "/config/blueprints":
 			serveBlueprintList(w, r, projects)
+			return
+
+		// The folder a blueprint with an ai node works in: asked for the first time
+		// it is opened, and kept in the data home's config.yaml.
+		case urlPath == "/config/blueprints/folder":
+			serveBlueprintFolder(w, r, projects)
 			return
 
 		case urlPath == "/bp" || urlPath == "/bp/":
@@ -373,16 +353,57 @@ func serveBlueprintList(w http.ResponseWriter, r *http.Request, projects *Projec
 	if entry != nil && entry.prod != nil {
 		if files, err := entry.prod.Files(); err == nil {
 			for _, f := range files {
-				out.Blueprints = append(out.Blueprints, map[string]string{
+				item := map[string]any{
 					"slug":  f.Slug,
 					"title": f.Title,
 					"url":   baseOf(ModeProd, entry.ID, f.Slug),
-				})
+				}
+				if f.AI {
+					// An ai node's agent needs a working folder before the page opens.
+					item["needsFolder"] = true
+					item["folder"] = projects.Folder(entry.ID, f.Slug)
+				}
+				out.Blueprints = append(out.Blueprints, item)
 			}
 		}
 	}
 	_ = list
 	json.NewEncoder(w).Encode(out)
+}
+
+// serveBlueprintFolder answers POST /config/blueprints/folder {project, slug, path}:
+// it associates a folder with a blueprint and answers {folder}.
+func serveBlueprintFolder(w http.ResponseWriter, r *http.Request, projects *Projects) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", types[".json"])
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	if err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	var req struct {
+		Project string `json:"project" yaml:"project"`
+		Slug    string `json:"slug" yaml:"slug"`
+		Path    string `json:"path" yaml:"path"`
+	}
+	if err := yaml.Unmarshal(body, &req); err != nil {
+		badRequest(w, "bad request: "+err.Error())
+		return
+	}
+	if !slugShape.MatchString(req.Project) || !slugShape.MatchString(req.Slug) {
+		badRequest(w, "project and slug are required")
+		return
+	}
+	folder, err := projects.SetFolder(req.Project, req.Slug, req.Path)
+	if err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"folder": folder})
 }
 
 // ---------- blueprints ----------
@@ -425,15 +446,10 @@ func blueprintRoute(w http.ResponseWriter, r *http.Request, projects *Projects, 
 	case "":
 		servePage(w, reg, projectID, slug)
 	case "bp.js":
-		// The page's channel carries the addresses this page may call: a blueprint
-		// has no other way to learn them (a backend script gets BP_AI, a page gets
-		// bp.addr). Written as a preamble so the client script stays one embedded
-		// file that reads window.BP_ADDR.
+		// The page's channel: one script, window.bp. A page is told nothing else —
+		// no address, no path; what it needs from ai or storage the runtime does
+		// for it (see ai.go).
 		w.Header().Set("Content-Type", types[".js"])
-		addr, err := json.Marshal(map[string]string{"ai": cfg.rt.AI, "storage": cfg.rt.Storage})
-		if err == nil {
-			fmt.Fprintf(w, "window.BP_ADDR = %s;\n", addr)
-		}
 		w.Write(clientJS)
 	case "events":
 		serveEvents(w, r, reg, slug)
@@ -480,7 +496,6 @@ func serveEvents(w http.ResponseWriter, r *http.Request, reg *Registry, slug str
 		return
 	}
 	defer rt.Unsubscribe(client)
-
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -651,59 +666,9 @@ func htmlEscape(s string) string {
 	return replacer.Replace(s)
 }
 
-// ---------- blobs ----------
+// ---------- files ----------
 
-// blobsPrefix mirrors the ai service's image store on this origin.
-const blobsPrefix = "/blobs/"
-
-// blobName is the only shape a blob request may have: one content address,
-// exactly as ai-blobs defines it — 64 hex, no extension, no second segment.
-var blobName = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
-var blobsClient = &http.Client{}
-
-// handleBlob proxies one blob read to the ai service. It is a read only: storing
-// a blob stays the ai service's business, and this server has no write route.
-func handleBlob(w http.ResponseWriter, r *http.Request, aiBase string) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	if !blobName.MatchString(strings.TrimPrefix(r.URL.Path, blobsPrefix)) {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	target := strings.TrimSuffix(aiBase, "/") + r.URL.Path
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, nil)
-	if err != nil {
-		http.Error(w, "engineer blueprint: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	res, err := blobsClient.Do(req)
-	if err != nil {
-		http.Error(w, "engineer blueprint: ai unreachable: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer res.Body.Close()
-
-	// A blob is content addressed and never changes, which is why its cache
-	// header outlives this server's blanket no-store.
-	for _, h := range []string{"Content-Type", "Cache-Control"} {
-		if v := res.Header.Get(h); v != "" {
-			w.Header().Set(h, v)
-		}
-	}
-	if res.ContentLength >= 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(res.ContentLength, 10))
-	}
-	w.WriteHeader(res.StatusCode)
-	if r.Method == http.MethodHead {
-		return
-	}
-	io.Copy(w, res.Body)
-}
-
+// contentType is the type a served file is sent as, by its extension.
 func contentType(file string) string {
 	if t, ok := types[filepath.Ext(file)]; ok {
 		return t

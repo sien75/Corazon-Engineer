@@ -142,6 +142,9 @@ function restoreTabs() {
     active = localStorage.getItem(scope(ACTIVE_KEY)) || OVERVIEW;
   } catch (e) {}
   ACTIVE = active === OVERVIEW || OPEN_TABS.includes(active) ? active : OVERVIEW;
+  // A blueprint that needs a folder and has none is not opened behind the user's
+  // back: it waits on Overview until the folder is given (see ensureFolder).
+  if (ACTIVE !== OVERVIEW && folderMissing(ACTIVE)) ACTIVE = OVERVIEW;
   if (ACTIVE !== OVERVIEW) frameFor(ACTIVE);
 }
 
@@ -311,7 +314,52 @@ async function showPane() {
   saveTabs();
 }
 
+// A blueprint with an ai node (the list says `needsFolder`) has an agent, and the
+// agent works in a folder that is a fact about this machine: the user gives it the
+// first time the blueprint is opened, and blueprint keeps it. Without it the
+// blueprint does not open.
+function folderMissing(slug) {
+  const bp = BLUEPRINTS.find((b) => b.slug === slug);
+  return !!(bp && bp.needsFolder && !bp.folder);
+}
+
+// askFolder writes its heading and hint as markup; what comes from a file or from an
+// error is escaped first.
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+async function ensureFolder(slug) {
+  if (!folderMissing(slug)) return true;
+  const bp = BLUEPRINTS.find((b) => b.slug === slug);
+  const name = esc(bp.title || bp.slug);
+  let hint = `${name} has an agent, and the agent needs a folder to work in. Give an absolute path.`;
+  for (;;) {
+    const path = await askFolder({
+      heading: `Working folder for ${name}`,
+      hint,
+      cancellable: true,
+      placeholder: "~/work",
+    });
+    if (!path) return false;
+    const res = await fetch("/config/blueprints/folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project: FOREGROUND, slug, path }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok && body.folder) {
+      bp.folder = body.folder;
+      return true;
+    }
+    hint = `${esc(body.error || `HTTP ${res.status}`)} — give an absolute path to a folder that exists.`;
+  }
+}
+
 async function activate(id) {
+  if (id !== OVERVIEW && !(await ensureFolder(id))) {
+    // No folder, no blueprint: the tab it would have opened is not kept.
+    OPEN_TABS = OPEN_TABS.filter((slug) => slug !== id);
+    id = OVERVIEW;
+  }
   ACTIVE = id;
   if (id !== OVERVIEW) frameFor(id);
   await showPane();
@@ -365,7 +413,7 @@ let FOREGROUND = RUNTIME.foreground || "";
 // askFolder is the one dialog both paths use: the blocking one on a fresh install,
 // and "add folder…" from the menu. It answers the chosen path, or "" when the user
 // gives up (only possible in the non-blocking case).
-function askFolder({ heading, hint, cancellable }) {
+function askFolder({ heading, hint, cancellable, placeholder = "~/blueprints" }) {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.style.cssText =
@@ -377,7 +425,7 @@ function askFolder({ heading, hint, cancellable }) {
         font:14px/1.6 -apple-system,system-ui,sans-serif">
         <h2 style="margin:0 0 6px;font-size:16px;font-weight:600">${heading}</h2>
         <p style="margin:0 0 16px;color:#777;font-size:13px">${hint}</p>
-        <input name="path" autofocus spellcheck="false" placeholder="~/blueprints"
+        <input name="path" autofocus spellcheck="false" placeholder="${placeholder}"
           style="width:100%;box-sizing:border-box;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;
           padding:9px 11px;border-radius:8px;border:1px solid #ccc;background:#fff;color:#222">
         <div style="display:flex;align-items:center;gap:12px;margin-top:14px">

@@ -6,12 +6,15 @@
 #   <checkout>/how-to/deploy/dev/launch.sh
 # Stop with how-to/deploy/dev/stop.sh
 #
-# There is one data home and it is the same one a real install uses:
-# $ENGINEER_HOME/data, default ~/.engineer/data — a dev run reads and writes the
-# user's real conversations, because there is exactly one rule about where data
-# lives (see agents/AGENTS.md). ENGINEER_DATA overrides it, which is what the
-# tests use to keep their data apart. ENGINEER_INSTANCE names a second instance
-# from the same checkout: different ports, its own pids/logs, no interference.
+# A dev run has its own home, apart from a real install's ~/.engineer: by default
+# <checkout>/.engineer/dev-home, data in <checkout>/.engineer/dev-home/data (the
+# checkout's .engineer/ is git-ignored). It starts empty — models.yaml gets its
+# defaults, projects are imported on the page — and never touches the user's real
+# conversations. ENGINEER_HOME moves the home, ENGINEER_DATA moves just the data
+# (the tests use it to keep their data apart). ENGINEER_INSTANCE names a second
+# instance from the same checkout: different ports, its own pids/logs, no
+# interference; both instances share the dev home unless one gets its own
+# ENGINEER_DATA.
 #
 # Ports have defaults (8500 web / 8501 ai / 8502 storage); if a default is
 # already in use the launcher advances to the next free port. The chosen ports
@@ -28,9 +31,9 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
   exit 1
 }
 
-# Engineer's own folder, and the data inside it: engineer.db, config.yaml,
-# models.yaml, uploads, projects/. Not a project.
-HOME_ROOT=${ENGINEER_HOME:-$HOME/.engineer}
+# Engineer's own folder for this dev run, and the data inside it: engineer.db,
+# config.yaml, models.yaml, uploads, projects/. Not a project.
+HOME_ROOT=${ENGINEER_HOME:-$ROOT/.engineer/dev-home}
 DATA=${ENGINEER_DATA:-$HOME_ROOT/data}
 # One instance per suffix; the binary path is per instance too, so the reclaim
 # below only ever kills this instance's services.
@@ -137,12 +140,12 @@ echo $! >"$D/storage.pid"
 echo $! >"$D/ai.pid"
 nohup "$BIN/engineer" serve-blueprint --bind "$BIND" --port "$PORT_BLUEPRINT" \
     --home "$DATA" \
-    --agents "$ROOT/agents" \
     --engineer-home "$HOME_ROOT" \
     --cwd "$ROOT" \
     --storage "$BASE:$PORT_STORAGE" --ai "$BASE:$PORT_AI" >"$D/blueprint.log" 2>&1 </dev/null &
 echo $! >"$D/blueprint.pid"
 nohup "$BIN/engineer" serve-web --bind "$BIND" --port "$PORT_WEB" \
+    --home "$DATA" \
     --shell "$ROOT/workspace/web/shell" \
     --blueprint "$BASE:$PORT_BLUEPRINT" \
     --storage "$BASE:$PORT_STORAGE" --ai "$BASE:$PORT_AI" \

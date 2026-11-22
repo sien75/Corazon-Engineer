@@ -90,7 +90,6 @@ done
 
 # no --blueprints: the folder comes from the data home's config.yaml
 /tmp/engineer serve-blueprint --bind 127.0.0.1 --port 8972 \
-  --agents "$ROOTDIR/agents" \
   --engineer-home "$ROOTDIR" \
   --home "$HOME_DIR" \
   --cwd "$ROOTDIR" \

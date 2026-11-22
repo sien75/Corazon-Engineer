@@ -1,7 +1,8 @@
 # Test: 同源 /blobs 路由
 
-助手的 markdown 图是死文本，读不到 `/config.js`，所以它不能带 host:port。web 在同一个 origin 下
-把 ai 的 `/blobs/<sha256>` 透出来（web → blueprint → ai，一跳到头），页面里写 `![](/blobs/<sha256>)` 就成立。
+助手的 markdown 图是死文本，读不到 `/config.js`，所以它不能带 host:port。图片存在
+`<data home>/uploads/<sha256>.<ext>`，web 拿 `--home` 自己按内容地址读出来，页面里写
+`![](/blobs/<sha256>)` 就成立 —— 不经过 ai，也不经过 blueprint。
 
 ## Setup
 
@@ -10,9 +11,9 @@
 数据家里取一个已存的 blob：
 
 ```bash
-# 数据家在 dev BOOK 里是 ~/.engineer/data（$ENGINEER_DATA 可覆盖）；
+# dev 的数据家是 <checkout>/.engineer/dev-home/data（$ENGINEER_DATA 可覆盖）；
 # 图片落在 <data home>/uploads，文件名就是内容地址。
-HOME_DIR=${ENGINEER_DATA:-$HOME/.engineer/data}
+HOME_DIR=${ENGINEER_DATA:-<checkout>/.engineer/dev-home/data}  # <checkout> 换成仓库根
 SHA=$(ls "$HOME_DIR/uploads" 2>/dev/null | head -1 | sed 's/\..*$//')
 : "${SHA:?数据家里没有 blob，先让一次生图或粘贴图跑一遍}"
 ```
@@ -23,20 +24,20 @@ SHA=$(ls "$HOME_DIR/uploads" 2>/dev/null | head -1 | sed 's/\..*$//')
 
    ```bash
    curl -s -D /tmp/h1 -o /tmp/b1 http://localhost:8500/blobs/$SHA
-   curl -s -o /tmp/b2 http://localhost:8501/blobs/$SHA
+   curl -s -o /tmp/b2 http://localhost:8501/blobs/$SHA   # ai 还是同一个文件
    head -1 /tmp/h1          # 期待 HTTP/1.1 200 OK
    cmp /tmp/b1 /tmp/b2      # 期待无输出（字节一致）
    grep -i '^content-type' /tmp/h1   # 期待 image/*
    ```
 
-2. 形状严格跟 ai-blobs 一致：只认裸的 64 位十六进制，带扩展名或第二段都是 404
-   （ai 的 `findBlobFile` 就是这么判的，web 不能先替它「答应」）：
+2. 形状严格：只认裸的 64 位十六进制，带扩展名或第二段都是 404（`--home/uploads` 里按
+   `<sha256>.*` 找文件，别的一律不认）：
 
    ```bash
    curl -s -o /dev/null -w '%{http_code}\n' "http://localhost:8500/blobs/$SHA.png"   # 期待 404
    ```
 
-3. 缓存头按上游给，不跟 web 的 no-store：
+3. 缓存头盖过 web 的 no-store（内容地址永不变化）：
 
    ```bash
    grep -i '^cache-control' /tmp/h1   # 期待 public, max-age=31536000, immutable
@@ -49,7 +50,7 @@ SHA=$(ls "$HOME_DIR/uploads" 2>/dev/null | head -1 | sed 's/\..*$//')
    # 期待 405 + Allow: GET, HEAD
    ```
 
-5. 形状不合的路径回 404，且不透传到 ai（越权）：
+5. 形状不合的路径回 404，且不出 `uploads/`：
 
    ```bash
    for p in "" "a/b" "..%2f..%2fetc/passwd" "zzz"; do

@@ -6,7 +6,7 @@ edges:
     to_interface: ai-new
     channel: network
     protocol: http
-    description: the shell starts the conversation it draws, naming the folder the agent works in and the system text to append
+    description: a page starts the conversation it draws, naming the folder the agent works in and the system text it composed itself
   - id: blueprint-to-ai-ask
     from: blueprint
     from_interface: ai-ask
@@ -39,11 +39,3 @@ edges:
     channel: network
     protocol: http
     description: the shell aborts the run in flight; the session stays and can be asked again
-  - id: blueprint-to-ai-blobs
-    from: blueprint
-    from_interface: ai-blobs
-    to: ai
-    to_interface: ai-blobs
-    channel: network
-    protocol: http
-    description: the shell loads an image by its content address; ai serves the stored bytes

@@ -21,6 +21,11 @@ type Options struct {
 	// Blueprints is that project's folder of <slug>.html files.
 	Blueprints string
 	AI         string // ai service base url, handed to every script as BP_AI
+	Storage    string // storage service base url: where an ai node reads its records back
+	Home       string // Engineer's own folder, told to an ai node's agent
+	// Folder is the folder the user associated with a blueprint (by its slug), or
+	// "" when none is: an ai node's agent works there, and does not start without.
+	Folder func(slug string) string
 }
 
 // Modes: the same file, two runtimes, two databases. Prod is what the user uses
@@ -57,6 +62,7 @@ type Runtime struct {
 	watched map[string]bool
 	closed  bool
 	init    *initProcess
+	ai      *aiRuntime // the page's ai node, or nil
 }
 
 // Client is one open event stream: the browser's page, and nothing else. Its
@@ -81,7 +87,11 @@ func newRuntime(opts Options, page *Page, mode, slug, project string, reg *Regis
 	if err != nil {
 		return nil, err
 	}
-	if err := store.Apply(page.SQL); err != nil {
+	blocks := page.SQL
+	if page.AI != nil {
+		blocks = append(append([]string{}, blocks...), aiSchema)
+	}
+	if err := store.Apply(blocks); err != nil {
 		store.Close()
 		return nil, err
 	}
@@ -104,6 +114,10 @@ func newRuntime(opts Options, page *Page, mode, slug, project string, reg *Regis
 		watched: map[string]bool{},
 	}
 	store.afterWrite(rt.pushChanges)
+	if page.AI != nil {
+		rt.ai = newAIRuntime(rt, page.AI)
+		rt.ai.migrate()
+	}
 	return rt, nil
 }
 
@@ -154,8 +168,12 @@ func (rt *Runtime) Close() {
 	rt.clients = map[*Client]bool{}
 	init := rt.init
 	rt.init = nil
+	ai := rt.ai
 	rt.mu.Unlock()
 
+	if ai != nil {
+		ai.close()
+	}
 	for _, c := range clients {
 		close(c.ch)
 	}
@@ -178,6 +196,33 @@ func (rt *Runtime) broadcast(msg []byte) {
 		case c.ch <- msg:
 		default:
 		}
+	}
+}
+
+// sendEvent puts one event on one page's stream and nobody else's: what a page
+// gets when it attaches, which a page that was already there must not see again.
+func (rt *Runtime) sendEvent(c *Client, ev Event) {
+	if ev.Time == "" {
+		ev.Time = now()
+	}
+	msg, err := json.Marshal(map[string]any{
+		"op":     "event",
+		"type":   ev.Type,
+		"source": ev.Source,
+		"data":   ev.Data,
+		"time":   ev.Time,
+	})
+	if err != nil {
+		return
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.closed || !rt.clients[c] {
+		return
+	}
+	select {
+	case c.ch <- msg:
+	default:
 	}
 }
 
@@ -236,6 +281,11 @@ func (rt *Runtime) emit(ev Event, hops int) {
 	closed := rt.closed
 	rt.mu.Unlock()
 	if closed {
+		return
+	}
+	// The ai node's own events (ai.sync, ai.ask, ai.stop) are not for the bus: the
+	// runtime answers them itself, and an ask is not echoed back to every page.
+	if rt.ai != nil && ev.Source == "ui" && rt.ai.handle(ev) {
 		return
 	}
 	rt.pushEvent(ev)
@@ -467,6 +517,9 @@ func (r *Registry) LoadAll() error {
 type File struct {
 	Slug  string
 	Title string
+	// AI is true when the blueprint has an ai node: it needs a folder before it
+	// can be opened.
+	AI bool
 }
 
 // Files lists the folder's blueprints, by slug, in name order.
@@ -490,12 +543,16 @@ func (r *Registry) Files() ([]File, error) {
 		}
 		slug := strings.TrimSuffix(name, ".html")
 		title := slug
+		hasAI := false
 		if src, err := os.ReadFile(filepath.Join(folder, name)); err == nil {
 			if t := titleOf(string(src)); t != "" {
 				title = t
 			}
+			if page, err := Parse(src, filepath.Join(folder, name)); err == nil {
+				hasAI = page.AI != nil
+			}
 		}
-		out = append(out, File{Slug: slug, Title: title})
+		out = append(out, File{Slug: slug, Title: title, AI: hasAI})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
 	return out, nil

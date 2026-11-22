@@ -9,10 +9,12 @@ response:
   status: 200
   body:
     project: string  # the front project's id, "" when none is imported
-    blueprints: []   # [{slug, title, url}], file order; empty when the project has no .html files
+    blueprints: []   # [{slug, title, url, needsFolder?, folder?}], file order; empty when the project has no .html files
       # slug:  string — the file's name without .html, unique inside its folder
       # title: string — the page's <title>, or the slug when it has none
       # url:   string — where the page is served: /bp/<project>/<slug> (prod)
+      # needsFolder: true — only on a blueprint with an ai node: its agent works in a folder the user gives (blueprint-folder)
+      # folder: string — the folder kept for it, "" when none is yet (the shell asks before opening it)
 
 errors:
   - status: 405
