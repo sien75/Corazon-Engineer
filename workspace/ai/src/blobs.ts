@@ -1,9 +1,19 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
-// Images live as raw bytes under <root>/.engineer/uploads, named by content hash
-// so identical uploads dedupe to one file. Only the hash + mime + size travel
+// Images live as raw bytes under <root>/uploads, named by content hash so
+// identical uploads dedupe to one file. Only the hash + mime + size travel
 // through storage; base64 is materialized on demand when feeding pi.
 
 const EXT: Record<string, string> = {
@@ -22,7 +32,43 @@ const MIME: Record<string, string> = {
 };
 
 export function uploadsDir(root: string): string {
+  return path.join(root, "uploads");
+}
+
+// legacyUploadsDir is where uploads lived before the data home stopped nesting a
+// second .engineer inside itself: <root>/.engineer/uploads.
+export function legacyUploadsDir(root: string): string {
   return path.join(root, ".engineer", "uploads");
+}
+
+// migrateUploads moves images out of the old nested folder, once, at startup.
+// Uploads are content addressed, so a name can never collide with a different
+// picture: an existing file is simply the same image already moved.
+export function migrateUploads(root: string): number {
+  const old = legacyUploadsDir(root);
+  if (!existsSync(old)) return 0;
+  const dir = uploadsDir(root);
+  mkdirSync(dir, { recursive: true });
+  let moved = 0;
+  for (const name of readdirSync(old)) {
+    const from = path.join(old, name);
+    try {
+      const info = lstatSync(from);
+      if (!info.isFile()) continue;
+      const to = path.join(dir, name);
+      if (!existsSync(to)) renameSync(from, to);
+      else unlinkSync(from);
+      moved++;
+    } catch {
+      // A file that cannot be moved stays where it is; the store keeps working.
+    }
+  }
+  try {
+    rmdirSync(old);
+  } catch {
+    // Whatever is left in the old folder is not ours to force.
+  }
+  return moved;
 }
 
 function extFor(mimeType: string): string {

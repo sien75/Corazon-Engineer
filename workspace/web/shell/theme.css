@@ -21,6 +21,9 @@
   --fg: #242830;
   --fg-dim: #57606a;
   --fg-muted: #6e7781;
+  /* The composer's hint: a step lighter than muted, so it reads as instructions
+     rather than as something already typed. */
+  --placeholder: #7b838f;
   --accent: #4268b3;
   /* The brand mark is one mask painted with this: each theme gets its own
      ink, so the logo sits in the palette instead of on top of it. */
@@ -65,6 +68,7 @@ html {
   --fg: #e4e4e7;
   --fg-dim: #a1a1aa;
   --fg-muted: #8b8b93;
+  --placeholder: #7c7c85;
   /* The titlebar's idle ink, one step above --fg-muted: tabs, the projects
      button and the theme toggle sit on the darkest surface, where #8b8b93
      reads as disabled rather than quiet. Only this one place uses it, so
@@ -102,6 +106,7 @@ html {
   --fg: #353229;
   --fg-dim: #676254;
   --fg-muted: #7f7869;
+  --placeholder: #8a8272;
   --accent: #866537;
   --logo-fg: #a9743a;
   --logo-bg: #f4e7d4;
@@ -134,6 +139,7 @@ html {
   --fg: #283747;
   --fg-dim: #52687c;
   --fg-muted: #6d8194;
+  --placeholder: #77889a;
   --accent: #426c9a;
   --logo-fg: #426c9a;
   --logo-bg: #e4eef9;
@@ -166,6 +172,7 @@ html {
   --fg: #ffffff;
   --fg-dim: #e0e3e9;
   --fg-muted: #c4c9d3;
+  --placeholder: #a9b0bb;
   --accent: #b7cbed;
   --logo-fg: #c9d8f2;
   --logo-bg: #46536b;

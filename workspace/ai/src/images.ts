@@ -41,7 +41,7 @@
 // than asking each gateway which one it speaks.
 //
 // The bytes go to the same content-addressed store as a pasted image
-// (<home>/.engineer/uploads/<sha256>.<ext>), so the picture is served by the
+// (<home>/uploads/<sha256>.<ext>), so the picture is served by the
 // same /blobs/<sha256> route and storage keeps only the reference.
 //
 // A reference image turns generation into editing. The reference is a *path*, not
@@ -328,7 +328,7 @@ export function makeImageTool(deps: ImageToolDeps) {
       if (!ref) {
         return fail(
           "this conversation has no image model. Set `image` for its role in the " +
-            "engineer home's models.yaml (main.image / sub.image), or switch it with " +
+            "engineer home's models.yaml (image), or switch it with " +
             "the `model` tool (slot: image).",
         );
       }

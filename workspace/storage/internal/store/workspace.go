@@ -32,19 +32,58 @@ func (s Session) Body() map[string]interface{} {
 	}
 }
 
+// sessionColumns is every column a session row is read and written through. A
+// table created by an older build may be missing some of them (the folder and the
+// system text are recent), and CREATE TABLE IF NOT EXISTS leaves such a table as
+// it is — then every write fails and log/session/upsert answers 500.
+var sessionColumns = []struct{ name, def string }{
+	{"cwd", "TEXT NOT NULL DEFAULT ''"},
+	{"system", "TEXT NOT NULL DEFAULT ''"},
+	{"title", "TEXT NOT NULL DEFAULT ''"},
+	{"model", "TEXT NOT NULL DEFAULT ''"},
+	{"image_model", "TEXT NOT NULL DEFAULT ''"},
+}
+
 func (s *Store) createWorkspaceTables() error {
-	for _, stmt := range []string{
-		`CREATE TABLE IF NOT EXISTS sessions (
-			session_id TEXT PRIMARY KEY,
-			cwd TEXT NOT NULL DEFAULT '',
-			system TEXT NOT NULL DEFAULT '',
-			title TEXT NOT NULL DEFAULT '',
-			model TEXT NOT NULL DEFAULT '',
-			image_model TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL
-		)`,
-	} {
-		if _, err := s.db.Exec(stmt); err != nil {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions (
+		session_id TEXT PRIMARY KEY,
+		cwd TEXT NOT NULL DEFAULT '',
+		system TEXT NOT NULL DEFAULT '',
+		title TEXT NOT NULL DEFAULT '',
+		model TEXT NOT NULL DEFAULT '',
+		image_model TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL
+	)`); err != nil {
+		return err
+	}
+	// The data home outlives the code: bring an older table up to this shape
+	// instead of refusing to write to it. A column that is already there stays as
+	// it is, and rows written before it existed read as ''.
+	have := map[string]bool{}
+	rows, err := s.db.Query(`PRAGMA table_info(sessions)`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, col := range sessionColumns {
+		if have[col.name] {
+			continue
+		}
+		if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN ` + col.name + ` ` + col.def); err != nil {
 			return err
 		}
 	}

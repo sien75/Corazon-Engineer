@@ -22,20 +22,19 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <!-- The shell is two things: one conversation, and a theme switch. There is no
-       tab, no project, no launcher and no route: every path is this page, and the
-       conversation it draws is the session app.js resolves on load. -->
+  <!-- The shell is two things: which blueprints folder is in front, and which of
+       its pages are open. Overview is the first tab and always there — it lists the
+       folder's blueprints and is where one is opened; each blueprint it opens is one
+       more tab, and a blueprint's page is its own document, shown in a frame.
+       Nothing about a conversation lives here any more. -->
   <header id="topbar">
     <span id="brand">
       <span id="logo" role="img" aria-label="Corazon Engineer"></span>
       <span id="brand-name">Corazon Engineer</span>
     </span>
-    <!-- One tab, always there and always the same: the shell has a single
-         conversation, so the strip is a name for it, not a chooser. It sits where
-         the tabs used to start, right of the logo. -->
-    <nav id="tabs">
-      <span class="tab tab-static active">Chat</span>
-    </nav>
+    <!-- The strip is the pages that are open: Overview, then one tab per blueprint.
+         A fresh install has no blueprint, and then the strip is only Overview. -->
+    <nav id="tabs"></nav>
     <div id="right-controls">
     <!-- Projects: which blueprints folder is in front. A switcher, not a setting
          dialog — the folders that are imported keep running either way. -->
@@ -85,7 +84,6 @@
       bootError((e.reason && e.reason.message) || String(e.reason));
     });
   </script>
-  <script type="module" src="/components/chat.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

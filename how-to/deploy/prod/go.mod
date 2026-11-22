@@ -8,6 +8,7 @@ go 1.25.0
 require (
 	engineer/blueprint v0.0.0
 	engineer/storage v0.0.0
+	engineer/web v0.0.0
 )
 
 require gopkg.in/yaml.v3 v3.0.1
@@ -28,4 +29,5 @@ require (
 replace (
 	engineer/blueprint => ../../../workspace/blueprint
 	engineer/storage => ../../../workspace/storage
+	engineer/web => ../../../workspace/web
 )

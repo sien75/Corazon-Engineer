@@ -1,6 +1,6 @@
 # Corazon Engineer interfaces
 
-Three services: **storage** (state and a folder's files), **ai** (conversations), **blueprint** (the shell, and each blueprint page). Their addresses are not fixed — each run picks them, and they are given to you when the session starts. storage answers on two prefixes: `/log/*` for records and sessions, `/static/*` for a folder's files — one address, both kinds of call.
+Four services: **storage** (state), **ai** (conversations), **blueprint** (each blueprint's runtime), **web** (the shell). Their addresses are not fixed — each run picks them, and they are given to you when the session starts. storage answers on one prefix, `/log/*`, for records and sessions. The `/static/*` views of a folder's file tree are parked in `static_bak/` at the checkout root and are no longer served.
 
 ## Calling
 
@@ -18,7 +18,8 @@ curl -s -X POST <storage>/log/session/list -H 'Content-Type: application/yaml' -
 
 Each step is one call; read the interface's file for its fields and rules.
 
-- Start a conversation: `ai-new` with the folder the agent works in (`cwd`) and, if it should know anything, the text to append to its system prompt (`system`). A session is a plain conversation — nothing names a project, a blueprint or a role.
+- List what can be opened: `blueprint-list` (the front project's blueprints). A page is at `/bp/<project>/<slug>`, always through web's origin.
+- Start a conversation: `blueprint-chat-session` when a page needs one — blueprint composes the agent's system text and calls `ai-new` for you. Calling `ai-new` yourself is the low-level form: the folder the agent works in (`cwd`) plus, if it should know anything, the text to append to its system prompt (`system`). A session is a plain conversation — nothing names a project, a blueprint or a role.
 - List sessions, most recently active first: `log-session-list`. One session: `log-session-detail`.
 - Ask and follow: `ai-ask`, then `ai-stream`.
 - Pick up an earlier conversation: `ai-resume`, then replay `log-session-messages`.
@@ -30,13 +31,21 @@ Each step is one call; read the interface's file for its fields and rules.
 Each file has the description, request, response and errors of one interface.
 Interfaces marked *(browser)* are loaded by a page, never called by an agent.
 
+### web
+
+The shell the user opens: the page itself, plus the forwarding that keeps one origin for everything a page touches. Only `/config.js` is an interface of its own — the rest are blueprint's, passed through unchanged.
+
+- `GET /config.js` — The shell's runtime configuration: the addresses a page calls, its working folder, and the projects in the corner — [web-config](web-config.md) *(browser)*
+
 ### blueprint
 
-The shell and each blueprint page. The shell's conversation routes are ai's; these three belong to the page↔runtime protocol a blueprint uses:
+Each blueprint's runtime, plus the projects its pages live in. The shell's conversation routes are ai's, except `/chat/session`, which exists so the system text an agent is given is composed in one place:
 
 - `GET /bp/{project}/{slug}` — Serve a blueprint page — [blueprint-page](blueprint-page.md)
 - `GET /bp/{project}/{slug}/events` — The blueprint's bus, as one SSE stream per open page — [blueprint-events](blueprint-events.md)
 - `POST /bp/{project}/{slug}/op` — One request from a blueprint page to its runtime — [blueprint-op](blueprint-op.md) *(browser)*
+- `GET /config/blueprints` — The front project's blueprints, as the shell's strip lists them — [blueprint-list](blueprint-list.md)
+- `POST /chat/session` — Raise a conversation for a blueprint's page — [blueprint-chat-session](blueprint-chat-session.md)
 - `GET /config/projects` — The imported blueprints folders and the one in front — [blueprint-projects](blueprint-projects.md) *(browser)*
 - `POST /config/projects` — Import a blueprints folder — [blueprint-projects-add](blueprint-projects-add.md) *(browser)*
 - `POST /config/projects/foreground` — Bring an imported project to the front — [blueprint-projects-foreground](blueprint-projects-foreground.md) *(browser)*
@@ -62,9 +71,3 @@ Records and sessions (the `/log/*` prefix):
 - `POST /log/session/messages` — Fetch a conversation session's messages (full content), in chronological order — [log-session-messages](log-session-messages.md)
 - `POST /log/session/record/add` — Append one message record to a conversation session — [log-session-record-add](log-session-record-add.md)
 - `POST /log/session/upsert` — Store a conversation's folder, system text, name and models — [log-session-upsert](log-session-upsert.md)
-
-A folder's files — atoms, edges, contracts and the prose beside them (the `/static/*` prefix). Each call names the folder by its absolute path; storage keeps no board of projects:
-
-- `POST /static/query` — Return full schema data for rendering the architecture graph and atom/edge details — [static-query](static-query.md)
-- `POST /static/query-detail` — Fetch content of a single leaf file — [static-query-detail](static-query-detail.md)
-- `POST /static/stream` — Long-lived connection pushing schema-change events — [static-stream](static-stream.md)

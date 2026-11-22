@@ -1,0 +1,3 @@
+id: core-storage-sessions-migrate
+description: a data home whose sessions table was created by an older build is brought up to the current shape on start — log/session/upsert answers 200 instead of 500, and rows written before the folder and system columns existed still read back
+atoms: [storage]

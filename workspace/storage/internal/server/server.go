@@ -14,10 +14,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Server is the one storage service behind two route prefixes: /log/* for the
-// records and sessions in sqlite, /static/* for the files of the folder a request
-// names. Two views, one data home — the prefix says which kind of thing a call is
-// about.
+// Server answers the record and session API (/log/*): the conversations in
+// sqlite. The read-only views of a folder's file tree (/static/*) are parked —
+// see static_bak/ at the checkout root.
 
 type Server struct {
 	store *store.Store
@@ -32,11 +31,8 @@ func New(st *store.Store) *Server {
 	s.mux.HandleFunc("POST /log/session/delete", s.handleSessionDelete)
 	s.mux.HandleFunc("POST /log/session/messages", s.handleSessionMessages)
 	s.mux.HandleFunc("POST /log/session/record/add", s.handleRecordAdd)
-	// The tree's read-only views (static.go). The folder is the request's own
-	// argument: this service keeps no board of projects.
-	s.mux.HandleFunc("POST /static/query", s.handleSchemaQuery)
-	s.mux.HandleFunc("POST /static/query-detail", s.handleSchemaQueryDetail)
-	s.mux.HandleFunc("POST /static/stream", s.handleEvent)
+	// The folder's file tree (/static/*) is parked: static_bak/ holds the
+	// handlers, the contracts and their docs. Nothing registers them any more.
 	return s
 }
 

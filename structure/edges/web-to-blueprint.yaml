@@ -1,0 +1,73 @@
+edges:
+  - id: web-to-blueprint-chat-session
+    from: web
+    from_interface: blueprint-chat-session
+    to: blueprint
+    to_interface: blueprint-chat-session
+    channel: network
+    protocol: http
+    description: the shell raises its conversation — blueprint composes the agent's system text and hands cwd + system to ai
+  - id: web-to-blueprint-projects
+    from: web
+    from_interface: blueprint-projects
+    to: blueprint
+    to_interface: blueprint-projects
+    channel: network
+    protocol: http
+    description: /config.js carries the imported blueprints folders the corner switcher draws, read fresh on every page load
+  - id: web-to-blueprint-projects-add
+    from: web
+    from_interface: blueprint-projects-add
+    to: blueprint
+    to_interface: blueprint-projects-add
+    channel: network
+    protocol: http
+    description: importing a blueprints folder is forwarded unchanged; blueprint starts the project
+  - id: web-to-blueprint-projects-foreground
+    from: web
+    from_interface: blueprint-projects-foreground
+    to: blueprint
+    to_interface: blueprint-projects-foreground
+    channel: network
+    protocol: http
+    description: switching the front project is forwarded unchanged; nothing starts or stops
+  - id: web-to-blueprint-projects-remove
+    from: web
+    from_interface: blueprint-projects-remove
+    to: blueprint
+    to_interface: blueprint-projects-remove
+    channel: network
+    protocol: http
+    description: removing a project is forwarded unchanged; blueprint stops it and leaves its folder and data alone
+  - id: web-to-blueprint-list
+    from: web
+    from_interface: blueprint-list
+    to: blueprint
+    to_interface: blueprint-list
+    channel: network
+    protocol: http
+    description: the strip lists the front project's blueprints, read fresh on every page load
+  - id: web-to-blueprint-page
+    from: web
+    from_interface: blueprint-page
+    to: blueprint
+    to_interface: blueprint-page
+    channel: network
+    protocol: http
+    description: a blueprint page is served through this origin, so a page can be framed and can call its own runtime without another address
+  - id: web-to-blueprint-events
+    from: web
+    from_interface: blueprint-events
+    to: blueprint
+    to_interface: blueprint-events
+    channel: network
+    protocol: http
+    description: a page's event stream is streamed through this origin, unbuffered
+  - id: web-to-blueprint-op
+    from: web
+    from_interface: blueprint-op
+    to: blueprint
+    to_interface: blueprint-op
+    channel: network
+    protocol: http
+    description: a page's op is forwarded unchanged

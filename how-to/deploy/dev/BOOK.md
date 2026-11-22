@@ -15,18 +15,20 @@ directory. The program is not bound to a project folder any more: projects are a
 (Engineer launcher, the `+`) and remembered in the **data home**.
 
 ```bash
-how-to/deploy/dev/launch.sh    # build + start storage → ai → web
+how-to/deploy/dev/launch.sh    # build + start storage → ai → blueprint → web
 how-to/deploy/dev/stop.sh      # stop everything
 ```
 
-The data home is the program's own directory — `engineer.db` (conversations and their session rows), `models.yaml`, uploads, run files.
-`ENGINEER_DATA` overrides it; the dev default is `<checkout>/.engineer/home`, so a dev run never
-touches a real install's data (`~/.engineer/data`). `ENGINEER_INSTANCE=<name>` runs a second instance
+Engineer's own folder is `~/.engineer` (`ENGINEER_HOME` overrides it), and the data home is
+`<home>/data` — `engineer.db` (conversations and their session rows), `config.yaml`, `models.yaml`,
+`uploads/`, `projects/` and the run files. **A dev run uses the same data home as a real install**:
+there is one rule about where data lives, so nothing has to be told apart. `ENGINEER_DATA` overrides
+the data home, which is what the system tests use to keep their data separate. `ENGINEER_INSTANCE=<name>` runs a second instance
 from the same checkout with its own pids, logs and binary path (ports are picked independently), so
 two instances coexist as long as their ports differ. They share the data home unless you give the
 second one its own `ENGINEER_DATA` — sharing means one board and one set of open sessions.
 
-`launch.sh` owns port selection: defaults are 8500 blueprint / 8501 ai / 8502 storage, and a taken default advances to the next free port. It builds the Go side into `.engineer/dev${ENGINEER_INSTANCE:+-<name>}/bin/engineer` — one multi-call binary that also carries the two services, started as `engineer serve-storage` / `serve-blueprint` (the same binary the prod launcher ships; `serve-blueprint` serves the shell in `workspace/blueprint/shell/` and the blueprints in the projects the user imported in the web UI, remembered in the data home's `config.yaml`) — starts all three, and hands each one everything it needs: every service gets `--bind` + `--port`; storage gets `--home` (the data home) and answers both prefixes — `/log/*` for records and sessions, `/static/*` for a folder's files, which each request names by absolute path; ai gets `--home` / `--storage`; blueprint gets `--shell` (the shell files) / `--home` (where each project's data is filed — `<home>/projects/<project>/` — and where `config.yaml` keeps the imported folders and the one in front) / `--cwd` (the folder the shell conversation's agent works in) / `--storage` / `--ai`. **No service is told where the blueprints are**: the projects are the user's choice, made on the first page the shell draws (a blocking dialog, since a folder a launcher picked is not a choice) and kept in `<data home>/config.yaml` — blueprints belong to no project. More folders are imported later from the corner switcher; switching the front starts and stops nothing, and removing a project stops it and leaves its folder and databases alone. It then prints the port table, the data home and the bind host. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file**.
+`launch.sh` owns port selection: defaults are 8500 web / 8501 ai / 8502 storage / 8503 blueprint, and a taken default advances to the next free port. It builds the Go side into `.engineer/dev${ENGINEER_INSTANCE:+-<name>}/bin/engineer` — one multi-call binary that also carries the three services, started as `engineer serve-storage` / `serve-blueprint` / `serve-web` (the same binary the prod launcher ships; `serve-web` serves the shell in `workspace/web/shell/`, and `serve-blueprint` runs the blueprints in the projects the user imported in the web UI, remembered in the data home's `config.yaml`) — starts all four, and hands each one everything it needs: every service gets `--bind` + `--port`; storage gets `--home` (the data home) and answers `/log/*` — records and sessions; ai gets `--home` / `--storage`; blueprint gets `--home` (where each project's data is filed — `<home>/projects/<project>/` — and where `config.yaml` keeps the imported folders and the one in front) / `--agents` (the checkout's `agents/`, whose `AGENTS.md` it appends the positions to when it raises a conversation) / `--engineer-home` (Engineer's own folder, quoted back to the agent) / `--cwd` (the folder the shell conversation's agent works in) / `--storage` / `--ai`; web gets `--shell` (the shell files) / `--blueprint` (the blueprint service's address, the only service it knows) / `--storage` / `--ai` / `--cwd`. **No service is told where the blueprints are**: the projects are the user's choice, made on the first page the shell draws (a blocking dialog, since a folder a launcher picked is not a choice) and kept in `<data home>/config.yaml` — blueprints belong to no project. More folders are imported later from the corner switcher; switching the front starts and stops nothing, and removing a project stops it and leaves its folder and databases alone. It then prints the port table, the data home and the bind host. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file**.
 
 The data home is the **only** database the stack reads, and that is the whole rule: there is no
 migration step left to run. A `<checkout>/.engineer/engineer.db` from before the home existed is not
@@ -53,14 +55,15 @@ A hand-run: `cd workspace/ai && bun run src/main.ts --bind 127.0.0.1 --port 7501
 
 ## Verify
 
-`launch.sh` prints the addresses. The board starts empty, so add the checkout on the page first (the
-`+` in the Engineer launcher) and then query it through its project id:
+`launch.sh` prints the addresses. The stack starts with nothing imported, so import a blueprints
+folder first and then read it back:
 
 ```bash
-curl -s -X POST http://localhost:<storage port>/log/project/list -d '{}'
-# take a projectId from the answer
-curl -s -X POST http://localhost:<storage port>/static/query -d 'projectId: <projectId>'
+curl -s http://localhost:<web port>/config.js          # addresses + projects the page gets
+curl -s -X POST http://localhost:<web port>/config/projects \
+  -H 'Content-Type: application/json' -d '{"path":"/absolute/blueprints/folder"}'
+curl -s -X POST http://localhost:<blueprint port>/chat/session   # one conversation, spec included
 ```
 
-A project listing and a schema response (atoms / edges / how-to / development entries) mean the stack
-is up. For system-level tests see `development/testing/dev/` (each `case-*/TEST.md`).
+An address block with the imported projects, and a `sessionId` whose session row carries the whole
+`system` text (spec + positions), mean the stack is up. For system-level tests see `development/testing/dev/` (each `case-*/TEST.md`).

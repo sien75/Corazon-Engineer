@@ -1,6 +1,7 @@
 import { Registry } from "./registry.ts";
 import { serve } from "./server.ts";
 import { modelsConfigPath } from "./models-config.ts";
+import { migrateUploads } from "./blobs.ts";
 
 // Local service-to-service calls (ai → storage) must never be proxied. A system
 // proxy exported as http_proxy / https_proxy (e.g. Clash) also captures
@@ -70,6 +71,13 @@ const forceStub = flags.stub === "1";
 const home = flags.home;
 const addr = `${flags.bind}:${flags.port}`;
 const storageBase = flags.storage;
+
+// One-way, at startup: images used to live in <home>/.engineer/uploads, a folder
+// nested inside the data home itself. They now sit in <home>/uploads.
+const movedUploads = migrateUploads(home);
+if (movedUploads > 0) {
+  console.log(`engineer ai: moved ${movedUploads} image(s) to ${home}/uploads`);
+}
 
 const registry = new Registry({ home, storageBase, forceStub });
 await registry.init();

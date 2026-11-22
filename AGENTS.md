@@ -2,7 +2,7 @@
 
 **Corazon Engineer** is an engineering agent above the coding agent. Developing this project with Corazon Engineer is dogfooding.
 
-> The spec shipped with the tool is two files — `agents/main/AGENTS.md` (the shell's main conversation) and `agents/sub/AGENTS.md` (a blueprint agent) — with Chinese mirrors in `agents/zh/`.
+> The spec shipped with the tool is one file, `agents/AGENTS.md` (the Pure Chat conversation the shell hosts), with a Chinese mirror in `agents/zh/`.
 
 ## Development workflow (SOP)
 
@@ -48,7 +48,7 @@ Initialization is this same type applied to a project that has no how-to yet: cr
 
 - `development/` — what the development process produces: `iterations/` (the AI-generated plan per requirement, one markdown file named `[YYMM]-[2-digit sequence]-[short title].md`, created in Phase 1 and kept updated), `testing/` (E2E tests).
 - `how-to/` — how to build and operate the system: `deploy/` (build / pack / launch / deploy, per environment), `operation/` (connect to / observe resources).
-- `agents/` — the shipped AI capability spec (`agents/main/AGENTS.md` and `agents/sub/AGENTS.md`, Chinese in `agents/zh/`) plus the reference files (schema / contract / enum, how-to writing guide, and so on). Instruction content: Type 3.
+- `agents/` — the shipped AI capability spec (`agents/AGENTS.md`, Chinese in `agents/zh/`) plus its one reference file, `blueprint.md`; the schema / contract / enum / how-to / tools guides and the dropped `models.md` are parked in `agents_bak/`. Instruction content: Type 3.
 - `.agents/` — project resources the Agent keeps as files: `blueprints/<slug>/` (Blueprint pages) and `skills/<slug>/SKILL.md` (kept skills).
 - `structure/` — the description of the system: `atoms/` `edges/` `contracts/` `docs/`.
 - `humanwrite/` — what people wrote by hand: `<iteration number>/` (human discussion and raw notes, one dir per iteration, e.g. `2611/`) and `notes/` (free-form notes). Not edited unless the user explicitly asks.

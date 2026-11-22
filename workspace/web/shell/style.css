@@ -110,14 +110,6 @@ body {
   color: var(--fg);
 }
 
-/* The one tab is a label, not a control: it is the name of the conversation
-   being shown, and there is nothing else to switch to. */
-#tabs .tab.tab-static {
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
 #tabs .tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
@@ -463,11 +455,11 @@ html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
   text-align: center;
 }
 
-/* ---------- the stage: one view per tab ---------- */
+/* ---------- the stage: the open blueprint ---------- */
 
-/* A tab's content area is one view — main's chat, or an agent's page. A tab is
-   one open session, so there is no tree to lay out: every open tab's view lives
-   in #panes and only the active tab's is shown. */
+/* One blueprint at a time, and it is a frame: a blueprint's page is its own
+   document (its own scripts, styles and bp channel), so the shell keeps it out of
+   its own DOM and lets the browser isolate it. */
 #panes {
   flex: 1;
   min-width: 0;
@@ -488,14 +480,53 @@ html[data-theme="slate"] #theme-toggle .icon-moon { display: block; }
   overflow: hidden;
 }
 
-/* The shell draws one conversation and nothing else, so the element it mounts is
-   the whole stage: it has to take the pane's width and height (a flex item would
-   otherwise shrink to its content, leaving the centred column stuck at the left).
-   The column inside then centres itself on that width. */
-#panes > engineer-chat {
+/* The frame is the whole stage: a flex item would otherwise shrink to its
+   content, leaving the blueprint floating at the left. */
+#panes > .blueprint-frame {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  border: 0;
+  background: var(--surface);
+  display: block;
+}
+
+/* A frame that is hidden is a tab that is open but not in front: it keeps its page
+   — and so its conversation and its scroll — while it waits. */
+#panes > .blueprint-frame[hidden] {
+  display: none;
+}
+
+/* ---------- overview ----------
+   The one page the shell draws itself: the front folder's blueprints, one row per
+   blueprint, which is where a blueprint is opened from. It scrolls on its own; the
+   rows keep the launcher's geometry (a 760px column, `.launcher-item` rows). */
+.overview {
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+.overview-body {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 760px;
+  margin-inline: auto;
+  padding: 40px 24px 48px;
+}
+
+/* `.launcher-head` centres itself inside a wider column; here the box is already
+   that column, so its padding is what puts the title on the rows' text edge. */
+.overview-body .launcher-head {
+  margin: 0 0 14px;
+  padding: 0 0 12px 8px;
+}
+
+.overview-body .launcher-sec h3 {
+  padding: 6px 8px 4px;
+}
+
+.overview-body .launcher-empty {
+  padding: 6px 16px 8px;
 }
 
 /* The author rule above beats the UA's `[hidden]`, so the hide has to be spelled

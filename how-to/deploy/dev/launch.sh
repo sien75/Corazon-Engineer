@@ -6,11 +6,12 @@
 #   <checkout>/how-to/deploy/dev/launch.sh
 # Stop with how-to/deploy/dev/stop.sh
 #
-# The program is not tied to a project folder any more: projects are added on the
-# web page and remembered in the data home ($ENGINEER_DATA, default
-# <checkout>/.engineer/home — dev keeps its own data so it never touches a real
-# install's). ENGINEER_INSTANCE names a second instance from the same checkout:
-# different ports, its own pids/logs, no interference.
+# There is one data home and it is the same one a real install uses:
+# $ENGINEER_HOME/data, default ~/.engineer/data — a dev run reads and writes the
+# user's real conversations, because there is exactly one rule about where data
+# lives (see agents/AGENTS.md). ENGINEER_DATA overrides it, which is what the
+# tests use to keep their data apart. ENGINEER_INSTANCE names a second instance
+# from the same checkout: different ports, its own pids/logs, no interference.
 #
 # Ports have defaults (8500 web / 8501 ai / 8502 storage); if a default is
 # already in use the launcher advances to the next free port. The chosen ports
@@ -27,8 +28,10 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
   exit 1
 }
 
-# The data home: engineer.db, the project board, uploads. Not a project.
-DATA=${ENGINEER_DATA:-$ROOT/.engineer/home}
+# Engineer's own folder, and the data inside it: engineer.db, config.yaml,
+# models.yaml, uploads, projects/. Not a project.
+HOME_ROOT=${ENGINEER_HOME:-$HOME/.engineer}
+DATA=${ENGINEER_DATA:-$HOME_ROOT/data}
 # One instance per suffix; the binary path is per instance too, so the reclaim
 # below only ever kills this instance's services.
 D="$ROOT/.engineer/dev${ENGINEER_INSTANCE:+-$ENGINEER_INSTANCE}"
@@ -40,7 +43,7 @@ mkdir -p "$BIN"
 # (recorded pids, then strays started from our own bin dir) — matching just
 # "root $ROOT" would also kill a prod instance of the same project, which uses
 # its own ports (750x) and has every right to keep running.
-for s in blueprint ai storage; do
+for s in web blueprint ai storage; do
   if [ -f "$D/$s.pid" ]; then
     kill "$(cat "$D/$s.pid")" 2>/dev/null || true
     rm -f "$D/$s.pid"
@@ -77,6 +80,7 @@ pick_port() {
 PORT_WEB=$(pick_port 8500)
 PORT_AI=$(pick_port 8501 "$PORT_WEB")
 PORT_STORAGE=$(pick_port 8502 "$PORT_WEB" "$PORT_AI")
+PORT_BLUEPRINT=$(pick_port 8503 "$PORT_WEB" "$PORT_AI" "$PORT_STORAGE")
 
 # bind host: loopback unless ENGINEER_BIND opens the stack up
 BIND=${ENGINEER_BIND:-127.0.0.1}
@@ -92,7 +96,7 @@ BASE=http://$URLHOST
 # subcommand (see how-to/deploy/prod/launch.go), so the local stack has a single
 # executable path instead of one file per service.
 ( cd "$ROOT/how-to/deploy/prod" && go build -o "$BIN/engineer" . )
-rm -f "$BIN/engineer-storage" "$BIN/engineer-blueprint"
+rm -f "$BIN/engineer-storage" "$BIN/engineer-blueprint" "$BIN/engineer-web"
 
 # --- proxy ----------------------------------------------------------------
 # Two calls leave this stack: its own, which are loopback (storage ↔ ai ↔ web),
@@ -131,16 +135,25 @@ echo $! >"$D/storage.pid"
     --bind "$BIND" --port "$PORT_AI" \
     --storage "$BASE:$PORT_STORAGE" >"$D/ai.log" 2>&1 </dev/null ) &
 echo $! >"$D/ai.pid"
-nohup "$BIN/engineer" serve-blueprint --bind "$BIND" --port "$PORT_WEB" \
-    --shell "$ROOT/workspace/blueprint/shell" \
+nohup "$BIN/engineer" serve-blueprint --bind "$BIND" --port "$PORT_BLUEPRINT" \
     --home "$DATA" \
+    --agents "$ROOT/agents" \
+    --engineer-home "$HOME_ROOT" \
     --cwd "$ROOT" \
     --storage "$BASE:$PORT_STORAGE" --ai "$BASE:$PORT_AI" >"$D/blueprint.log" 2>&1 </dev/null &
 echo $! >"$D/blueprint.pid"
+nohup "$BIN/engineer" serve-web --bind "$BIND" --port "$PORT_WEB" \
+    --shell "$ROOT/workspace/web/shell" \
+    --blueprint "$BASE:$PORT_BLUEPRINT" \
+    --storage "$BASE:$PORT_STORAGE" --ai "$BASE:$PORT_AI" \
+    --cwd "$ROOT" >"$D/web.log" 2>&1 </dev/null &
+echo $! >"$D/web.pid"
 
 echo "engineer dev up — checkout: $ROOT"
+printf '  home    %s\n' "$HOME_ROOT"
 printf '  data    %s\n' "$DATA"
 printf '  web     %s\n' "$BASE:$PORT_WEB"
+printf '  blueprint %s\n' "$BASE:$PORT_BLUEPRINT"
 printf '  ai      %s\n' "$BASE:$PORT_AI"
 printf '  storage %s\n' "$BASE:$PORT_STORAGE"
 printf '  bind    %s\n' "$BIND"

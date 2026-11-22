@@ -1,7 +1,7 @@
 # Test: 同源 /blobs 路由
 
 助手的 markdown 图是死文本，读不到 `/config.js`，所以它不能带 host:port。web 在同一个 origin 下
-把 ai 的 `/blobs/<sha256>` 透出来，页面里写 `![](/blobs/<sha256>)` 就成立。
+把 ai 的 `/blobs/<sha256>` 透出来（web → blueprint → ai，一跳到头），页面里写 `![](/blobs/<sha256>)` 就成立。
 
 ## Setup
 
@@ -10,10 +10,10 @@
 数据家里取一个已存的 blob：
 
 ```bash
-# 数据家在 dev BOOK 里是 <checkout>/.engineer/home（$ENGINEER_DATA 可覆盖）；
-# 图片落在 <data home>/.engineer/uploads，文件名就是内容地址。
-HOME_DIR=${ENGINEER_DATA:-$PWD/.engineer/home}
-SHA=$(ls "$HOME_DIR/.engineer/uploads" 2>/dev/null | head -1 | sed 's/\..*$//')
+# 数据家在 dev BOOK 里是 ~/.engineer/data（$ENGINEER_DATA 可覆盖）；
+# 图片落在 <data home>/uploads，文件名就是内容地址。
+HOME_DIR=${ENGINEER_DATA:-$HOME/.engineer/data}
+SHA=$(ls "$HOME_DIR/uploads" 2>/dev/null | head -1 | sed 's/\..*$//')
 : "${SHA:?数据家里没有 blob，先让一次生图或粘贴图跑一遍}"
 ```
 

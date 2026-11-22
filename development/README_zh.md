@@ -13,6 +13,6 @@
 
 1. **流程** —— 开发流程 SOP 在项目根 `AGENTS.md` 里。按它执行,不跳阶段。
 2. **设计记录** —— AI 生成的方案写入 `iterations/`,一个方案一个 md 文件,命名为 `[YYMM]-[2位序号]-[简短标题].md`;人工的讨论与原始笔记不在本树里,放在 `../humanwrite/<迭代编号>/`。不要散落在聊天记录里。
-3. **部署** —— 按 `../how-to/deploy/dev/BOOK.md` 构建 / 拉起本地服务(log :8503 → static :8502 → ai :8501 → web :8500)。
+3. **部署** —— 按 `../how-to/deploy/dev/BOOK.md` 构建 / 拉起本地服务(storage :8502 → ai :8501 → blueprint :8503 → web :8500)。
 4. **验证** —— 系统级用例在 `testing/dev/`(`case-core-*/TEST.md`);先读 `testing/README.md` —— 用例各自独占一段端口,并在启动前回收它。
-5. **结构理解** —— 改代码前先理解 schema:见 `agents/zh/schema.md` / `agents/zh/enum.md`,或服务起好后用 `/static/query` 在线查。
+5. **结构理解** —— 改代码前先理解 schema:见 `agents_bak/zh/schema.md` / `agents_bak/zh/enum.md`,（`/static/query` 已停用,见 `static_bak/`。）

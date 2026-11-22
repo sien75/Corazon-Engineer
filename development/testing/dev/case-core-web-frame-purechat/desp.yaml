@@ -1,0 +1,3 @@
+id: core-web-frame-purechat
+description: the strip is Overview plus one closable tab per blueprint — Overview always there and listing the front project's blueprints, a blueprint opening once (singleton) into its own frame, and Pure Chat (a blueprint) keeping its one session in its own table while bp.addr hands the page ai and storage
+atoms: [web, blueprint, ai, storage]

@@ -123,7 +123,8 @@ for i in $(seq 1 60); do
 done
 
 /tmp/engineer serve-blueprint --bind 127.0.0.1 --port 8952 \
-  --shell "$ROOTDIR/workspace/blueprint/shell" \
+  --agents "$ROOTDIR/agents" \
+  --engineer-home "$ROOTDIR" \
   --home "$HOME_DIR" \
   --cwd "$PROJECT" \
   --storage http://localhost:8951 --ai http://localhost:8950 \

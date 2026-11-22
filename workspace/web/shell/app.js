@@ -4,25 +4,29 @@ import yaml from "./vendor/js-yaml.js";
 // no fallback: guessing a port would point the page at whatever happens to be
 // listening there.
 import { ENGINEER as RUNTIME } from "/config.js";
-if (!RUNTIME?.ai || !RUNTIME?.storage || !RUNTIME?.cwd) {
-  const message = "engineer web: /config.js did not provide ai / storage / cwd";
+if (!RUNTIME) {
+  const message = "engineer web: /config.js did not provide the runtime configuration";
   document.body.innerHTML = `<div class="empty-hint">${message}</div>`;
   throw new Error(message);
 }
-// storage is one service behind two prefixes: /log/* for records and sessions,
-// /static/* for a folder's files.
-const STORAGE_BASE = RUNTIME.storage;
-const AI_BASE = RUNTIME.ai; // the conversation
-// The folder this conversation's agent works in. The shell names it; the agent
-// learns nothing else about the world from ai.
-const CWD = RUNTIME.cwd;
 
+// The shell is two jobs: pick a blueprints folder (the corner), and keep the pages
+// that are open (the strip). Overview comes first and lists the front folder's
+// blueprints; every blueprint it opens is one more tab. The page draws no
+// conversation of its own — a blueprint's page is its own document, framed below.
+// Everything a blueprint needs to talk to its runtime it gets from the page itself
+// (bp.addr).
 const panesEl = document.getElementById("panes");
+const tabsEl = document.getElementById("tabs");
 const themeToggleEl = document.getElementById("theme-toggle");
 const themeMenuEl = document.getElementById("theme-menu");
 
 const THEME_ORDER = ["light", "warm", "cold", "dark", "slate"];
 const THEME_KEY = "engineer.theme";
+// Which tabs are open, and which one is in front, survive a reload. They are kept
+// per folder, because a slug only means something inside its own folder.
+const TABS_KEY = "engineer.tabs";
+const ACTIVE_KEY = "engineer.active-tab";
 
 // ---------- theme ----------
 
@@ -48,6 +52,9 @@ function applyTheme(name) {
   try {
     localStorage.setItem(THEME_KEY, name);
   } catch (e) {}
+  // A blueprint's page is its own document: the attribute does not reach it on its
+  // own, so every open frame is dressed again.
+  dressFrames();
   themeToggleEl.title = `theme: ${name}`;
   syncThemeMenu();
 }
@@ -87,52 +94,257 @@ window.addEventListener("keydown", (event) => {
   themeMenuHide();
 });
 
-// ---------- the one conversation ----------
+// ---------- the tabs ----------
 //
-// Which conversation the page draws comes from storage: the most recently active
-// session, or — when there is none — a new one, created here with the folder the
-// shell was told to work in. A session row exists before the first word is said,
-// so a reload finds the same conversation instead of starting a second one.
+// The strip is the pages that are open. Overview comes first and never closes: it
+// is the front folder's blueprint list, and it is where a blueprint is opened
+// from. A blueprint has at most one tab — opening one that is open already comes
+// back to it — and a blueprint tab closes, which takes its page away.
 
-async function storagePost(path, body) {
-  const res = await fetch(`${STORAGE_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/yaml" },
-    body: yaml.dump(body),
-  });
-  return { ok: res.ok, status: res.status, data: yaml.load(await res.text()) || {} };
+const OVERVIEW = "overview";
+
+let BLUEPRINTS = []; // the front folder's blueprints, as blueprint lists them
+let OPEN_TABS = []; // the blueprints with a tab, in the order they were opened
+let ACTIVE = OVERVIEW; // "overview", or the slug of the blueprint in front
+
+// One frame per open blueprint. A frame rather than injected markup: a blueprint is
+// its own document with its own scripts, styles and `bp` channel, and a frame keeps
+// all of that out of the shell. A frame of a tab that is not in front is hidden, not
+// thrown away, so a tab keeps its conversation and its scroll while it waits.
+const FRAMES = new Map();
+
+function scope(kind) {
+  return FOREGROUND ? `${kind}.${FOREGROUND}` : kind;
 }
 
-// newestSession is the conversation to draw: the first entry of the list, which
-// storage orders by last activity.
-async function newestSession() {
-  const { ok, data } = await storagePost("/log/session/list", { pageNum: 1 });
-  if (!ok) throw new Error(`log/session/list → HTTP ${data?.error?.message || "failed"}`);
-  const first = Array.isArray(data.sessions) ? data.sessions[0] : undefined;
-  return first ? String(first.sessionId ?? "") : "";
+function storedTabs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(scope(TABS_KEY)) || "[]");
+    return Array.isArray(raw) ? raw.filter((s) => typeof s === "string" && s) : [];
+  } catch (e) {
+    return [];
+  }
 }
 
-async function createSession() {
-  const res = await fetch(`${AI_BASE}/ai/new`, {
-    method: "POST",
-    headers: { "Content-Type": "application/yaml" },
-    body: yaml.dump({ cwd: CWD }),
-  });
-  const data = yaml.load(await res.text()) || {};
-  if (!res.ok) throw new Error(data?.error?.message || `ai/new → HTTP ${res.status}`);
-  const id = String(data.sessionId ?? "");
-  if (!id) throw new Error("ai/new returned no sessionId");
-  return id;
+function saveTabs() {
+  try {
+    localStorage.setItem(scope(TABS_KEY), JSON.stringify(OPEN_TABS));
+    localStorage.setItem(scope(ACTIVE_KEY), ACTIVE);
+  } catch (e) {}
 }
 
-// mount draws the conversation for one session. The element resumes it itself
-// (ai) and replays its messages (storage), so the shell only says which one.
-function mount(sessionId) {
-  panesEl.textContent = "";
-  const chat = document.createElement("engineer-chat");
-  chat.setAttribute("session", sessionId);
-  chat.setAttribute("autofocus", "");
-  panesEl.append(chat);
+// restoreTabs reads this folder's open tabs back. A slug only means something in
+// its own folder, so a blueprint the folder no longer has takes its tab with it.
+function restoreTabs() {
+  OPEN_TABS = storedTabs().filter((slug) => BLUEPRINTS.some((b) => b.slug === slug));
+  let active = OVERVIEW;
+  try {
+    active = localStorage.getItem(scope(ACTIVE_KEY)) || OVERVIEW;
+  } catch (e) {}
+  ACTIVE = active === OVERVIEW || OPEN_TABS.includes(active) ? active : OVERVIEW;
+  if (ACTIVE !== OVERVIEW) frameFor(ACTIVE);
+}
+
+function dropFrames() {
+  for (const frame of FRAMES.values()) frame.remove();
+  FRAMES.clear();
+}
+
+function overviewPane() {
+  let pane = document.getElementById("overview-pane");
+  if (!pane) {
+    pane = document.createElement("div");
+    pane.id = "overview-pane";
+    pane.className = "view overview";
+    panesEl.append(pane);
+  }
+  return pane;
+}
+
+function frameFor(slug) {
+  let frame = FRAMES.get(slug);
+  if (!frame) {
+    frame = document.createElement("iframe");
+    frame.className = "blueprint-frame";
+    frame.setAttribute("title", slug);
+    // Same origin as this page: /bp/… is forwarded to blueprint by serve-web, so the
+    // frame's own scripts, its event stream and its images all keep working.
+    frame.src = `/bp/${encodeURIComponent(FOREGROUND)}/${encodeURIComponent(slug)}`;
+    // The palette is the shell's, and a frame is a document of its own: hand it over
+    // when it has loaded, and again on every theme change (see dressFrames).
+    frame.addEventListener("load", () => dressFrame(frame));
+    panesEl.append(frame);
+    FRAMES.set(slug, frame);
+  }
+  return frame;
+}
+
+// dressFrame hands the current theme to a blueprint's page: same origin, so the
+// shell may write into the frame's document. Two things go in — the attribute the
+// palette is selected by, and the stylesheet that defines the variables — because
+// a blueprint should not have to know that a theme exists. A page that already
+// links theme.css keeps its own copy: the second link is the same file.
+function dressFrame(frame) {
+  let doc;
+  try {
+    doc = frame.contentDocument;
+  } catch (e) {
+    return; // another origin: nothing the shell may touch
+  }
+  if (!doc || !doc.documentElement) return;
+  doc.documentElement.setAttribute("data-theme", currentTheme());
+  if (doc.querySelector("link[data-engineer-theme]")) return;
+  const link = doc.createElement("link");
+  link.rel = "stylesheet";
+  link.href = "/theme.css";
+  // First in the head, so a page's own styles (and a blueprint's own palette, if it
+  // has one) still come after it and win.
+  link.setAttribute("data-engineer-theme", "");
+  const head = doc.head || doc.documentElement;
+  head.insertBefore(link, head.firstChild);
+}
+
+function dressFrames() {
+  for (const frame of FRAMES.values()) dressFrame(frame);
+}
+
+// drawOverview is the list a blueprint is opened from: the front folder's path, and
+// one row per blueprint.
+function drawOverview() {
+  const pane = overviewPane();
+  pane.textContent = "";
+  const body = document.createElement("div");
+  body.className = "overview-body";
+
+  const project = PROJECTS.find((p) => p.id === FOREGROUND);
+  const head = document.createElement("div");
+  head.className = "launcher-head";
+  const title = document.createElement("span");
+  title.className = "launcher-title";
+  title.textContent = "Overview";
+  const path = document.createElement("span");
+  path.className = "launcher-path";
+  path.textContent = project ? project.path : "";
+  head.append(title, path);
+  body.append(head);
+
+  const sec = document.createElement("div");
+  sec.className = "launcher-sec";
+  const heading = document.createElement("h3");
+  heading.textContent = "blueprints";
+  sec.append(heading);
+
+  if (!BLUEPRINTS.length) {
+    const empty = document.createElement("div");
+    empty.className = "launcher-empty";
+    empty.textContent = "this folder has no blueprints yet";
+    sec.append(empty);
+  }
+  for (const bp of BLUEPRINTS) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "launcher-item";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = bp.title || bp.slug;
+    const desc = document.createElement("span");
+    desc.className = "desc";
+    desc.textContent = bp.slug;
+    item.append(name, desc);
+    item.title = `open ${bp.slug}`;
+    item.addEventListener("click", () => openBlueprint(bp.slug));
+    sec.append(item);
+  }
+  body.append(sec);
+  pane.append(body);
+}
+
+function tabButton(id, label, closable) {
+  const tab = document.createElement("button");
+  tab.type = "button";
+  tab.className = "tab" + (closable ? " closable" : "") + (id === ACTIVE ? " active" : "");
+  tab.dataset.tabId = id;
+  tab.title = label;
+  const text = document.createElement("span");
+  text.className = "tab-label";
+  text.textContent = label;
+  tab.append(text);
+  tab.addEventListener("click", () => activate(id));
+  if (closable) {
+    const close = document.createElement("span");
+    close.className = "tab-close";
+    close.setAttribute("role", "button");
+    close.setAttribute("aria-label", `close ${label}`);
+    close.title = `close ${label}`;
+    close.textContent = "×";
+    close.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeTab(id);
+    });
+    tab.append(close);
+  }
+  return tab;
+}
+
+function drawTabs() {
+  tabsEl.textContent = "";
+  tabsEl.append(tabButton(OVERVIEW, "Overview", false));
+  for (const slug of OPEN_TABS) {
+    const bp = BLUEPRINTS.find((b) => b.slug === slug);
+    tabsEl.append(tabButton(slug, bp ? bp.title || bp.slug : slug, true));
+  }
+}
+
+async function showPane() {
+  // Overview reads the folder again whenever it comes to the front: a blueprint is
+  // a file the user (or an agent) may add at any time. It is also the list the tabs
+  // are named from, so a stale one would keep a tab the folder no longer has.
+  if (ACTIVE === OVERVIEW) {
+    await loadBlueprints().catch(() => {});
+    OPEN_TABS = OPEN_TABS.filter((slug) => BLUEPRINTS.some((b) => b.slug === slug));
+  }
+  const overview = overviewPane();
+  overview.hidden = ACTIVE !== OVERVIEW;
+  if (ACTIVE === OVERVIEW) drawOverview();
+  for (const [slug, frame] of FRAMES) frame.hidden = slug !== ACTIVE;
+  drawTabs();
+  saveTabs();
+}
+
+async function activate(id) {
+  ACTIVE = id;
+  if (id !== OVERVIEW) frameFor(id);
+  await showPane();
+}
+
+function openBlueprint(slug) {
+  // One tab per blueprint: opening one that is already open comes back to it.
+  if (!OPEN_TABS.includes(slug)) OPEN_TABS.push(slug);
+  activate(slug);
+}
+
+function closeTab(slug) {
+  const index = OPEN_TABS.indexOf(slug);
+  if (index < 0) return;
+  OPEN_TABS.splice(index, 1);
+  const frame = FRAMES.get(slug);
+  if (frame) {
+    frame.remove();
+    FRAMES.delete(slug);
+  }
+  // The tab that was to its left takes the stage; the last one falls back to the
+  // overview, which is always there.
+  if (ACTIVE === slug) ACTIVE = OPEN_TABS[index - 1] || OVERVIEW;
+  if (ACTIVE !== OVERVIEW) frameFor(ACTIVE);
+  showPane();
+}
+
+async function loadBlueprints() {
+  const res = await fetch("/config/blueprints");
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(String(body?.error || `HTTP ${res.status}`));
+  BLUEPRINTS = Array.isArray(body.blueprints) ? body.blueprints : [];
+  return BLUEPRINTS;
 }
 
 // ---------- projects ----------
@@ -244,8 +456,14 @@ function drawProjects() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: p.id }),
       }).catch(() => {});
+      // The tabs belong to the folder in front: the frames go with the old one,
+      // and the new one's are read back from the browser.
+      dropFrames();
       await loadProjects().catch(() => {});
       drawProjects();
+      await loadBlueprints().catch(() => { BLUEPRINTS = []; });
+      restoreTabs();
+      await showPane();
     });
 
     const remove = document.createElement("button");
@@ -277,7 +495,7 @@ function drawProjects() {
     hideProjects();
     const path = await askFolder({
       heading: "add a blueprints folder",
-      hint: "Every imported folder keeps running. Switching the front only changes which one the launcher and /bp show. It is created if it does not exist yet.",
+      hint: "Every imported folder keeps running. Switching the front only changes which one the strip above lists. It is created if it does not exist yet.",
       cancellable: true,
     });
     if (!path) return;
@@ -329,7 +547,7 @@ drawProjects();
 if (!PROJECTS.length) {
   const path = await askFolder({
     heading: "where do your blueprints live?",
-    hint: "One blueprints folder to start with. Blueprints are not part of a project, so this is the only place they come from — put it under git if you like. It is created if it does not exist yet. More folders can be added later from the corner.",
+    hint: "One blueprints folder to start with. It is created if it does not exist yet, and more folders can be added later from the corner.",
     cancellable: false,
   });
   try {
@@ -343,9 +561,12 @@ if (!PROJECTS.length) {
   location.reload();
 }
 
+// The tabs this folder had open, with Overview in front of an empty folder — not
+// an error, just a list with nothing in it until blueprints are put there.
 try {
-  const sessionId = (await newestSession()) || (await createSession());
-  mount(sessionId);
+  await loadBlueprints();
+  restoreTabs();
+  await showPane();
 } catch (err) {
   panesEl.innerHTML = `<div class="empty-hint">engineer web: ${String(err?.message || err)}</div>`;
 }

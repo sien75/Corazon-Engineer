@@ -79,12 +79,13 @@ done
 
 start_blueprint() {
   /tmp/engineer serve-blueprint --bind 127.0.0.1 --port 8982 \
-    --shell "$ROOTDIR/workspace/blueprint/shell" \
+    --agents "$ROOTDIR/agents" \
+    --engineer-home "$ROOTDIR" \
     --home "$HOME_DIR" \
     --cwd "$ROOTDIR" \
     --storage http://localhost:8981 --ai http://localhost:8980 \
     >>/tmp/modes-blueprint.log 2>&1 &
-  for i in $(seq 1 30); do curl -s -o /dev/null -m 2 http://localhost:8982/bp && break; sleep 1; done
+  for i in $(seq 1 30); do if curl -s -o /dev/null -m 2 http://localhost:8982/bp; then break; fi; sleep 1; done
 }
 : >/tmp/modes-blueprint.log
 start_blueprint          # 注意：没有 config.yaml —— 没有任何项目

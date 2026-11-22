@@ -12,7 +12,7 @@ Read `TEST.md` top to bottom and run it top to bottom. Three sections, in order:
 
 1. **Setup** — a scratch project root under `.engineer/<case>/`, a scratch **data home** (`<root>/home`), the services this case needs, and any fixture files. Everything this case touches lives under that root; a case must never touch the real `.agents/` or `.engineer/`.
 
-   There is no `--root` and no project board any more: storage and ai take `--home` (the program's own data directory), every `/static/*` request names the folder it wants by its **absolute path**, and `ai/new` is given the folder the agent works in (`cwd`) — a case passes its scratch root directly, registering nothing.
+   There is no `--root` and no project board any more: storage and ai take `--home` (the program's own data directory), and `ai/new` is given the folder the agent works in (`cwd`) — a case passes its scratch root directly, registering nothing. The `/static/*` cases that used to live here are parked in `static_bak/cases/` with the feature they test.
 2. **Run** — the checks. Either `curl` blocks (with the expected response written out) or one `ego-browser nodejs` script that prints `{ ok, checks }`.
 3. **Teardown** — `pkill` the services it started.
 

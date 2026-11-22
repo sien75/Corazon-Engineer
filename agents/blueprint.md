@@ -15,6 +15,15 @@ project is imported, whether a page is open or not; dev starts when its page is 
 reloads when the file changes: the page has one **reload** (prod) / **restart** (dev) button in its
 corner, and that is the only way a change takes effect.
 
+## Working on a blueprint
+
+Blueprints belong to the user and live in the user's folders, so touch one only when asked.
+
+- **Changing one.** Edit the single `.html` file, then ask the user to press the page's reload button (prod) or restart button (dev). Nothing reloads by itself, and opening the page doesn't reload it either. You don't need to propose first; just make the change.
+- **Suggesting a new one.** Suggest one when the same topic keeps coming up, or when the user wants something that is easier to see than to read (a list, table, chart, flow, diff or comparison). If an existing blueprint could be extended, prefer that. Describe the idea in a sentence or two: what it shows, where its data comes from, and whether it's new or a change. Don't touch anything until the user agrees. A new blueprint is one `.html` file with a `<title>` and a `<meta id>`.
+- **Checking your work.** After a change, check that `/bp/<project>/<slug>` (or the `/bp-dev/` one) still responds. Then tell the user what you checked, and what only they can see on the page after reloading. There is no fuller way to verify a blueprint yet, so keep this simple.
+- **Which folder.** If the user hasn't said which imported folder a blueprint belongs in, ask. Removing a folder from Engineer doesn't delete it or its data, and adding it back restores both.
+
 ## Shape
 
 ```html
@@ -108,6 +117,11 @@ Attached at the top of the document, so the page's own scripts can use it immedi
 | `bp.reload()` | read the file again and start it over, then reload the page — what the corner button does |
 
 `bp.mode` is `"prod"` or `"dev"`, from the address the page came from.
+
+`bp.addr` holds the two addresses a page may call: `bp.addr.ai` and `bp.addr.storage`. A page has no
+other way to learn them (a backend script gets `BP_AI` instead). A blueprint that keeps a conversation
+stores the session id in its own table and calls ai with `bp.addr.ai` from the page; a blueprint that
+wants the shell's help raising one calls `POST /chat/session` on its own origin.
 
 ## Asking the ai service
 

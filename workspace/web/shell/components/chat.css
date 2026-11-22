@@ -528,8 +528,12 @@
   gap: 10px;
   margin-block: 8px 24px;
   padding: 12px;
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
+  background: var(--bg, #ffffff);
+  /* The box's own edge, not only on focus. Every colour here carries a light
+     fallback: a blueprint page gets the palette only if it links theme.css, and a
+     composer that has no variables must still have a border and a fill instead of
+     collapsing to the browser's defaults. */
+  border: 1px solid var(--border-strong, #d8dde5);
   border-radius: 16px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
   flex-shrink: 0;
@@ -653,10 +657,14 @@
 
 .ai-send,
 #ai-send {
-  background: var(--accent-bg);
-  border: 1px solid var(--accent-border);
+  /* A tinted button with an edge: the theme's pale tint is the fill, a step deeper
+     is the border, and the label is the full-strength colour of the same hue. Not a
+     solid block — the composer should not out-shout the conversation — and not a
+     bare text link either, which is what it looked like with no fill and no edge. */
+  background: var(--accent-bg, #edf2fc);
+  border: 1px solid var(--accent-border, #d5e0f5);
   border-radius: 8px;
-  color: var(--accent);
+  color: var(--accent, #4268b3);
   font: inherit;
   /* Just under the composer's 15px, and bold like its sibling: the row is the
      composer's own, so the buttons read as part of it rather than as chrome. */
@@ -667,19 +675,21 @@
   cursor: pointer;
 }
 
+/* Hover brings the border up to the label's strength: the shape stays, it just
+   stops being shy about it. */
 .ai-send:hover,
 #ai-send:hover {
-  border-color: var(--accent);
+  border-color: var(--accent, #4268b3);
 }
 
-/* Same quiet border as .ai-send: the fill and the border of a resting button
-   sit a hair apart, and only hover brings the colour up to full strength. */
+/* The same shape in the danger tint: a pale red fill, a deeper red edge, dark red
+   label. */
 .ai-stop,
 #ai-stop {
-  background: var(--danger-bg);
-  border: 1px solid var(--danger-border);
+  background: var(--danger-bg, #ffebe9);
+  border: 1px solid var(--danger-border, #fad4d4);
   border-radius: 8px;
-  color: var(--danger-fg);
+  color: var(--danger-fg, #82071e);
   font: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -690,8 +700,8 @@
 
 .ai-stop:hover,
 #ai-stop:hover {
-  border-color: var(--danger);
-  background: var(--danger-bg-hover);
+  border-color: var(--danger, #cf222e);
+  background: var(--danger-bg-hover, #ffd7d5);
 }
 
 .ai-stop:disabled,
@@ -717,8 +727,8 @@
 }
 
 .ai-input:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-bg);
+  border-color: var(--accent, #4268b3);
+  box-shadow: 0 0 0 3px var(--accent-bg, #edf2fc);
 }
 button:focus-visible, .ai-question-options input:focus-visible {
   outline: 2px solid var(--accent);
@@ -731,6 +741,8 @@ button:focus-visible, .ai-question-options input:focus-visible {
 }
 
 .ai-input-field::placeholder {
-  color: var(--fg-muted);
-  opacity: 0.75;
+  /* One step below muted, at full opacity: the hint is what the user reads before
+     typing, not decoration. */
+  color: var(--placeholder, #4b5563);
+  opacity: 1;
 }

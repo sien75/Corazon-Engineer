@@ -13,7 +13,7 @@ engineer-<version>-<os>-<arch>/
 └── install.sh    install / upgrade
 ```
 
-`bin/engineer` carries the two Go services too — the launcher starts them by re-running *itself* with `serve-storage` / `serve-blueprint` (a multi-call binary). That is deliberate: every distinct executable path costs one entry in a corporate EDR's process whitelist and one "allow this program?" prompt per machine for a new user.
+`bin/engineer` carries the three Go services too — the launcher starts them by re-running *itself* with `serve-storage` / `serve-blueprint` / `serve-web` (a multi-call binary). That is deliberate: every distinct executable path costs one entry in a corporate EDR's process whitelist and one "allow this program?" prompt per machine for a new user.
 
 The installed layout (under `~/.engineer/`) is software only — **upgrades only ever touch `apps/`**:
 
@@ -35,7 +35,7 @@ puts that folder on the board as a convenience, and a pre-home `.engineer/engine
 into the home at start-up (records and sessions only — every start merges whatever is new). The tool
 ships no project and keeps no project data.
 
-**Lifecycle**: `engineer` starts the three services and holds the foreground; Ctrl-C stops them all. There is no `stop` command.
+**Lifecycle**: `engineer` starts the four services and holds the foreground; Ctrl-C stops them all. There is no `stop` command.
 
 ## Prerequisites (build machine only)
 
@@ -69,7 +69,7 @@ mkdir -p "$OUT"/{bin,shell}
 # 1. Go binary — CGO off, fully static (storage's sqlite driver is pure Go).
 #    `-s -w` drops debug/symbol tables: ~1/3 off the binary with no runtime
 #    effect. ONE file for the launcher *and* the two Go services: `engineer` is
-#    a multi-call binary (`engineer serve-storage|serve-blueprint`), and its module
+#    a multi-call binary (`engineer serve-storage|serve-blueprint|serve-web`), and its module
 #    (how-to/deploy/prod/go.mod) links the two local modules in.
 (cd how-to/deploy/prod && CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o "$OLDPWD/$OUT/bin/engineer" .)
 
@@ -78,7 +78,7 @@ mkdir -p "$OUT"/{bin,shell}
 #    named linux-amd64 would still carry a mac binary.
 (cd workspace/ai && bun install && bun build --compile --target=$BUN_TARGET src/main.ts --outfile "$OLDPWD/$OUT/bin/engineer-ai")
 
-# 3. shell assets — shipped loose next to the binary, which serves them from `--shell`
+# 3. shell assets — shipped loose next to the binary, which serves them from `--shell` (the web service)
 #    (the layout the launcher passes at runtime), so the frontend stays editable
 #    without a rebuild. Every local asset index.html links must be here: theme.css
 #    is the shell's palette (and an agent page's), and components/ holds the
@@ -86,8 +86,8 @@ mkdir -p "$OUT"/{bin,shell}
 #    strips the UI of its colors or its chat. assets/ holds the images index.html
 #    points at with /assets/… — today the favicon (assets/logo.png); the guard below
 #    fails the pack if one is left out.
-cp workspace/blueprint/shell/{index.html,app.js,style.css,theme.css} "$OUT/shell/"
-cp -R workspace/blueprint/shell/vendor workspace/blueprint/shell/components workspace/blueprint/shell/assets "$OUT/shell/"
+cp workspace/web/shell/{index.html,app.js,style.css,theme.css} "$OUT/shell/"
+cp -R workspace/web/shell/vendor workspace/web/shell/components workspace/web/shell/assets "$OUT/shell/"
 
 # 3b. guard: every asset index.html links (except the generated /config.js) must
 #     actually be in the package — this is how theme.css once went missing.
@@ -140,13 +140,13 @@ On macOS both toolchains ad-hoc sign their output, so no separate `codesign` ste
 
 `bin/engineer` is built from `how-to/deploy/prod/launch.go` (a single-file Go program compiled at pack time) — a native binary, shipped as the package's entry point:
 
-- picks free ports (defaults 7500 web / 7501 ai / 7502 storage, advancing to the next free one on conflict), hands each service everything it needs (`--bind <host>` + `--port <n>` for all three; `--home` for storage and ai — the program's own data directory, **not** a project; `--storage` + `--agents` + `--docs` for ai; `--shell` + `--home` + `--cwd` + `--storage` / `--ai` for blueprint — the blueprints folders (projects) are **not** a launcher argument: they are imported in the web UI and kept in the data home's `config.yaml`), starts storage → ai → blueprint as children, prints the chosen addresses plus the bind host, then **holds the foreground**. Ctrl-C tears the whole stack down. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file and no stop script**.
+- picks free ports (defaults 7500 web / 7501 ai / 7502 storage / 7503 blueprint, advancing to the next free one on conflict), hands each service everything it needs (`--bind <host>` + `--port <n>` for all four; `--home` for storage, ai and blueprint — the program's own data directory, **not** a project; `--storage` for ai; `--agents` (the package's `agents/`) + `--engineer-home` + `--home` + `--cwd` + `--storage` / `--ai` for blueprint; `--shell` (the package's `shell/`) + `--blueprint` + `--storage` / `--ai` + `--cwd` for web — the blueprints folders (projects) are **not** a launcher argument: they are imported in the web UI and kept in the data home's `config.yaml`), starts storage → ai → blueprint → web as children, prints the chosen addresses plus the bind host, then **holds the foreground**. Ctrl-C tears the whole stack down. **No service has a default address** — a leaf that invented one would silently bind a port nobody chose. There is **no port config file and no stop script**.
 
   The data home is `$ENGINEER_DATA`, default `~/.engineer/data` (beside the installed versions, never inside a project): it holds `engineer.db` (records, sessions, the project board), `uploads/` and the `run/` + `logs/` directories. The package is no longer tied to a project folder — **projects are added on the web page** (Engineer launcher, `+`) and remembered there. When the launcher starts in a folder that holds `engineer.yaml`, that folder is put on the board.
 
   **Nothing is migrated, ever — there is no migration step in the program.** A `.engineer/engineer.db` left in the folder from before the data home existed is not consulted; the data home is the only database the program reads, and a new home simply starts empty (projects are added on the page).
-- **Local by default.** The launcher binds the three services to `127.0.0.1`, so nothing about the stack is visible on the network — the ports are not reachable from another machine at all. (A service started by hand has no default at all: `--bind` is required.) `ENGINEER_BIND` overrides the bind host: `ENGINEER_BIND=0.0.0.0 engineer` opens the stack to the whole network, `ENGINEER_BIND=<this machine's IP>` to a single interface. Under a wildcard bind the launcher advertises this machine's outward IPv4 instead of `localhost` — both in what it prints and in the web UI's `/config.js` — since `localhost` would point a browser on another machine at itself.
-- also serves the `engineer` subcommands: `start` (default) / `status` / `version` / `uninstall [--purge]`, plus the internal `serve-storage` / `serve-blueprint` (the multi-call trick).
+- **Local by default.** The launcher binds the four services to `127.0.0.1`, so nothing about the stack is visible on the network — the ports are not reachable from another machine at all. (A service started by hand has no default at all: `--bind` is required.) `ENGINEER_BIND` overrides the bind host: `ENGINEER_BIND=0.0.0.0 engineer` opens the stack to the whole network, `ENGINEER_BIND=<this machine's IP>` to a single interface. Under a wildcard bind the launcher advertises this machine's outward IPv4 instead of `localhost` — both in what it prints and in the web UI's `/config.js` — since `localhost` would point a browser on another machine at itself.
+- also serves the `engineer` subcommands: `start` (default) / `status` / `version` / `uninstall [--purge]`, plus the internal `serve-storage` / `serve-blueprint` / `serve-web` (the multi-call trick).
 - native on purpose: the terminal's foreground process is named `engineer` (a shell script would show as `bash`/`zsh`), so terminals that title tabs from the process name — VS Code, notably — show `engineer` with no configuration.
 
 `install.sh` is the other shipped script: it installs (first run) or upgrades

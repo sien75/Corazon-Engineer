@@ -1,6 +1,6 @@
-// Package blueprint is the shell and the blueprint runtime in one service: it
-// serves the conversation page, and it serves, parses and runs single-file
-// blueprints.
+// Package blueprint runs blueprints: it serves, parses and runs single-file
+// blueprints, it keeps the projects (the blueprints folders) the user imported,
+// and it is the one service that starts a conversation for the shell.
 //
 //	A blueprint is one HTML file that carries its own tables (<script type="blueprint/sql">),
 //	its own orchestration (<script type="blueprint/flow">) and its own backend
@@ -10,8 +10,8 @@
 // It is not a program of its own: the engineer binary is a multi-call binary, and
 // Serve is the entry point behind the `serve-blueprint` subcommand:
 //
-//	engineer serve-blueprint --bind <host> --port <n> --shell <dir> --home <dir>
-//	                         --blueprints <dir> --cwd <dir> --storage <url> --ai <url>
+//	engineer serve-blueprint --bind <host> --port <n> --home <dir> --agents <dir>
+//	                         --engineer-home <dir> --cwd <dir> --storage <url> --ai <url>
 //
 // Every flag is required and there is no fallback: an invented default silently
 // binds a port nobody chose.
@@ -52,25 +52,26 @@ var types = map[string]string{
 	".svg":  "image/svg+xml",
 }
 
-// runtimeConfig is what the shell page needs to run one conversation and to draw
-// its project switcher. storage carries both prefixes — /log/* for records and
-// /static/* for a folder's files — so there is one address, not two.
-type runtimeConfig struct {
-	Storage    string    `json:"storage"`
-	AI         string    `json:"ai"`
-	Cwd        string    `json:"cwd"`
-	Projects   []Project `json:"projects"`
-	Foreground string    `json:"foreground"`
-}
-
 type config struct {
-	shell string
-	home  string
-	rt    runtimeConfig
+	home string // the data home: <engineer home>/data
+	// engineerHome is <home> in the spec — Engineer's own folder, whose data is
+	// this service's home. It is only ever quoted back to the agent, which finds
+	// models.yaml and config.yaml through it.
+	engineerHome string
+	agents       string // the checkout's agents/ folder: the spec an agent is given
+	rt           runtimeConfig
 }
 
-const usage = "usage: engineer serve-blueprint --bind <host> --port <n> --shell <dir> " +
-	"--home <dir> --cwd <dir> --storage <url> --ai <url>"
+// runtimeConfig is what this service was told about the other two.
+type runtimeConfig struct {
+	Storage string `json:"storage"`
+	AI      string `json:"ai"`
+	Cwd     string `json:"cwd"`
+}
+
+const usage = "usage: engineer serve-blueprint --bind <host> --port <n> " +
+	"--home <dir> --agents <dir> --engineer-home <dir> --cwd <dir> " +
+	"--storage <url> --ai <url>"
 
 // Serve runs the shell and the blueprint runtime until it is killed. argv is the
 // argument list following the subcommand; on failure it prints to stderr and
@@ -88,9 +89,12 @@ func Serve(argv []string) {
 		case argv[i] == "--port" && i+1 < len(argv):
 			i++
 			port, _ = strconv.Atoi(argv[i])
-		case argv[i] == "--shell" && i+1 < len(argv):
+		case argv[i] == "--agents" && i+1 < len(argv):
 			i++
-			cfg.shell = argv[i]
+			cfg.agents = argv[i]
+		case argv[i] == "--engineer-home" && i+1 < len(argv):
+			i++
+			cfg.engineerHome = argv[i]
 		case argv[i] == "--home" && i+1 < len(argv):
 			i++
 			cfg.home = argv[i]
@@ -106,23 +110,28 @@ func Serve(argv []string) {
 		}
 	}
 
-	if bind == "" || port == 0 || cfg.shell == "" || cfg.home == "" ||
-		cfg.rt.Cwd == "" || cfg.rt.Storage == "" || cfg.rt.AI == "" {
+	if bind == "" || port == 0 || cfg.home == "" || cfg.agents == "" ||
+		cfg.engineerHome == "" || cfg.rt.Cwd == "" || cfg.rt.Storage == "" || cfg.rt.AI == "" {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
 
-	shell, err := filepath.Abs(cfg.shell)
-	if err != nil {
-		log.Fatalf("engineer blueprint: bad --shell %q: %v", cfg.shell, err)
-	}
-	cfg.shell = shell
-	if info, err := os.Stat(shell); err != nil || !info.IsDir() {
-		log.Fatalf("engineer blueprint: --shell is not a folder: %s", shell)
-	}
 	if info, err := os.Stat(cfg.home); err != nil || !info.IsDir() {
 		log.Fatalf("engineer blueprint: --home is not a folder: %s", cfg.home)
 	}
+	agents, err := filepath.Abs(cfg.agents)
+	if err != nil {
+		log.Fatalf("engineer blueprint: bad --agents %q: %v", cfg.agents, err)
+	}
+	if info, err := os.Stat(filepath.Join(agents, "AGENTS.md")); err != nil || info.IsDir() {
+		log.Fatalf("engineer blueprint: --agents has no AGENTS.md: %s", agents)
+	}
+	cfg.agents = agents
+	engineerHome, err := filepath.Abs(cfg.engineerHome)
+	if err != nil {
+		log.Fatalf("engineer blueprint: bad --engineer-home %q: %v", cfg.engineerHome, err)
+	}
+	cfg.engineerHome = engineerHome
 	cwd, err := filepath.Abs(cfg.rt.Cwd)
 	if err != nil {
 		log.Fatalf("engineer blueprint: bad --cwd %q: %v", cfg.rt.Cwd, err)
@@ -139,8 +148,7 @@ func Serve(argv []string) {
 	if err != nil {
 		log.Fatalf("engineer blueprint: %v", err)
 	}
-	list, front := projects.Snapshot()
-	cfg.rt.Projects, cfg.rt.Foreground = list, front
+	list, _ := projects.Snapshot()
 
 	addr := net.JoinHostPort(bind, strconv.Itoa(port))
 	// Bind first, then announce: the banner must never claim a port we did not
@@ -180,8 +188,6 @@ func displayHost(bind string) string {
 }
 
 func handler(cfg config, projects *Projects) http.Handler {
-	index := filepath.Join(cfg.shell, "index.html")
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// This is a local tool: its files change when the tool does, and a cached
 		// app.js served next to a fresh index.html is a broken shell.
@@ -195,25 +201,11 @@ func handler(cfg config, projects *Projects) http.Handler {
 			w.WriteHeader(http.StatusNotFound)
 			return
 
-		case urlPath == "/config.js":
-			// The projects are read fresh: they are what the shell must know before
-			// it can do anything, and they change when the user imports or removes one.
-			list, front := projects.Snapshot()
-			body, err := json.Marshal(runtimeConfig{
-				Storage:    cfg.rt.Storage,
-				AI:         cfg.rt.AI,
-				Cwd:        cfg.rt.Cwd,
-				Projects:   list,
-				Foreground: front,
-			})
-			if err != nil {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", types[".js"])
-			// An ES module, not a classic script: the addresses are exported, so a
-			// page has to import them — nothing lands on window.
-			fmt.Fprintf(w, "export const ENGINEER = %s;\nexport default ENGINEER;\n", body)
+		// The one call that raises a conversation: the system text an agent is
+		// given is composed here, because this service is the one that knows where
+		// the spec and Engineer's own folder are.
+		case urlPath == "/chat/session":
+			serveChatSession(w, r, cfg)
 			return
 
 		// The projects: the web UI's one setting, and the only place they change.
@@ -230,12 +222,18 @@ func handler(cfg config, projects *Projects) http.Handler {
 			handleBlob(w, r, cfg.rt.AI)
 			return
 
+		// The blueprints of the front project, as JSON: the shell draws its tabs from
+		// this, and opens one at a time in a frame.
+		case urlPath == "/config/blueprints":
+			serveBlueprintList(w, r, projects)
+			return
+
 		case urlPath == "/bp" || urlPath == "/bp/":
 			blueprintIndex(w, projects, ModeProd)
 			return
 
 		case strings.HasPrefix(urlPath, "/bp/"):
-			blueprintRoute(w, r, projects, urlPath, "/bp/", ModeProd)
+			blueprintRoute(w, r, projects, cfg, urlPath, "/bp/", ModeProd)
 			return
 
 		case urlPath == "/bp-dev" || urlPath == "/bp-dev/":
@@ -243,32 +241,13 @@ func handler(cfg config, projects *Projects) http.Handler {
 			return
 
 		case strings.HasPrefix(urlPath, "/bp-dev/"):
-			blueprintRoute(w, r, projects, urlPath, "/bp-dev/", ModeDev)
+			blueprintRoute(w, r, projects, cfg, urlPath, "/bp-dev/", ModeDev)
 			return
 		}
 
-		// The shell: one conversation and a theme switch, at every other path.
-		file := filepath.Join(cfg.shell, filepath.FromSlash(urlPath))
-		if !strings.HasPrefix(file, cfg.shell) {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		if strings.HasSuffix(urlPath, "/") {
-			file = filepath.Join(file, "index.html")
-		}
-		if data, err := os.ReadFile(file); err == nil {
-			w.Header().Set("Content-Type", contentType(file))
-			w.Write(data)
-			return
-		}
-
-		html, err := os.ReadFile(index)
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", types[".html"])
-		w.Write(html)
+		// The shell page belongs to the web service; a blueprint URL is the only
+		// other thing this service answers.
+		http.NotFound(w, r)
 	})
 }
 
@@ -372,6 +351,40 @@ func badRequest(w http.ResponseWriter, message string) {
 	json.NewEncoder(w).Encode(map[string]any{"error": message})
 }
 
+// serveBlueprintList answers GET /config/blueprints: the front project's
+// blueprints, in file order — what the shell's tab strip lists.
+func serveBlueprintList(w http.ResponseWriter, r *http.Request, projects *Projects) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", types[".json"])
+	list, front := projects.Snapshot()
+	out := struct {
+		Project   string `json:"project"`
+		Blueprints []any `json:"blueprints"`
+	}{Project: front, Blueprints: []any{}}
+
+	var entry *project
+	if front != "" {
+		entry, _ = projects.Get(front)
+	}
+	if entry != nil && entry.prod != nil {
+		if files, err := entry.prod.Files(); err == nil {
+			for _, f := range files {
+				out.Blueprints = append(out.Blueprints, map[string]string{
+					"slug":  f.Slug,
+					"title": f.Title,
+					"url":   baseOf(ModeProd, entry.ID, f.Slug),
+				})
+			}
+		}
+	}
+	_ = list
+	json.NewEncoder(w).Encode(out)
+}
+
 // ---------- blueprints ----------
 
 // slugShape is what a blueprint file may be named. It comes from a URL and
@@ -382,7 +395,7 @@ var slugShape = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 // answers it. The project is in the address because a blueprint's slug is only
 // unique inside its folder, and because a page that is already open must keep
 // pointing at its own project when the foreground changes.
-func blueprintRoute(w http.ResponseWriter, r *http.Request, projects *Projects, urlPath, prefix, mode string) {
+func blueprintRoute(w http.ResponseWriter, r *http.Request, projects *Projects, cfg config, urlPath, prefix, mode string) {
 	rest := strings.TrimPrefix(urlPath, prefix)
 	projectID, rest, ok := strings.Cut(rest, "/")
 	if !ok || !slugShape.MatchString(projectID) {
@@ -412,7 +425,15 @@ func blueprintRoute(w http.ResponseWriter, r *http.Request, projects *Projects, 
 	case "":
 		servePage(w, reg, projectID, slug)
 	case "bp.js":
+		// The page's channel carries the addresses this page may call: a blueprint
+		// has no other way to learn them (a backend script gets BP_AI, a page gets
+		// bp.addr). Written as a preamble so the client script stays one embedded
+		// file that reads window.BP_ADDR.
 		w.Header().Set("Content-Type", types[".js"])
+		addr, err := json.Marshal(map[string]string{"ai": cfg.rt.AI, "storage": cfg.rt.Storage})
+		if err == nil {
+			fmt.Fprintf(w, "window.BP_ADDR = %s;\n", addr)
+		}
 		w.Write(clientJS)
 	case "events":
 		serveEvents(w, r, reg, slug)

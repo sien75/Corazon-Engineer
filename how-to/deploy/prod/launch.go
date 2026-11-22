@@ -1,11 +1,11 @@
 // Command engineer is the prod launcher shipped in the package. It starts the
-// three packaged services (storage, ai, web) on free ports, names the terminal
-// "engineer", holds the foreground until Ctrl-C, then tears the whole stack
-// down.
+// four packaged services (storage, ai, blueprint, web) on free ports, names the
+// terminal "engineer", holds the foreground until Ctrl-C, then tears the whole
+// stack down.
 //
-// It is a **multi-call binary**: storage and web are not separate files but this
-// same executable re-run with a `serve-storage` / `serve-blueprint` subcommand. Only ai
-// is a second file (`engineer-ai`). One executable path per service would mean
+// It is a **multi-call binary**: storage, blueprint and web are not separate files
+// but this same executable re-run with a `serve-storage` / `serve-blueprint` /
+// `serve-web` subcommand. Only ai is a second file (`engineer-ai`). One executable path per service would mean
 // one extra entry in every EDR/security-tool process whitelist (and one extra
 // "allow this program?" prompt for every new user), so the two Go services share
 // this one.
@@ -37,12 +37,13 @@ import (
 
 	storagesvc "engineer/storage"
 	blueprintsvc "engineer/blueprint"
+	websvc "engineer/web"
 )
 
 const usageText = "usage: engineer [start|status|version|uninstall [--purge]]"
 
 // default ports; the launcher advances to the next free one on conflict
-var defaultPorts = map[string]int{"blueprint": 7500, "ai": 7501, "storage": 7502}
+var defaultPorts = map[string]int{"web": 7500, "ai": 7501, "storage": 7502, "blueprint": 7503}
 
 func main() {
 	cmd := "start"
@@ -65,6 +66,8 @@ func main() {
 		storagesvc.Serve(os.Args[2:])
 	case "serve-blueprint":
 		blueprintsvc.Serve(os.Args[2:])
+	case "serve-web":
+		websvc.Serve(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usageText)
 		os.Exit(1)
@@ -108,7 +111,7 @@ func launch() {
 	bind := bindHost()
 	ports := map[string]int{}
 	used := map[int]bool{}
-	for _, name := range []string{"blueprint", "ai", "storage"} {
+	for _, name := range []string{"web", "blueprint", "ai", "storage"} {
 		p := pickPort(defaultPorts[name], used, bind)
 		used[p] = true
 		ports[name] = p
@@ -142,10 +145,18 @@ func launch() {
 		{name: "blueprint", bin: self,
 			args: []string{"serve-blueprint",
 				"--bind", bind, "--port", strconv.Itoa(ports["blueprint"]),
-				"--shell", filepath.Join(pkg, "shell"),
 				"--home", data,
+				"--agents", filepath.Join(pkg, "agents"),
+				"--engineer-home", engineerHome(),
 				"--cwd", root,
 				"--storage", svcURL("storage"), "--ai", svcURL("ai")}},
+		{name: "web", bin: self,
+			args: []string{"serve-web",
+				"--bind", bind, "--port", strconv.Itoa(ports["web"]),
+				"--shell", filepath.Join(pkg, "shell"),
+				"--blueprint", svcURL("blueprint"),
+				"--storage", svcURL("storage"), "--ai", svcURL("ai"),
+				"--cwd", root}},
 	}
 
 	started := make([]*service, 0, len(specs))
@@ -161,9 +172,10 @@ func launch() {
 	}
 
 	fmt.Printf("engineer up — data: %s\n", data)
-	fmt.Printf("  web     %s\n", svcURL("blueprint"))
-	fmt.Printf("  ai      %s\n", svcURL("ai"))
-	fmt.Printf("  storage %s\n", svcURL("storage"))
+	fmt.Printf("  web       %s\n", svcURL("web"))
+	fmt.Printf("  blueprint %s\n", svcURL("blueprint"))
+	fmt.Printf("  ai        %s\n", svcURL("ai"))
+	fmt.Printf("  storage   %s\n", svcURL("storage"))
 	if isWildcard(bind) {
 		fmt.Printf("bind: %s — open to the whole network; reachable at %s\n", bind, urlHost(bind))
 	} else {
@@ -204,7 +216,7 @@ func launch() {
 // status prints the per-service state of the data home's instance.
 func status() {
 	runDir := filepath.Join(dataHome(), "run")
-	for _, name := range []string{"storage", "ai", "blueprint"} {
+	for _, name := range []string{"storage", "ai", "blueprint", "web"} {
 		pid, err := readPid(filepath.Join(runDir, name+".pid"))
 		if err == nil && alive(pid) {
 			fmt.Printf("%s: running (pid %d)\n", name, pid)
@@ -287,7 +299,7 @@ func killAll(svcs []*service) {
 }
 
 func removePids(runDir string) {
-	for _, name := range []string{"blueprint", "ai", "storage"} {
+	for _, name := range []string{"web", "blueprint", "ai", "storage"} {
 		_ = os.Remove(filepath.Join(runDir, name+".pid"))
 	}
 }
@@ -296,7 +308,7 @@ func removePids(runDir string) {
 // stray service started from this install's own binary) so we reuse its ports
 // instead of advancing past them. Another install's stack is never touched.
 func reclaim(runDir, self string) {
-	for _, name := range []string{"blueprint", "ai", "storage"} {
+	for _, name := range []string{"web", "blueprint", "ai", "storage"} {
 		pf := filepath.Join(runDir, name+".pid")
 		if pid, err := readPid(pf); err == nil {
 			_ = syscall.Kill(pid, syscall.SIGTERM)
